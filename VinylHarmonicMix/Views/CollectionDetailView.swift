@@ -598,23 +598,14 @@ struct CollectionDetailView: View {
                 if let code = camelot {
                     Text(code)
                         .font(.system(size: 11, weight: .bold).monospacedDigit())
-                        .foregroundStyle(.white)
+                        .foregroundStyle(CamelotColor.text(for: code))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Capsule().fill(camelotColor(for: code)))
+                        .background(Capsule().fill(CamelotColor.background(for: code)))
                 }
             }
         }
         .buttonStyle(.plain)
-    }
-
-    private func camelotColor(for code: String) -> Color {
-        guard let num = Int(code.dropLast()), num >= 1, num <= 12 else { return .gray }
-        let isMinor = code.hasSuffix("A")
-        let hue        = Double(num - 1) / 12.0
-        let saturation = isMinor ? 0.75 : 0.85
-        let brightness = isMinor ? 0.70 : 0.85
-        return Color(hue: hue, saturation: saturation, brightness: brightness)
     }
 
     // MARK: - Data loading
