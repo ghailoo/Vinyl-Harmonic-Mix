@@ -58,6 +58,9 @@ struct CollectionGridView: View {
     @Query private var allTrackEntities: [TrackEntity]
     @Query private var allFeatures: [RecordingFeaturesEntity]
 
+    @State private var featuresByMBID: [String: RecordingFeaturesEntity] = [:]
+    @State private var coverageByInstanceId: [Int: (covered: Int, total: Int)] = [:]
+
     @State private var searchQuery = ""
     @State private var selectedItem: CollectionItem?
     @State private var showRescanAlert = false
@@ -129,6 +132,17 @@ struct CollectionGridView: View {
         .animation(.easeInOut(duration: 0.25), value: scanCoordinator.shouldShowPanel)
         .animation(.easeInOut(duration: 0.2), value: activeFilter)
         .animation(.easeInOut(duration: 0.2), value: activeSort)
+        .onAppear {
+            rebuildFeaturesLookup()
+            rebuildCoverageLookup()
+        }
+        .onChange(of: allFeatures.count) { _, _ in
+            rebuildFeaturesLookup()
+            rebuildCoverageLookup()
+        }
+        .onChange(of: allTrackEntities.count) { _, _ in
+            rebuildCoverageLookup()
+        }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 HStack(spacing: 8) {
@@ -273,15 +287,15 @@ struct CollectionGridView: View {
         }
     }
 
-    private var featuresByMBID: [String: RecordingFeaturesEntity] {
+    private func rebuildFeaturesLookup() {
         var d: [String: RecordingFeaturesEntity] = [:]
         d.reserveCapacity(allFeatures.count)
         for f in allFeatures { d[f.recordingMBID] = f }
-        return d
+        featuresByMBID = d
     }
 
-    private var coverageByInstanceId: [Int: (covered: Int, total: Int)] {
-        guard !allTrackEntities.isEmpty else { return [:] }
+    private func rebuildCoverageLookup() {
+        guard !allTrackEntities.isEmpty else { coverageByInstanceId = [:]; return }
         var totals: [Int: Int] = [:]
         var coveredCounts: [Int: Int] = [:]
         for track in allTrackEntities {
@@ -292,7 +306,7 @@ struct CollectionGridView: View {
                 coveredCounts[id, default: 0] += 1
             }
         }
-        return Dictionary(uniqueKeysWithValues: totals.keys.map { id in
+        coverageByInstanceId = Dictionary(uniqueKeysWithValues: totals.keys.map { id in
             (id, (covered: coveredCounts[id] ?? 0, total: totals[id]!))
         })
     }

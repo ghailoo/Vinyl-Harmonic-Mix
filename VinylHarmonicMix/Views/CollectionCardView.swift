@@ -6,6 +6,10 @@ struct CollectionCardView: View {
     var covered: Int = 0
     var total: Int = 0
 
+    // Decoupled from render cycle — updated via .task after the card paints
+    @State private var badgeCovered: Int = 0
+    @State private var badgeTotal: Int = 0
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             coverImage
@@ -21,6 +25,10 @@ struct CollectionCardView: View {
                 .foregroundStyle(.secondary)
         }
         .contentShape(Rectangle())
+        .task(id: covered &+ total &* 10_000) {
+            badgeCovered = covered
+            badgeTotal   = total
+        }
     }
 
     // MARK: - Cover image
@@ -48,15 +56,15 @@ struct CollectionCardView: View {
             .cornerRadius(8)
             .overlay(alignment: .topTrailing) {
                 HStack(spacing: 4) {
-                    if covered > 0 && total > 0 {
-                        Text("\(covered)/\(total)")
+                    if badgeCovered > 0 && badgeTotal > 0 {
+                        Text("\(badgeCovered)/\(badgeTotal)")
                             .font(.system(size: 9, weight: .bold, design: .rounded))
                             .monospacedDigit()
                             .foregroundStyle(.white)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 3)
                             .background(Capsule().fill(coverageColor))
-                            .help("\(covered) of \(total) tracks have BPM and key data")
+                            .help("\(badgeCovered) of \(badgeTotal) tracks have BPM and key data")
                     }
                     if hasMBID { mbidBadge }
                 }
@@ -67,7 +75,7 @@ struct CollectionCardView: View {
     }
 
     private var coverageColor: Color {
-        covered == total
+        badgeCovered == badgeTotal
             ? Color(red: 0.20, green: 0.65, blue: 0.40)
             : Color(red: 0.95, green: 0.65, blue: 0.20)
     }
