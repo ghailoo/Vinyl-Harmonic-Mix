@@ -280,13 +280,21 @@ struct CollectionGridView: View {
         return d
     }
 
-    private var tracksByInstanceId: [Int: [TrackEntity]] {
-        var d: [Int: [TrackEntity]] = [:]
+    private var coverageByInstanceId: [Int: (covered: Int, total: Int)] {
+        guard !allTrackEntities.isEmpty else { return [:] }
+        var totals: [Int: Int] = [:]
+        var coveredCounts: [Int: Int] = [:]
         for track in allTrackEntities {
             guard let id = track.collectionItem?.instanceId else { continue }
-            d[id, default: []].append(track)
+            totals[id, default: 0] += 1
+            let f = featuresByMBID[track.recordingMBID]
+            if f?.bpm != nil && f?.camelotCode != nil {
+                coveredCounts[id, default: 0] += 1
+            }
         }
-        return d
+        return Dictionary(uniqueKeysWithValues: totals.keys.map { id in
+            (id, (covered: coveredCounts[id] ?? 0, total: totals[id]!))
+        })
     }
 
     private var matchedInstanceIds: Set<Int> {
@@ -495,8 +503,8 @@ struct CollectionGridView: View {
                         CollectionCardView(
                                 item: item,
                                 hasMBID: matchedInstanceIds.contains(item.id),
-                                tracks: tracksByInstanceId[item.id] ?? [],
-                                featuresByMBID: featuresByMBID
+                                covered: coverageByInstanceId[item.id]?.covered ?? 0,
+                                total: coverageByInstanceId[item.id]?.total ?? 0
                             )
                     }
                     .buttonStyle(.plain)

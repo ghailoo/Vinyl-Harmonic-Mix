@@ -38,3 +38,15 @@ final class CollectionItemEntity {
         self.dateAdded = dateAdded
     }
 }
+
+extension CollectionItemEntity {
+    /// Number of tracks on this release that have both BPM and Camelot key data.
+    func harmonicCoverageCount(featuresByMBID: [String: RecordingFeaturesEntity]) -> Int {
+        tracks.filter {
+            let f = featuresByMBID[$0.recordingMBID]
+            return f?.bpm != nil && f?.camelotCode != nil
+        }.count
+    }
+
+    var trackCount: Int { tracks.count }
+}

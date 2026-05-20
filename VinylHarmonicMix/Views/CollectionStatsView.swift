@@ -482,21 +482,11 @@ struct CollectionStatsView: View {
                     .frame(height: 8)
 
                     VStack(spacing: 4) {
-                        audioFeatureRow(icon: "checkmark.circle.fill", iconColor: .green,       label: "BPM available",     count: withBPM)
-                        audioFeatureRow(icon: "checkmark.circle.fill", iconColor: .green,       label: "Key available",     count: withKey)
-                        audioFeatureRow(icon: "checkmark.circle.fill", iconColor: .accentColor, label: "Both BPM + key",   count: withBoth)
+                        audioFeatureRow(icon: "checkmark.circle.fill", iconColor: .green,       label: "BPM available",   count: withBPM)
+                        audioFeatureRow(icon: "checkmark.circle.fill", iconColor: .green,       label: "Key available",   count: withKey)
+                        audioFeatureRow(icon: "checkmark.circle.fill", iconColor: .accentColor, label: "Both BPM + key", count: withBoth)
                         audioFeatureRow(icon: "circle",                iconColor: .secondary,   label: "Queried, no data", count: noData)
                         audioFeatureRow(icon: "circle",                iconColor: .secondary,   label: "Not yet queried",  count: notQueried)
-                        Divider().padding(.vertical, 2)
-                        let releasePct = entities.count > 0
-                            ? releasesWithHarmonicData * 100 / max(entities.count, 1)
-                            : 0
-                        audioFeatureRow(
-                            icon: "music.quarternote.3",
-                            iconColor: .purple,
-                            label: "Releases with harmonic data (\(releasePct)% of collection)",
-                            count: releasesWithHarmonicData
-                        )
                     }
                     .padding(.top, 4)
 
@@ -563,15 +553,6 @@ struct CollectionStatsView: View {
     }
 
     // MARK: - Computed stats
-
-    private var releasesWithHarmonicData: Int {
-        let camelotMBIDs = Set(featureEntities.compactMap { $0.camelotCode != nil ? $0.recordingMBID : nil })
-        guard !camelotMBIDs.isEmpty else { return 0 }
-        let instanceIds = Set(trackEntities
-            .filter { camelotMBIDs.contains($0.recordingMBID) }
-            .compactMap { $0.collectionItem?.instanceId })
-        return instanceIds.count
-    }
 
     private var matchedCount: Int {
         entities.filter {
