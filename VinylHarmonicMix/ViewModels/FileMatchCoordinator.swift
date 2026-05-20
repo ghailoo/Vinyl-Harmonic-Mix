@@ -24,7 +24,7 @@ final class FileMatchCoordinator {
     private var scanTask: Task<Void, Never>?
     private var pendingLimit: Int? = nil
 
-    static let formatPriority: [String: Int] = [
+    nonisolated static let formatPriority: [String: Int] = [
         "flac": 0, "aiff": 1, "wav": 2, "m4a": 3,
         "mp3": 4, "ogg": 5, "opus": 6, "mp4": 7
     ]
@@ -237,12 +237,11 @@ final class FileMatchCoordinator {
     }
 
     private func runPhase2(limit: Int?) async -> [(track: TrackSummary, candidates: [FileSummary])] {
-        // Snapshot everything on main actor
-        let (trackSummaries, fileSummaries) = await MainActor.run { () -> ([TrackSummary], [FileSummary]) in
+        // Snapshot data on main actor — no heavy computation here
+        let (trackSummaries, fileSummaries): ([TrackSummary], [FileSummary]) = await MainActor.run {
             let allTracks = (try? self.context.fetch(FetchDescriptor<TrackEntity>())) ?? []
-            let eligible = Array(allTracks
-                .filter { !$0.recordingMBID.isEmpty && $0.fileMatchState == "unscanned" })
-            let scoped = limit.map { Array(eligible.prefix($0)) } ?? eligible
+            let eligible = allTracks.filter { !$0.recordingMBID.isEmpty && $0.fileMatchState == "unscanned" }
+            let scoped = limit.map { Array(eligible.prefix($0)) } ?? Array(eligible)
 
             let tracks = scoped.map { t -> TrackSummary in
                 let artist = t.artistCredit.isEmpty
@@ -253,74 +252,98 @@ final class FileMatchCoordinator {
             }
 
             let allFiles = (try? self.context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
-            let files = allFiles.map { f -> FileSummary in
-                let parentURL = URL(fileURLWithPath: f.filePath).deletingLastPathComponent()
-                let parentName = parentURL.lastPathComponent
-                let key: String
-                if parentName.first?.isNumber == true {
-                    key = FuzzyMatch.normalize(parentURL.deletingLastPathComponent().lastPathComponent)
-                } else {
-                    key = FuzzyMatch.normalize(parentName)
-                }
-                return FileSummary(filePath: f.filePath, fileName: f.fileName, format: f.format,
-                                   artistFolderKey: key, cachedFingerprint: f.fingerprint,
-                                   cachedDuration: f.durationSeconds)
+            let files = allFiles.map { f in
+                FileSummary(filePath: f.filePath, fileName: f.fileName, format: f.format,
+                            artistFolderKey: "", cachedFingerprint: f.fingerprint,
+                            cachedDuration: f.durationSeconds)
             }
             return (tracks, files)
         }
 
         if trackSummaries.isEmpty || fileSummaries.isEmpty { return [] }
 
-        // Build artist-bucket dictionary (off main actor — pure computation)
-        var buckets: [String: [FileSummary]] = [:]
-        for file in fileSummaries {
-            let key = FuzzyMatch.bucketKey(file.artistFolderKey)
-            buckets[key, default: []].append(file)
+        // Computation runs nonisolated (cooperative thread pool, NOT main actor).
+        // Task cancellation propagates through the await chain.
+        return await FileMatchCoordinator._narrowCandidates(
+            tracks: trackSummaries,
+            files: fileSummaries,
+            onProgress: { [weak self] count in
+                await MainActor.run { self?.processedTracks = count }
+            }
+        )
+    }
+
+    // Runs on cooperative thread pool (nonisolated async).
+    // Pre-normalizes every file stem once, builds an inverted token index,
+    // then for each track gathers only the files that share a token — typically
+    // dozens rather than the full 41 k, cutting comparisons by ~3 orders of magnitude.
+    nonisolated private static func _narrowCandidates(
+        tracks: [TrackSummary],
+        files: [FileSummary],
+        onProgress: @Sendable (Int) async -> Void
+    ) async -> [(track: TrackSummary, candidates: [FileSummary])] {
+
+        struct IndexedFile {
+            let summary: FileSummary
+            let tokens: Set<String>
         }
 
-        // For each track, find candidates
-        var result: [(track: TrackSummary, candidates: [FileSummary])] = []
+        // Normalize each file stem once (41 k ops total, not 150 × 41 k)
+        let indexed: [IndexedFile] = files.map { file in
+            let stem = URL(fileURLWithPath: file.fileName).deletingPathExtension().lastPathComponent
+            let norm = FuzzyMatch.normalize(stem)
+            let tokens = Set(norm.split(separator: " ").map(String.init))
+            return IndexedFile(summary: file, tokens: tokens)
+        }
 
-        for track in trackSummaries {
+        // Inverted index: token → files that contain it (skip tokens shorter than 3 chars)
+        var tokenIndex: [String: [IndexedFile]] = [:]
+        for file in indexed {
+            for token in file.tokens where token.count >= 3 {
+                tokenIndex[token, default: []].append(file)
+            }
+        }
+
+        var result: [(track: TrackSummary, candidates: [FileSummary])] = []
+        result.reserveCapacity(tracks.count)
+
+        for (i, track) in tracks.enumerated() {
             if Task.isCancelled { break }
 
-            let artistKey = FuzzyMatch.bucketKey(track.artist)
+            let trackText = FuzzyMatch.normalize("\(track.artist) \(track.title)")
+            let trackTokens = Set(trackText.split(separator: " ").map(String.init))
+            let indexTokens = trackTokens.filter { $0.count >= 3 }
 
-            // Collect files from matching buckets (exact key + adjacent 1-char variants)
-            var pool: [FileSummary] = buckets[artistKey] ?? []
-            // Also try without leading article stripping to catch edge cases
-            let rawKey = String(FuzzyMatch.normalize(track.artist).prefix(4))
-            if rawKey != artistKey, let extra = buckets[rawKey] { pool += extra }
-
-            // If the pool is tiny, also include files whose folder key is close
-            // (handles "The X" vs "X, The" variations that escaped bucket normalization)
-            if pool.count < 5 {
-                for (bucketK, files) in buckets {
-                    if bucketK != artistKey && bucketK != rawKey {
-                        let sim = FuzzyMatch.similarity(bucketK, artistKey)
-                        if sim >= 0.6 { pool += files }
+            // Gather unique candidate files from matching token buckets
+            var seen = Set<String>()
+            var candidates: [IndexedFile] = []
+            for token in indexTokens {
+                for file in tokenIndex[token] ?? [] {
+                    if seen.insert(file.summary.filePath).inserted {
+                        candidates.append(file)
                     }
                 }
             }
 
-            let trackStr = "\(track.artist) \(track.title)"
-            let scored: [(FileSummary, Double)] = pool.compactMap { file in
-                let stem = String(file.fileName.prefix(file.fileName.count - file.format.count - 1))
-                let sim = FuzzyMatch.similarity(trackStr, stem)
-                return sim >= 0.55 ? (file, sim) : nil
+            // Score only the gathered candidates using pre-computed token sets
+            let scored: [(FileSummary, Double)] = candidates.compactMap { file in
+                let score = FuzzyMatch.similarity(tokensA: trackTokens, tokensB: file.tokens)
+                return score >= 0.55 ? (file.summary, score) : nil
             }
 
-            let topCandidates = scored
+            let top = scored
                 .sorted { lhs, rhs in
-                    if lhs.1 != rhs.1 { return lhs.1 > rhs.1 }
-                    let lPrio = FileMatchCoordinator.formatPriority[lhs.0.format] ?? 99
-                    let rPrio = FileMatchCoordinator.formatPriority[rhs.0.format] ?? 99
-                    return lPrio < rPrio
+                    if abs(lhs.1 - rhs.1) > 0.001 { return lhs.1 > rhs.1 }
+                    return (formatPriority[lhs.0.format] ?? 99) < (formatPriority[rhs.0.format] ?? 99)
                 }
                 .prefix(5)
                 .map(\.0)
 
-            result.append((track: track, candidates: Array(topCandidates)))
+            result.append((track: track, candidates: Array(top)))
+
+            if (i + 1) % 10 == 0 {
+                await onProgress(i + 1)
+            }
         }
 
         return result
