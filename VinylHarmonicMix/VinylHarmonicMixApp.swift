@@ -1,32 +1,63 @@
-//
-//  VinylHarmonicMixApp.swift
-//  VinylHarmonicMix
-//
-//  Created by Ghailen Ben Othman on 19/05/2026.
-//
-
 import SwiftUI
 import SwiftData
 
 @main
 struct VinylHarmonicMixApp: App {
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Item.self,
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+    private let container: ModelContainer
+    @State private var settingsViewModel = SettingsViewModel()
+    @State private var collectionViewModel: CollectionViewModel
+    @State private var scanCoordinator: MBIDScanCoordinator
 
+    init() {
         do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
+            let schema = Schema([
+                CollectionItemEntity.self,
+                BasicInformationEntity.self,
+                ArtistCreditEntity.self,
+                LabelCreditEntity.self,
+                FormatEntity.self,
+                ReleaseDetailEntity.self,
+            ])
+            container = try ModelContainer(for: schema)
         } catch {
-            fatalError("Could not create ModelContainer: \(error)")
+            fatalError("SwiftData container init failed: \(error)")
         }
-    }()
+        let ctx = container.mainContext
+        _collectionViewModel = State(initialValue: CollectionViewModel(context: ctx))
+        _scanCoordinator = State(initialValue: MBIDScanCoordinator(context: ctx))
+#if DEBUG
+        Task { @MainActor in
+            let itemDescriptor = FetchDescriptor<CollectionItemEntity>()
+            let detailDescriptor = FetchDescriptor<ReleaseDetailEntity>()
+            let itemCount = (try? ctx.fetchCount(itemDescriptor)) ?? -1
+            let detailCount = (try? ctx.fetchCount(detailDescriptor)) ?? -1
+            let allItems = (try? ctx.fetch(itemDescriptor)) ?? []
+            let distinctIds = Set(allItems.map(\.instanceId)).count
+            print("📊 SwiftData state: CollectionItemEntity rows = \(itemCount), distinct instanceIds = \(distinctIds), ReleaseDetailEntity rows = \(detailCount)")
+            if distinctIds < itemCount {
+                print("⚠️ DUPLICATE ROWS DETECTED: \(itemCount - distinctIds) duplicates with same instanceId — @Attribute(.unique) is not being enforced")
+            }
+            let states = Dictionary(grouping: allItems, by: \.mbidScanState).mapValues(\.count)
+            print("📊 mbidScanState distribution: \(states)")
+        }
+#endif
+    }
 
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environment(settingsViewModel)
+                .environment(collectionViewModel)
+                .environment(scanCoordinator)
         }
-        .modelContainer(sharedModelContainer)
+        .modelContainer(container)
+#if os(macOS)
+        Settings {
+            NavigationStack {
+                SettingsView()
+            }
+            .environment(settingsViewModel)
+        }
+#endif
     }
 }

@@ -1,80 +1,54 @@
-//
-//  ContentView.swift
-//  VinylHarmonicMix
-//
-//  Created by Ghailen Ben Othman on 19/05/2026.
-//
-
 import SwiftUI
-import SwiftData
 
 struct ContentView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Query private var items: [Item]
-
-    var body: some View {
-        NavigationViewWrapper {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                    } label: {
-                        Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
-                    }
-                }
-                .onDelete(perform: deleteItems)
-            }
-#if os(macOS)
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200)
-#endif
-            .toolbar {
-#if os(iOS)
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
-#endif
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
-                    }
-                }
-            }
-        }
-    }
-
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(timestamp: Date())
-            modelContext.insert(newItem)
-        }
-    }
-
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets {
-                modelContext.delete(items[index])
-            }
-        }
-    }
-}
-
-fileprivate struct NavigationViewWrapper<Content: View>: View {
-    let content: () -> Content
+    @Environment(SettingsViewModel.self) private var settings
+    @Environment(CollectionViewModel.self) private var collection
+    @State private var showSettings = false
 
     var body: some View {
 #if os(macOS)
         NavigationSplitView {
-            content()
+            macSidebar
         } detail: {
-            Text("Select an item")
+            CollectionGridView()
         }
 #else
-        content()
+        NavigationStack {
+            CollectionGridView()
+                .onAppear { collection.refreshConfiguration() }
+                .navigationTitle("VinylHarmonicMix")
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        NavigationLink {
+                            SettingsView()
+                        } label: {
+                            Label("Settings", systemImage: "gear")
+                        }
+                    }
+                }
+        }
 #endif
     }
-}
 
-#Preview {
-    ContentView()
-        .modelContainer(for: Item.self, inMemory: true)
+#if os(macOS)
+    private var macSidebar: some View {
+        List {
+            Label("Collection", systemImage: "record.circle")
+            Button(action: { showSettings = true }) {
+                Label("Settings", systemImage: "gear")
+            }
+            .buttonStyle(.plain)
+        }
+        .listStyle(.sidebar)
+        .navigationSplitViewColumnWidth(min: 180, ideal: 220)
+        .navigationTitle("VinylHarmonicMix")
+        .sheet(isPresented: $showSettings, onDismiss: {
+            collection.refreshConfiguration()
+        }) {
+            NavigationStack { SettingsView() }
+                .environment(settings)
+                .frame(minWidth: 440, minHeight: 340)
+        }
+    }
+#endif
 }
