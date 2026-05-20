@@ -51,9 +51,10 @@ struct MBIDScanBanner: View {
     }
 
     private var titleText: String {
+        let isSearch = coordinator.scanMode == .searchFallback
         switch coordinator.phase {
-        case .scanning:  return "Scanning MusicBrainz IDs"
-        case .paused:    return "Scan paused"
+        case .scanning:  return isSearch ? "Scanning MusicBrainz IDs (search)" : "Scanning MusicBrainz IDs"
+        case .paused:    return isSearch ? "Search scan paused" : "Scan paused"
         case .completed: return "Scan complete"
         case .cancelled: return "Scan cancelled"
         case .failed(let msg): return "Scan failed: \(msg)"

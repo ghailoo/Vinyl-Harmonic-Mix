@@ -47,33 +47,49 @@ struct CollectionGridView: View {
         }
     }
 
-    @ViewBuilder
     private var scanButton: some View {
         let unscanned = scanCoordinator.unscannedCount
+        let notFound = scanCoordinator.notFoundCount
         let isActive: Bool = {
             switch scanCoordinator.phase {
             case .scanning, .paused: return true
             default: return false
             }
         }()
+        let badgeCount = unscanned > 0 ? unscanned : notFound
 
-        Button {
-            if isActive {
-                showRescanAlert = true
-            } else if case .idle = scanCoordinator.phase {
-                if unscanned > 0 {
-                    scanCoordinator.start()
-                } else {
-                    showRescanAlert = true
-                }
-            } else {
-                showRescanAlert = true
+        return Menu {
+            Button {
+                scanCoordinator.start()
+            } label: {
+                Label("Scan unscanned (\(unscanned))", systemImage: "magnifyingglass")
             }
+            .disabled(unscanned == 0 || isActive)
+
+            Button {
+                print("🔘 [1] Retry notFound menu item tapped")
+                print("🔘 [1a] Current notFoundCount = \(scanCoordinator.notFoundCount)")
+                print("🔘 [1b] Current phase = \(scanCoordinator.phase)")
+                scanCoordinator.startSearchScan()
+                print("🔘 [1c] After calling startSearchScan(), phase = \(scanCoordinator.phase)")
+            } label: {
+                Label("Retry notFound (\(notFound))", systemImage: "arrow.clockwise.circle")
+            }
+            .disabled(notFound == 0 || isActive)
+
+            Divider()
+
+            Button(role: .destructive) {
+                showRescanAlert = true
+            } label: {
+                Label("Rescan everything…", systemImage: "arrow.counterclockwise")
+            }
+            .disabled(isActive)
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "music.note.list")
-                if unscanned > 0 {
-                    Text("\(unscanned)")
+                if badgeCount > 0 {
+                    Text("\(badgeCount)")
                         .font(.system(size: 11, weight: .semibold))
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
@@ -82,7 +98,7 @@ struct CollectionGridView: View {
                 }
             }
         }
-        .help(unscanned > 0 ? "Scan \(unscanned) unscanned releases on MusicBrainz" : "Rescan all releases on MusicBrainz")
+        .help("Scan MusicBrainz IDs")
     }
 
     private var gridContent: some View {

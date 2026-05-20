@@ -481,6 +481,51 @@ struct CollectionDetailView: View {
                 .padding(.horizontal, 20)
                 .padding(.bottom, 12)
 
+            case .matchedViaSearch:
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                            .font(.system(size: 13))
+                        Text(entity.mbidMatchedTitle ?? "Matched")
+                            .font(.system(size: 13))
+                        Text("via search")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.secondary.opacity(0.1))
+                            .cornerRadius(3)
+                        if let matchedTitle = entity.mbidMatchedTitle,
+                           matchedTitle.lowercased() != item.basicInformation.title.lowercased() {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                                .font(.system(size: 12))
+                                .help("Title mismatch — Discogs: \(item.basicInformation.title) · MusicBrainz: \(matchedTitle)")
+                        }
+                    }
+                    if let artist = entity.mbidMatchedArtist, !artist.isEmpty {
+                        Text(artist)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                    }
+                    if let mbid = entity.mbid {
+                        Button {
+                            if let url = URL(string: "https://musicbrainz.org/release/\(mbid)") {
+                                openURL(url)
+                            }
+                        } label: {
+                            Label("View on MusicBrainz", systemImage: "arrow.up.right.square")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help("Matched via indexed search — verify the release matches your pressing.")
+                        .padding(.top, 4)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 12)
+
             case .unscanned:
                 HStack(spacing: 6) {
                     Image(systemName: "clock")

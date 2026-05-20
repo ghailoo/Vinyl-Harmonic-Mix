@@ -3,4 +3,5 @@ enum MBIDScanState: String {
     case matched
     case notFound
     case failed
+    case matchedViaSearch
 }

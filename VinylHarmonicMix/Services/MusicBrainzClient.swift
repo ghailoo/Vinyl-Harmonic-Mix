@@ -15,7 +15,7 @@ private actor MBRateLimiter {
     }
 }
 
-// MARK: - Response types
+// MARK: - URL-lookup response types
 
 private struct MBURLResponse: Decodable {
     let relations: [MBRelation]
@@ -45,12 +45,45 @@ private struct MBArtist: Decodable {
     let name: String
 }
 
+// MARK: - Search response types
+
+private struct MBSearchResponse: Decodable {
+    let releases: [MBSearchRelease]
+}
+
+private struct MBSearchRelease: Decodable {
+    let id: String
+    let score: Int
+    let title: String
+    let date: String?
+    let country: String?
+    let artistCredit: [MBSearchArtistCredit]?
+
+    enum CodingKeys: String, CodingKey {
+        case id, score, title, date, country
+        case artistCredit = "artist-credit"
+    }
+}
+
+private struct MBSearchArtistCredit: Decodable {
+    let name: String?
+}
+
 // MARK: - Public types
 
 struct MBIDMatch {
     let mbid: String
     let title: String
     let artist: String
+}
+
+struct MBIDSearchMatch {
+    let mbid: String
+    let title: String
+    let artist: String
+    let score: Int
+    let date: String?
+    let country: String?
 }
 
 enum MBError: LocalizedError {
@@ -81,7 +114,15 @@ final class MusicBrainzClient {
         return req
     }
 
-    // MARK: - Scan lookup (rate-limited)
+    // MARK: - Lucene escaping
+
+    private func escapeLucene(_ s: String) -> String {
+        let special: Set<Character> = ["+", "-", "&", "|", "!", "(", ")", "{", "}", "[", "]",
+                                       "^", "\"", "~", "*", "?", ":", "\\", "/"]
+        return s.map { special.contains($0) ? "\\\($0)" : String($0) }.joined()
+    }
+
+    // MARK: - URL-lookup scan (rate-limited)
 
     func findMBID(forDiscogsReleaseId releaseId: Int) async throws -> MBIDMatch? {
         let urlString = "https://musicbrainz.org/ws/2/url?resource=https://www.discogs.com/release/\(releaseId)&inc=release-rels&fmt=json"
@@ -97,11 +138,9 @@ final class MusicBrainzClient {
 
         switch http.statusCode {
         case 200:
-            return try parseMBIDMatch(from: data)
-
+            return try parseURLMatch(from: data)
         case 404:
             return nil
-
         case 429, 503:
             try? await Task.sleep(nanoseconds: 5_000_000_000)
             await rateLimiter.wait()
@@ -109,14 +148,13 @@ final class MusicBrainzClient {
             guard let retryHttp = retryResponse as? HTTPURLResponse, retryHttp.statusCode == 200 else {
                 return nil
             }
-            return try parseMBIDMatch(from: retryData)
-
+            return try parseURLMatch(from: retryData)
         default:
             throw MBError.badResponse(http.statusCode)
         }
     }
 
-    private func parseMBIDMatch(from data: Data) throws -> MBIDMatch? {
+    private func parseURLMatch(from data: Data) throws -> MBIDMatch? {
         let decoded = try JSONDecoder().decode(MBURLResponse.self, from: data)
         guard let release = decoded.relations.compactMap({ $0.release }).first else {
             return nil
@@ -125,6 +163,58 @@ final class MusicBrainzClient {
             .compactMap { $0.name ?? $0.artist?.name }
             .joined(separator: " & ") ?? ""
         return MBIDMatch(mbid: release.id, title: release.title, artist: artistName)
+    }
+
+    // MARK: - Search-based fallback (rate-limited, same queue)
+
+    func searchMBID(artist: String, title: String, year: Int?) async throws -> MBIDSearchMatch? {
+        let escapedArtist = escapeLucene(artist)
+        let escapedTitle = escapeLucene(title)
+        var lucene = "artist:\"\(escapedArtist)\" AND release:\"\(escapedTitle)\""
+        if let year, year > 0 {
+            lucene += " AND date:\(year)"
+        }
+        guard let encoded = lucene.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "https://musicbrainz.org/ws/2/release?query=\(encoded)&limit=5&fmt=json") else {
+            return nil
+        }
+
+        await rateLimiter.wait()
+        return try await searchWithRetry(url: url)
+    }
+
+    private func searchWithRetry(url: URL) async throws -> MBIDSearchMatch? {
+        let (data, response) = try await session.data(for: makeRequest(url))
+        guard let http = response as? HTTPURLResponse else { return nil }
+
+        switch http.statusCode {
+        case 200:
+            return try parseSearchMatch(from: data)
+        case 429, 503:
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            await rateLimiter.wait()
+            let (retryData, retryResponse) = try await session.data(for: makeRequest(url))
+            guard let retryHttp = retryResponse as? HTTPURLResponse, retryHttp.statusCode == 200 else {
+                return nil
+            }
+            return try parseSearchMatch(from: retryData)
+        default:
+            throw MBError.badResponse(http.statusCode)
+        }
+    }
+
+    private func parseSearchMatch(from data: Data) throws -> MBIDSearchMatch? {
+        let decoded = try JSONDecoder().decode(MBSearchResponse.self, from: data)
+        guard let top = decoded.releases.first, top.score >= 90 else { return nil }
+        let artistName = top.artistCredit?.compactMap(\.name).joined(separator: " ") ?? ""
+        return MBIDSearchMatch(
+            mbid: top.id,
+            title: top.title,
+            artist: artistName,
+            score: top.score,
+            date: top.date,
+            country: top.country
+        )
     }
 
     // MARK: - Connectivity test (not rate-limited)
