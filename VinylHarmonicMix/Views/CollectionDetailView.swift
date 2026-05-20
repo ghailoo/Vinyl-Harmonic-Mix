@@ -284,7 +284,7 @@ struct CollectionDetailView: View {
                             .frame(width: 50, alignment: .trailing)
                     }
                     .padding(.top, 6)
-                    .padding(.bottom, rmbid != nil ? 2 : 6)
+                    .padding(.bottom, rmbid != nil ? 3 : 6)
                     .padding(.horizontal, 20)
 
                     if let rmbid {
@@ -561,10 +561,10 @@ struct CollectionDetailView: View {
     }
 
     private func recordingMBIDCaption(_ rmbid: String) -> some View {
-        let short = rmbid.count >= 8 ? String(rmbid.prefix(8)) + "…" : rmbid
+        let short    = rmbid.count >= 8 ? String(rmbid.prefix(8)) + "…" : rmbid
         let features = featuresEntity(forRecordingMBID: rmbid)
-        let bpmText: String? = features?.bpm.map { String(format: "%.0f BPM", $0) }
-        let camelot = features?.camelotCode
+        let bpm      = features?.bpm
+        let camelot  = features?.camelotCode
 
         return Button {
             #if os(macOS)
@@ -579,32 +579,28 @@ struct CollectionDetailView: View {
                 copiedRecordingMBID = nil
             }
         } label: {
-            HStack(spacing: 6) {
-                HStack(spacing: 4) {
-                    Text("REC:")
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.tertiary)
-                    Text(copiedRecordingMBID == rmbid ? "✓ Copied" : short)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.tertiary)
+            HStack(spacing: 8) {
+                // REC hash — left side, understated
+                Text(copiedRecordingMBID == rmbid ? "✓ Copied" : "REC: \(short)")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.tertiary)
+
+                Spacer(minLength: 12)
+
+                // BPM — right side, prominent
+                if let bpm {
+                    Text("\(Int(bpm)) BPM")
+                        .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(.primary)
                 }
-                if let bpm = bpmText {
-                    Text("·")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                    Text(bpm)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.tertiary)
-                }
+
+                // Camelot pill — right side
                 if let code = camelot {
-                    Text("·")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
                     Text(code)
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .font(.system(size: 11, weight: .bold).monospacedDigit())
                         .foregroundStyle(.white)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
                         .background(Capsule().fill(camelotColor(for: code)))
                 }
             }
@@ -613,12 +609,12 @@ struct CollectionDetailView: View {
     }
 
     private func camelotColor(for code: String) -> Color {
-        guard let number = Int(code.dropLast()),
-              let letter = code.last,
-              number >= 1, number <= 12 else { return Color.gray.opacity(0.6) }
-        let hue = Double(number - 1) / 12.0
-        let isMinor = letter == "A"
-        return Color(hue: hue, saturation: 0.65, brightness: isMinor ? 0.55 : 0.75)
+        guard let num = Int(code.dropLast()), num >= 1, num <= 12 else { return .gray }
+        let isMinor = code.hasSuffix("A")
+        let hue        = Double(num - 1) / 12.0
+        let saturation = isMinor ? 0.75 : 0.85
+        let brightness = isMinor ? 0.70 : 0.85
+        return Color(hue: hue, saturation: saturation, brightness: brightness)
     }
 
     // MARK: - Data loading
