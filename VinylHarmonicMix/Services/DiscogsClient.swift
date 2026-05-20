@@ -84,6 +84,15 @@ final class DiscogsClient {
         return try decode(ReleaseDetail.self, from: data)
     }
 
+    func fetchReleaseDetailRaw(id: Int, token: String) async throws -> Data {
+        guard let url = URL(string: "https://api.discogs.com/releases/\(id)") else {
+            throw DiscogsError.invalidResponse
+        }
+        let (data, http) = try await execute(authorizedRequest(url: url, token: token))
+        guard http.statusCode == 200 else { throw DiscogsError.httpError(http.statusCode) }
+        return data
+    }
+
     // MARK: - Private helpers
 
     private func execute(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {

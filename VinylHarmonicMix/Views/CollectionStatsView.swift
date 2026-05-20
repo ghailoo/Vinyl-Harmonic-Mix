@@ -2,11 +2,12 @@ import SwiftUI
 import SwiftData
 
 struct CollectionStatsView: View {
+    @Environment(DetailCacheCoordinator.self) private var cacheCoordinator
     @Query private var entities: [CollectionItemEntity]
     @Query private var detailEntities: [ReleaseDetailEntity]
 
     @State private var cachedDetails: [ReleaseDetail] = []
-    @State private var showPrewarmAlert = false
+    @State private var showRefreshAlert = false
 
     var body: some View {
         Group {
@@ -20,25 +21,35 @@ struct CollectionStatsView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text("Stats")
-                            .font(.system(size: 28, weight: .bold))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.bottom, 4)
-
-                        heroCard
-
-                        if !formatCounts.isEmpty  { formatCard }
-                        if !genreCounts.isEmpty   { genreCard }
-                        if !decadeCounts.isEmpty  { decadeCard }
-                        if !labelCounts.isEmpty   { labelsCard }
-                        if !artistCounts.isEmpty  { artistsCard }
-                        tracksCard
+                VStack(spacing: 0) {
+                    if cacheCoordinator.shouldShowPanel {
+                        DetailCachePanelView(coordinator: cacheCoordinator)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 12)
+                            .padding(.bottom, 8)
+                            .transition(.move(edge: .top).combined(with: .opacity))
                     }
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 20)
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
+                            Text("Stats")
+                                .font(.system(size: 28, weight: .bold))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.bottom, 4)
+
+                            heroCard
+
+                            if !formatCounts.isEmpty  { formatCard }
+                            if !genreCounts.isEmpty   { genreCard }
+                            if !decadeCounts.isEmpty  { decadeCard }
+                            if !labelCounts.isEmpty   { labelsCard }
+                            if !artistCounts.isEmpty  { artistsCard }
+                            tracksCard
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 20)
+                    }
                 }
+                .animation(.easeInOut(duration: 0.25), value: cacheCoordinator.shouldShowPanel)
             }
         }
         .navigationTitle("Stats")
@@ -47,10 +58,11 @@ struct CollectionStatsView: View {
                 try? JSONDecoder().decode(ReleaseDetail.self, from: $0.jsonData)
             }
         }
-        .alert("Pre-warm coming soon", isPresented: $showPrewarmAlert) {
-            Button("OK", role: .cancel) {}
+        .alert("Refresh all cached details?", isPresented: $showRefreshAlert) {
+            Button("Refresh (~15 min)", role: .destructive) { cacheCoordinator.startRefresh() }
+            Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Pre-warming will be added in the next milestone (~15 min Discogs scan).")
+            Text("All \(entities.count.formatted()) releases are already cached. Re-fetching will overwrite existing data and take approximately 15 minutes.")
         }
     }
 
@@ -262,13 +274,29 @@ struct CollectionStatsView: View {
 
     // MARK: - Tracks card
 
+    private var cacheIsEffectivelyComplete: Bool {
+        guard entities.count > 0 else { return false }
+        return cachedDetailCount >= Int(Double(entities.count) * 0.95)
+    }
+
     private var tracksCard: some View {
-        let allCached = cachedDetailCount > 0 && cachedDetailCount == entities.count
-        return sectionCard(accent: true) {
+        let cachedCount = detailEntities.count
+        let totalCount = entities.count
+        let allCached = cachedCount >= totalCount && totalCount > 0
+        let effectivelyComplete = cacheIsEffectivelyComplete
+        let uncachedCount = max(0, totalCount - cachedCount)
+        let isRunning: Bool = {
+            switch cacheCoordinator.phase {
+            case .scanning, .paused: return true
+            default: return false
+            }
+        }()
+
+        return sectionCard(accent: !effectivelyComplete && !allCached) {
             HStack(spacing: 6) {
                 Text("Tracks & duration")
                     .font(.system(size: 17, weight: .semibold))
-                if cachedDetailCount > 0 && !allCached {
+                if cachedDetailCount > 0 && !effectivelyComplete {
                     HStack(spacing: 4) {
                         Image(systemName: "info.circle").font(.caption)
                         Text("Partial data").font(.caption)
@@ -280,18 +308,18 @@ struct CollectionStatsView: View {
             .padding(.bottom, 12)
 
             if cachedDetailCount == 0 {
-                Text("No detail data yet. Caching will fetch tracklists, credits, and notes for all \(entities.count.formatted()) releases (~15 min).")
+                Text("No detail data yet. Cache all releases to see tracklists, duration, and credits (~15 min).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
                 VStack(alignment: .leading, spacing: 4) {
                     if allCached {
-                        Text("\(cachedTrackCount.formatted()) tracks across all \(entities.count.formatted()) releases")
+                        Text("\(cachedTrackCount.formatted()) tracks across all \(totalCount.formatted()) releases")
                             .font(.system(size: 14))
                     } else {
-                        Text("\(cachedTrackCount.formatted()) tracks across \(cachedDetailCount.formatted()) of \(entities.count.formatted()) releases (\(cachePercent)%)")
+                        Text("\(cachedTrackCount.formatted()) tracks across \(cachedDetailCount.formatted()) of \(totalCount.formatted()) releases (\(cachePercent)%)")
                             .font(.system(size: 14))
-                        if let est = estimatedTotalTracks {
+                        if !effectivelyComplete, let est = estimatedTotalTracks {
                             Text("Estimated total: \(est.formatted()) tracks (extrapolated)")
                                 .font(.system(size: 13))
                                 .foregroundStyle(.secondary)
@@ -303,11 +331,21 @@ struct CollectionStatsView: View {
                 }
             }
 
-            Button(allCached && entities.count > 0 ? "Refresh detail cache" : "Cache all release details") {
-                showPrewarmAlert = true
+            Button(
+                isRunning           ? "Caching…" :
+                allCached           ? "Refresh detail cache" :
+                effectivelyComplete ? "Fill remaining (\(uncachedCount))" :
+                                      "Cache all release details"
+            ) {
+                if allCached {
+                    showRefreshAlert = true
+                } else {
+                    cacheCoordinator.start()
+                }
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+            .disabled(isRunning)
             .padding(.top, 10)
         }
     }
@@ -385,7 +423,7 @@ struct CollectionStatsView: View {
         return counts.sorted { $0.value > $1.value }.prefix(10).map { (label: $0.key, count: $0.value) }
     }
 
-    // MARK: - Track stats
+    // MARK: - Track stats (from decoded cache)
 
     private var cachedDetailCount: Int { cachedDetails.count }
 
@@ -400,7 +438,7 @@ struct CollectionStatsView: View {
     }
 
     private var estimatedTotalTracks: Int? {
-        guard cachedDetailCount > 0 else { return nil }
+        guard cachedDetailCount > 0, cachedDetailCount < entities.count else { return nil }
         return (cachedTrackCount / cachedDetailCount) * entities.count
     }
 

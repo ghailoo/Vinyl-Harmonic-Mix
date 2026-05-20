@@ -90,9 +90,19 @@ struct CollectionGridView: View {
         .animation(.easeInOut(duration: 0.2), value: activeSort)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                TextField("Search artist, title, year…", text: $searchQuery)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 240)
+                HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundStyle(.secondary)
+                            .font(.system(size: 13))
+                        TextField("Search artist, title, year…", text: $searchQuery)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 13))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .frame(width: 240, height: 24)
+                    .background(Capsule().fill(Color.secondary.opacity(0.12)))
+                    .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.2), lineWidth: 0.5))
                 sortButton
                 filterButton
                 scanButton

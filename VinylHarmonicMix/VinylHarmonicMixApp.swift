@@ -7,6 +7,7 @@ struct VinylHarmonicMixApp: App {
     @State private var settingsViewModel = SettingsViewModel()
     @State private var collectionViewModel: CollectionViewModel
     @State private var scanCoordinator: MBIDScanCoordinator
+    @State private var cacheCoordinator: DetailCacheCoordinator
 
     init() {
         do {
@@ -25,6 +26,7 @@ struct VinylHarmonicMixApp: App {
         let ctx = container.mainContext
         _collectionViewModel = State(initialValue: CollectionViewModel(context: ctx))
         _scanCoordinator = State(initialValue: MBIDScanCoordinator(context: ctx))
+        _cacheCoordinator = State(initialValue: DetailCacheCoordinator(context: ctx))
 #if DEBUG
         Task { @MainActor in
             let itemDescriptor = FetchDescriptor<CollectionItemEntity>()
@@ -49,6 +51,7 @@ struct VinylHarmonicMixApp: App {
                 .environment(settingsViewModel)
                 .environment(collectionViewModel)
                 .environment(scanCoordinator)
+                .environment(cacheCoordinator)
         }
         .modelContainer(container)
 #if os(macOS)

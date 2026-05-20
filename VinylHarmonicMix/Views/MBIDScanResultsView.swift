@@ -39,7 +39,7 @@ struct MBIDScanResultsView: View {
                 Divider()
                 failedPane
             }
-            .frame(height: 160)
+            .frame(height: panelContentHeight)
             Divider()
             actionButtons
         }
@@ -277,6 +277,16 @@ struct MBIDScanResultsView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+    }
+
+    // MARK: - Adaptive pane height
+
+    private var panelContentHeight: CGFloat {
+        let baseHeight: CGFloat = 180
+        let failedRowHeight: CGFloat = 56
+        let failedCount = coordinator.failedItems.count
+        guard failedCount > 3 else { return baseHeight }
+        return min(baseHeight + CGFloat(failedCount - 3) * failedRowHeight, 360)
     }
 
     // MARK: - Helpers
