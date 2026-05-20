@@ -1,4 +1,48 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
+
+private struct LibraryScanProgressPanel: View {
+    let progress: SettingsViewModel.LibraryScanProgress
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                if progress.isComplete {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                } else {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+                Text(progress.isComplete ? "Scan complete" : "Scanning local library…")
+                    .font(.system(size: 13, weight: .semibold))
+            }
+
+            Text("\(progress.audioFilesFound.formatted()) audio files found")
+                .font(.system(size: 12).monospacedDigit())
+
+            if !progress.isComplete {
+                Text("Currently in: \(progress.currentFolder)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text("\(progress.itemsExamined.formatted()) items examined")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+
+                Button("Cancel", action: onCancel)
+                    .controlSize(.small)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+    }
+}
 
 struct SettingsView: View {
     @Environment(SettingsViewModel.self) private var settings
@@ -51,6 +95,151 @@ struct SettingsView: View {
                 Section {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.red)
+                }
+            }
+
+            // MARK: Local Audio Library
+            Section("Local Audio Library") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Library folder")
+                        .font(.headline)
+                    if settings.localLibraryDisplayPath.isEmpty {
+                        Text("Not selected")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text(settings.localLibraryDisplayPath)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                    }
+                }
+
+                HStack(spacing: 8) {
+#if os(macOS)
+                    Button("Choose folder…") {
+                        let panel = NSOpenPanel()
+                        panel.canChooseDirectories = true
+                        panel.canChooseFiles = false
+                        panel.allowsMultipleSelection = false
+                        panel.message = "Select your music library root folder"
+                        panel.prompt = "Select"
+                        if panel.runModal() == .OK, let url = panel.url {
+                            settings.setLibraryBookmark(from: url)
+                        }
+                    }
+#endif
+                    Button("Test access") {
+                        settings.testLibraryAccess()
+                    }
+                    .disabled(settings.localLibraryDisplayPath.isEmpty || settings.isTestingLibrary)
+                }
+
+                if let progress = settings.scanProgress {
+                    LibraryScanProgressPanel(progress: progress) {
+                        settings.cancelLibraryScan()
+                    }
+                }
+
+                if settings.scanProgress == nil {
+                    switch settings.libraryTestStatus {
+                    case .idle:
+                        EmptyView()
+                    case .accessible(let count):
+                        Label("Accessible · \(count.formatted()) audio files found",
+                              systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    case .unreachable:
+                        Label("Cannot access folder — it may be unmounted. Re-select it.",
+                              systemImage: "xmark.circle.fill")
+                            .foregroundStyle(.red)
+                    case .empty:
+                        Label("Folder accessible but no audio files found",
+                              systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+
+            Section {
+                switch settings.fpcalcStatus {
+                case .found(let path):
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("Chromaprint found at \(path)", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                            .font(.caption)
+
+                        HStack(spacing: 8) {
+                            Button("Test fpcalc") {
+                                Task { await settings.testFpcalcExecution() }
+                            }
+                            .font(.caption)
+                            .disabled(settings.isTestingFpcalc)
+
+                            if settings.isTestingFpcalc {
+                                ProgressView().scaleEffect(0.7)
+                            }
+                        }
+
+                        switch settings.fpcalcExecutionStatus {
+                        case .idle:
+                            EmptyView()
+                        case .success(let version):
+                            Label("fpcalc works: \(version)", systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                                .font(.caption)
+                        case .blocked(let msg):
+                            Label("fpcalc found but cannot execute: \(msg)",
+                                  systemImage: "xmark.circle.fill")
+                                .foregroundStyle(.red)
+                                .font(.caption)
+                        }
+                    }
+
+                case .notFound:
+                    VStack(alignment: .leading, spacing: 2) {
+                        Label("Chromaprint (fpcalc) not found",
+                              systemImage: "xmark.circle.fill")
+                            .foregroundStyle(.red)
+                            .font(.caption)
+                        Text("Install with: brew install chromaprint")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+
+            Section {
+                SecureField("AcoustID API key", text: $settings.acoustIDKey)
+                    .onSubmit { settings.saveAcoustIDKey() }
+
+                HStack(spacing: 8) {
+                    Button("Test API key") {
+                        Task { await settings.testAcoustIDKey() }
+                    }
+                    .disabled(settings.acoustIDKey.isEmpty || settings.isTestingAcoustID)
+
+                    if settings.isTestingAcoustID {
+                        ProgressView()
+                            .padding(.leading, 4)
+                    }
+                }
+
+                switch settings.acoustIDTestStatus {
+                case .idle:
+                    EmptyView()
+                case .valid:
+                    Label("API key valid", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                case .invalid:
+                    Label("Invalid API key", systemImage: "xmark.circle.fill")
+                        .foregroundStyle(.red)
+                case .networkError(let msg):
+                    Label("Could not reach AcoustID: \(msg)",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
                 }
             }
 

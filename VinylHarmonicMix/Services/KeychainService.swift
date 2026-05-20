@@ -45,6 +45,7 @@ final class KeychainService {
         case token = "discogs_token"
         case username = "discogs_username"
         case musicbrainzContactEmail = "mb_contact_email"
+        case acoustIDKey = "acoustid_api_key"
     }
 
     enum KeychainError: LocalizedError {
