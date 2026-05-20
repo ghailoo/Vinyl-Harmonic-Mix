@@ -12,7 +12,9 @@ struct CollectionDetailView: View {
     @State private var isLoading = false
     @State private var loadError: String?
     @State private var itemEntity: CollectionItemEntity?
+    @State private var trackEntities: [TrackEntity] = []
     @State private var mbidCopied = false
+    @State private var copiedRecordingMBID: String? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -24,6 +26,7 @@ struct CollectionDetailView: View {
         .task(id: item.id) {
             await load()
             loadEntity()
+            loadTrackEntities()
         }
     }
 
@@ -262,22 +265,33 @@ struct CollectionDetailView: View {
             .padding(.bottom, 4)
 
             ForEach(Array(detail.tracklist.enumerated()), id: \.offset) { _, track in
-                HStack(spacing: 0) {
-                    Text(track.position)
-                        .font(.system(size: 13).monospaced())
-                        .foregroundStyle(.secondary)
-                        .frame(width: 40, alignment: .leading)
-                    Text(track.title)
-                        .font(.system(size: 14))
-                        .lineLimit(2)
-                    Spacer()
-                    Text(track.duration.isEmpty ? "—" : track.duration)
-                        .font(.system(size: 13).monospaced())
-                        .foregroundStyle(.secondary)
-                        .frame(width: 50, alignment: .trailing)
+                let rmbid = recordingMBID(forPosition: track.position)
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: 0) {
+                        Text(track.position)
+                            .font(.system(size: 13).monospaced())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 40, alignment: .leading)
+                        Text(track.title)
+                            .font(.system(size: 14))
+                            .lineLimit(2)
+                        Spacer()
+                        Text(track.duration.isEmpty ? "—" : track.duration)
+                            .font(.system(size: 13).monospaced())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 50, alignment: .trailing)
+                    }
+                    .padding(.top, 6)
+                    .padding(.bottom, rmbid != nil ? 2 : 6)
+                    .padding(.horizontal, 20)
+
+                    if let rmbid {
+                        recordingMBIDCaption(rmbid)
+                            .padding(.bottom, 6)
+                            .padding(.horizontal, 20)
+                            .padding(.leading, 40)
+                    }
                 }
-                .padding(.vertical, 6)
-                .padding(.horizontal, 20)
             }
         }
     }
@@ -516,6 +530,48 @@ struct CollectionDetailView: View {
         )
         descriptor.fetchLimit = 1
         itemEntity = try? modelContext.fetch(descriptor).first
+    }
+
+    private func loadTrackEntities() {
+        guard let entity = itemEntity else { return }
+        trackEntities = entity.tracks
+    }
+
+    private func normalizePosition(_ s: String) -> String {
+        s.replacingOccurrences(of: " ", with: "").uppercased()
+    }
+
+    private func recordingMBID(forPosition position: String) -> String? {
+        guard !position.isEmpty else { return nil }
+        let norm = normalizePosition(position)
+        return trackEntities.first { normalizePosition($0.position) == norm }?.recordingMBID
+    }
+
+    private func recordingMBIDCaption(_ rmbid: String) -> some View {
+        let short = rmbid.count >= 8 ? String(rmbid.prefix(8)) + "…" : rmbid
+        return Button {
+            #if os(macOS)
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(rmbid, forType: .string)
+            #else
+            UIPasteboard.general.string = rmbid
+            #endif
+            copiedRecordingMBID = rmbid
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                copiedRecordingMBID = nil
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text("REC:")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+                Text(copiedRecordingMBID == rmbid ? "✓ Copied" : short)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Data loading

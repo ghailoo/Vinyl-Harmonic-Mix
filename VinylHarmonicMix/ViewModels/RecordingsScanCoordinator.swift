@@ -1,0 +1,275 @@
+import Foundation
+import SwiftData
+
+@MainActor
+@Observable
+final class RecordingsScanCoordinator {
+
+    enum Phase {
+        case idle
+        case scanning
+        case paused
+        case completed
+        case cancelled
+        case failed(String)
+    }
+
+    struct ScanningItemInfo {
+        let title: String
+        let artist: String
+    }
+
+    struct FailedRecordingInfo: Identifiable {
+        let instanceId: Int
+        let title: String
+        let artist: String
+        var id: Int { instanceId }
+    }
+
+    var phase: Phase = .idle
+    var passProcessed: Int = 0
+    var passTotal: Int = 0
+    var currentItem: ScanningItemInfo? = nil
+    var showBanner: Bool = false
+
+    private let context: ModelContext
+    private let client = MusicBrainzClient()
+    private var scanTask: Task<Void, Never>?
+    private var processedCount: Int = 0
+
+    init(context: ModelContext) {
+        self.context = context
+    }
+
+    // MARK: - Live counts
+
+    private func fetchCount(state: RecordingsScanState) -> Int {
+        let raw = state.rawValue
+        let d = FetchDescriptor<CollectionItemEntity>(
+            predicate: #Predicate { $0.recordingsScanState == raw }
+        )
+        return (try? context.fetchCount(d)) ?? 0
+    }
+
+    var fetchedCount: Int   { fetchCount(state: .fetched) }
+    var failedCount: Int    { fetchCount(state: .failed) }
+    var skippedCount: Int   { fetchCount(state: .skipped) }
+
+    var unscannedWithMBIDCount: Int {
+        let raw = RecordingsScanState.unscanned.rawValue
+        let d = FetchDescriptor<CollectionItemEntity>(
+            predicate: #Predicate { $0.recordingsScanState == raw }
+        )
+        return ((try? context.fetch(d)) ?? []).filter { $0.mbid != nil }.count
+    }
+
+    var totalTrackCount: Int {
+        (try? context.fetchCount(FetchDescriptor<TrackEntity>())) ?? 0
+    }
+
+    var failedRecordings: [FailedRecordingInfo] {
+        let raw = RecordingsScanState.failed.rawValue
+        let d = FetchDescriptor<CollectionItemEntity>(
+            predicate: #Predicate { $0.recordingsScanState == raw }
+        )
+        return ((try? context.fetch(d)) ?? []).map { entity in
+            FailedRecordingInfo(
+                instanceId: entity.instanceId,
+                title: entity.basicInformation?.title ?? "Unknown",
+                artist: entity.basicInformation?.artists.map(\.name).joined(separator: " & ") ?? ""
+            )
+        }
+    }
+
+    var shouldShowPanel: Bool {
+        switch phase {
+        case .scanning, .paused, .completed, .cancelled, .failed: return true
+        case .idle: return false
+        }
+    }
+
+    var estimatedRemainingMinutes: Int {
+        guard case .scanning = phase, passProcessed > 0, passTotal > 0 else { return 0 }
+        let remaining = max(0, passTotal - passProcessed)
+        let seconds = Double(remaining) * 1.05
+        return Int(ceil(seconds / 60.0))
+    }
+
+    // MARK: - Controls
+
+    func start() {
+        switch phase {
+        case .idle, .completed, .cancelled: break
+        default: return
+        }
+        processedCount = 0
+        passProcessed = 0
+        startScanInternal()
+    }
+
+    private func startScanInternal() {
+        phase = .scanning
+        showBanner = true
+
+        // Mark items without MBID as skipped
+        let rawUnscanned = RecordingsScanState.unscanned.rawValue
+        let noMBIDCandidates = (try? context.fetch(FetchDescriptor<CollectionItemEntity>(
+            predicate: #Predicate { $0.recordingsScanState == rawUnscanned }
+        )))?.filter { $0.mbid == nil } ?? []
+        for item in noMBIDCandidates {
+            item.recordingsScanState = RecordingsScanState.skipped.rawValue
+        }
+        if !noMBIDCandidates.isEmpty { try? context.save() }
+
+        let rawFailed = RecordingsScanState.failed.rawValue
+        let remaining = (try? context.fetchCount(FetchDescriptor<CollectionItemEntity>(
+            predicate: #Predicate { $0.recordingsScanState == rawUnscanned || $0.recordingsScanState == rawFailed }
+        ))) ?? 0
+        passTotal = processedCount + remaining
+
+        scanTask = Task { await performScan() }
+    }
+
+    private func performScan() async {
+        let rawUnscanned = RecordingsScanState.unscanned.rawValue
+        let rawFailed    = RecordingsScanState.failed.rawValue
+        let descriptor = FetchDescriptor<CollectionItemEntity>(
+            predicate: #Predicate { $0.recordingsScanState == rawUnscanned || $0.recordingsScanState == rawFailed }
+        )
+        let queue: [CollectionItemEntity]
+        do {
+            queue = try context.fetch(descriptor)
+        } catch {
+            phase = .failed("Database fetch failed: \(error.localizedDescription)")
+            return
+        }
+
+        let mbidQueue = queue.filter { $0.mbid != nil }
+        let skippable = queue.filter { $0.mbid == nil }
+        for item in skippable {
+            item.recordingsScanState = RecordingsScanState.skipped.rawValue
+        }
+        if !skippable.isEmpty { try? context.save() }
+
+        print("🎵 Recordings scan: \(mbidQueue.count) items with MBID to process")
+
+        var saveCounter = 0
+        for entity in mbidQueue {
+            if Task.isCancelled {
+                currentItem = nil
+                try? context.save()
+                return
+            }
+
+            currentItem = ScanningItemInfo(
+                title: entity.basicInformation?.title ?? "—",
+                artist: entity.basicInformation?.artists.first?.name ?? "Unknown artist"
+            )
+
+            do {
+                let recordings = try await client.fetchRecordings(forReleaseMBID: entity.mbid!)
+
+                // Delete stale tracks before inserting fresh ones
+                let existingTracks = entity.tracks
+                for track in existingTracks { context.delete(track) }
+
+                for match in recordings {
+                    let track = TrackEntity(
+                        trackMBID: match.trackMBID,
+                        recordingMBID: match.recordingMBID,
+                        position: match.position,
+                        title: match.title,
+                        durationMs: match.durationMs,
+                        artistCredit: match.artistCredit
+                    )
+                    track.collectionItem = entity
+                    context.insert(track)
+                }
+                entity.recordingsScanState = RecordingsScanState.fetched.rawValue
+                entity.recordingsScannedAt = Date()
+            } catch is CancellationError {
+                print("⏸️ Recordings scan cancelled mid-request for \(entity.mbid ?? "?")")
+                try? context.save()
+                currentItem = nil
+                return
+            } catch {
+                entity.recordingsScanState = RecordingsScanState.failed.rawValue
+                entity.recordingsScannedAt = Date()
+                print("⚠️ Recordings fetch failed for \(entity.mbid ?? "?"): \(error)")
+            }
+
+            processedCount += 1
+            passProcessed = processedCount
+            saveCounter += 1
+
+            if saveCounter >= 10 {
+                do { try context.save() } catch { print("❌ Batch save: \(error)") }
+                saveCounter = 0
+            }
+        }
+
+        do { try context.save() } catch { print("❌ Final save: \(error)") }
+        currentItem = nil
+        phase = .completed
+    }
+
+    func resume() {
+        guard case .paused = phase else { return }
+        startScanInternal()
+    }
+
+    func pause() {
+        phase = .paused
+        scanTask?.cancel()
+        scanTask = nil
+    }
+
+    func cancel() {
+        scanTask?.cancel()
+        scanTask = nil
+        currentItem = nil
+        phase = .cancelled
+    }
+
+    func dismissPanel() {
+        phase = .idle
+        passProcessed = 0
+        passTotal = 0
+        processedCount = 0
+        showBanner = false
+    }
+
+    func resetToUnscanned(instanceId: Int) {
+        let id = instanceId
+        var descriptor = FetchDescriptor<CollectionItemEntity>(
+            predicate: #Predicate { $0.instanceId == id }
+        )
+        descriptor.fetchLimit = 1
+        guard let entity = try? context.fetch(descriptor).first else { return }
+        entity.recordingsScanState = RecordingsScanState.unscanned.rawValue
+        entity.recordingsScannedAt = nil
+        try? context.save()
+    }
+
+    func startRefetch() {
+        switch phase {
+        case .idle, .completed, .cancelled: break
+        default: return
+        }
+        Task {
+            let descriptor = FetchDescriptor<CollectionItemEntity>()
+            guard let all = try? context.fetch(descriptor) else { return }
+            for entity in all where entity.mbid != nil {
+                entity.recordingsScanState = RecordingsScanState.unscanned.rawValue
+                entity.recordingsScannedAt = nil
+                let existing = entity.tracks
+                for track in existing { context.delete(track) }
+            }
+            try? context.save()
+            processedCount = 0
+            passProcessed = 0
+            phase = .idle
+            start()
+        }
+    }
+}

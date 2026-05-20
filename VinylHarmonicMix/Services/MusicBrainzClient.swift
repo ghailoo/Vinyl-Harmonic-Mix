@@ -69,6 +69,43 @@ private struct MBSearchArtistCredit: Decodable {
     let name: String?
 }
 
+// MARK: - Recordings response types
+
+private struct MBReleaseRecordingsResponse: Decodable {
+    let media: [MBMedium]
+}
+
+private struct MBMedium: Decodable {
+    let tracks: [MBTrackItem]
+}
+
+private struct MBTrackItem: Decodable {
+    let id: String
+    let number: String?
+    let position: Int
+    let title: String
+    let length: Int?
+    let recording: MBRecordingItem
+    let artistCredit: [MBArtistCredit]?
+
+    enum CodingKeys: String, CodingKey {
+        case id, number, position, title, length, recording
+        case artistCredit = "artist-credit"
+    }
+}
+
+private struct MBRecordingItem: Decodable {
+    let id: String
+    let title: String?
+    let length: Int?
+    let artistCredit: [MBArtistCredit]?
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, length
+        case artistCredit = "artist-credit"
+    }
+}
+
 // MARK: - Public types
 
 struct MBIDMatch {
@@ -84,6 +121,15 @@ struct MBIDSearchMatch {
     let score: Int
     let date: String?
     let country: String?
+}
+
+struct RecordingMBIDMatch {
+    let trackMBID: String
+    let recordingMBID: String
+    let position: String
+    let title: String
+    let durationMs: Int?
+    let artistCredit: String
 }
 
 enum MBError: LocalizedError {
@@ -215,6 +261,58 @@ final class MusicBrainzClient {
             date: top.date,
             country: top.country
         )
+    }
+
+    // MARK: - Recordings fetch (rate-limited, same queue)
+
+    func fetchRecordings(forReleaseMBID mbid: String) async throws -> [RecordingMBIDMatch] {
+        let urlString = "https://musicbrainz.org/ws/2/release/\(mbid)?inc=recordings+artist-credits&fmt=json"
+        guard let url = URL(string: urlString) else { throw MBError.badResponse(0) }
+        await rateLimiter.wait()
+        return try await fetchRecordingsWithRetry(url: url)
+    }
+
+    private func fetchRecordingsWithRetry(url: URL) async throws -> [RecordingMBIDMatch] {
+        let (data, response) = try await session.data(for: makeRequest(url))
+        guard let http = response as? HTTPURLResponse else { throw MBError.badResponse(0) }
+        switch http.statusCode {
+        case 200:
+            return try parseRecordings(from: data)
+        case 404:
+            throw MBError.badResponse(404)
+        case 429, 503:
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            await rateLimiter.wait()
+            let (retryData, retryResponse) = try await session.data(for: makeRequest(url))
+            guard let retryHttp = retryResponse as? HTTPURLResponse, retryHttp.statusCode == 200 else {
+                throw MBError.badResponse((retryResponse as? HTTPURLResponse)?.statusCode ?? 0)
+            }
+            return try parseRecordings(from: retryData)
+        default:
+            throw MBError.badResponse(http.statusCode)
+        }
+    }
+
+    private func parseRecordings(from data: Data) throws -> [RecordingMBIDMatch] {
+        let decoded = try JSONDecoder().decode(MBReleaseRecordingsResponse.self, from: data)
+        var results: [RecordingMBIDMatch] = []
+        for medium in decoded.media {
+            for track in medium.tracks {
+                let position = track.number ?? String(track.position)
+                let credits = (track.artistCredit ?? track.recording.artistCredit)?
+                    .compactMap { $0.name ?? $0.artist?.name }
+                    .joined(separator: " & ") ?? ""
+                results.append(RecordingMBIDMatch(
+                    trackMBID: track.id,
+                    recordingMBID: track.recording.id,
+                    position: position,
+                    title: track.title,
+                    durationMs: track.length ?? track.recording.length,
+                    artistCredit: credits
+                ))
+            }
+        }
+        return results
     }
 
     // MARK: - Connectivity test (not rate-limited)

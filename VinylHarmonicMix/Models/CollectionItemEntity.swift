@@ -12,12 +12,22 @@ final class CollectionItemEntity {
 
     var mbid: String?
     var mbidScanState: String = MBIDScanState.unscanned.rawValue
+  
     var mbidScannedAt: Date?
     var mbidMatchedTitle: String?
     var mbidMatchedArtist: String?
 
+    var recordingsScanState: String = RecordingsScanState.unscanned.rawValue
+    var recordingsScannedAt: Date?
+    @Relationship(deleteRule: .cascade, inverse: \TrackEntity.collectionItem)
+    var tracks: [TrackEntity] = []
+
     var scanState: MBIDScanState {
         MBIDScanState(rawValue: mbidScanState) ?? .unscanned
+    }
+
+    var recordingsScanStateEnum: RecordingsScanState {
+        RecordingsScanState(rawValue: recordingsScanState) ?? .unscanned
     }
 
     init(instanceId: Int, releaseId: Int, folderId: Int, rating: Int, dateAdded: String) {

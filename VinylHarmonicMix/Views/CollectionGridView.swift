@@ -50,6 +50,7 @@ enum CollectionFilter: String, CaseIterable, Identifiable {
 struct CollectionGridView: View {
     @Environment(CollectionViewModel.self) private var viewModel
     @Environment(MBIDScanCoordinator.self) private var scanCoordinator
+    @Environment(RecordingsScanCoordinator.self) private var recordingsCoordinator
     @Environment(\.modelContext) private var modelContext
 
     @Query private var allEntities: [CollectionItemEntity]
@@ -57,6 +58,7 @@ struct CollectionGridView: View {
     @State private var searchQuery = ""
     @State private var selectedItem: CollectionItem?
     @State private var showRescanAlert = false
+    @State private var showRefetchAlert = false
     @State private var activeFilter: CollectionFilter = .all
     @State private var activeSort: CollectionSort = .yearDesc
 
@@ -64,6 +66,19 @@ struct CollectionGridView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if recordingsCoordinator.shouldShowPanel {
+                RecordingsScanResultsView(
+                    coordinator: recordingsCoordinator,
+                    onOpenItem: { instanceId in
+                        selectedItem = viewModel.items.first { $0.id == instanceId }
+                    }
+                )
+                .padding(.horizontal, 24)
+                .padding(.top, 12)
+                .padding(.bottom, 0)
+                .frame(maxWidth: .infinity)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
             if scanCoordinator.shouldShowPanel {
                 MBIDScanResultsView(
                     coordinator: scanCoordinator,
@@ -92,6 +107,7 @@ struct CollectionGridView: View {
                     }
             }
         }
+        .animation(.easeInOut(duration: 0.25), value: recordingsCoordinator.shouldShowPanel)
         .animation(.easeInOut(duration: 0.25), value: scanCoordinator.shouldShowPanel)
         .animation(.easeInOut(duration: 0.2), value: activeFilter)
         .animation(.easeInOut(duration: 0.2), value: activeSort)
@@ -111,6 +127,7 @@ struct CollectionGridView: View {
                     .background(Capsule().fill(Color.secondary.opacity(0.12)))
                     .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.2), lineWidth: 0.5))
                 sortButton
+                fetchTracksButton
                 filterButton
                 scanButton
                 Button {
@@ -126,6 +143,12 @@ struct CollectionGridView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This will clear all existing MusicBrainz matches and re-scan every release.")
+        }
+        .alert("Refetch all track recordings?", isPresented: $showRefetchAlert) {
+            Button("Refetch", role: .destructive) { recordingsCoordinator.startRefetch() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will delete all stored recording MBIDs and re-fetch every matched release. Takes ~7–8 minutes.")
         }
     }
 
@@ -230,6 +253,68 @@ struct CollectionGridView: View {
             $0.mbidScanState == "matched" || $0.mbidScanState == "matchedViaSearch" || $0.mbidScanState == "matchedManually"
         }
         return Set(matched.map { $0.instanceId })
+    }
+
+    // MARK: - Fetch tracks toolbar button
+
+    private var fetchTracksButton: some View {
+        let unscanned = recordingsCoordinator.unscannedWithMBIDCount
+        let failed = recordingsCoordinator.failedCount
+        let isActive: Bool = {
+            switch recordingsCoordinator.phase {
+            case .scanning, .paused: return true
+            default: return false
+            }
+        }()
+        let badgeCount = unscanned > 0 ? unscanned : failed
+
+        return Menu {
+            Button {
+                recordingsCoordinator.start()
+            } label: {
+                Label("Fetch unscanned (\(unscanned))", systemImage: "waveform")
+            }
+            .disabled(unscanned == 0 || isActive)
+
+            Button {
+                recordingsCoordinator.start()
+            } label: {
+                Label("Retry failed (\(failed))", systemImage: "arrow.clockwise.circle")
+            }
+            .disabled(failed == 0 || isActive)
+
+            Divider()
+
+            Button(role: .destructive) {
+                showRefetchAlert = true
+            } label: {
+                Label("Refetch all…", systemImage: "arrow.counterclockwise")
+            }
+            .disabled(isActive)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "music.note.list")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Fetch tracks")
+                    .font(.system(size: 13))
+                if badgeCount > 0 {
+                    Text("\(badgeCount)")
+                        .font(.system(size: 11, weight: .semibold))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.accentColor.opacity(0.2))
+                        .cornerRadius(4)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(Color.secondary.opacity(0.12)))
+            .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.2), lineWidth: 0.5))
+            .foregroundStyle(Color.primary)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .help("Fetch recording MBIDs from MusicBrainz")
     }
 
     // MARK: - Scan toolbar button

@@ -3,8 +3,10 @@ import SwiftData
 
 struct CollectionStatsView: View {
     @Environment(DetailCacheCoordinator.self) private var cacheCoordinator
+    @Environment(RecordingsScanCoordinator.self) private var recordingsCoordinator
     @Query private var entities: [CollectionItemEntity]
     @Query private var detailEntities: [ReleaseDetailEntity]
+    @Query private var trackEntities: [TrackEntity]
 
     @State private var cachedDetails: [ReleaseDetail] = []
     @State private var showRefreshAlert = false
@@ -45,6 +47,7 @@ struct CollectionStatsView: View {
                             if !labelCounts.isEmpty   { labelsCard }
                             if !artistCounts.isEmpty  { artistsCard }
                             tracksCard
+                            recordingsCard
                         }
                         .padding(.horizontal, 24)
                         .padding(.vertical, 20)
@@ -351,11 +354,89 @@ struct CollectionStatsView: View {
         }
     }
 
+    // MARK: - Recordings card
+
+    private var recordingsCard: some View {
+        let fetchedCount = entities.filter { $0.recordingsScanState == "fetched" }.count
+        let skippedCount = entities.filter { $0.recordingsScanState == "skipped" }.count
+        let failedCount  = entities.filter { $0.recordingsScanState == "failed"  }.count
+        let trackCount   = trackEntities.count
+        let totalCached  = cachedDetails.reduce(0) { $0 + $1.tracklist.count }
+        let trackPercent = totalCached > 0 ? min(100, trackCount * 100 / max(totalCached, 1)) : 0
+        let isRunning: Bool = {
+            switch recordingsCoordinator.phase {
+            case .scanning, .paused: return true
+            default: return false
+            }
+        }()
+        let canFetch = recordingsCoordinator.unscannedWithMBIDCount > 0
+
+        return sectionCard {
+            sectionHeader(title: "Recording MBIDs")
+
+            if trackCount > 0 {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("\(trackCount.formatted()) tracks have recording MBIDs (\(trackPercent)% of cached tracks)")
+                        .font(.system(size: 14))
+
+                    // Progress bar
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.secondary.opacity(0.15)).frame(height: 8)
+                            Capsule()
+                                .fill(Color.accentColor)
+                                .frame(
+                                    width: totalCached > 0 ? geo.size.width * CGFloat(trackCount) / CGFloat(max(totalCached, 1)) : 0,
+                                    height: 8
+                                )
+                        }
+                    }
+                    .frame(height: 8)
+
+                    VStack(spacing: 4) {
+                        recordingStateRow(icon: "checkmark.circle.fill",  iconColor: .green,    label: "Fetched",         count: fetchedCount)
+                        recordingStateRow(icon: "circle.dotted",           iconColor: .secondary, label: "Skipped (no MBID)", count: skippedCount)
+                        recordingStateRow(icon: "xmark.circle.fill",       iconColor: .red,      label: "Failed",          count: failedCount)
+                    }
+                    .padding(.top, 4)
+                }
+            } else {
+                Text("No recording MBIDs yet. Use \"Fetch tracks\" to pull track-level data from MusicBrainz for all matched releases (~7–8 min).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Button(isRunning ? "Fetching…" : (canFetch ? "Fetch tracks for unscanned" : "All up to date")) {
+                recordingsCoordinator.start()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(isRunning || !canFetch)
+            .padding(.top, 10)
+        }
+    }
+
+    private func recordingStateRow(icon: String, iconColor: Color, label: String, count: Int) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .foregroundStyle(count > 0 ? iconColor : Color.secondary.opacity(0.3))
+                .font(.system(size: 13))
+                .frame(width: 16)
+            Text(label)
+                .font(.system(size: 13))
+                .foregroundStyle(count > 0 ? .primary : .secondary)
+            Spacer()
+            Text(count.formatted())
+                .font(.system(size: 13).monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+    }
+
     // MARK: - Computed stats
 
     private var matchedCount: Int {
         entities.filter {
-            $0.mbidScanState == "matched" || $0.mbidScanState == "matchedViaSearch"
+            $0.mbidScanState == "matched" || $0.mbidScanState == "matchedViaSearch" || $0.mbidScanState == "matchedManually"
         }.count
     }
 

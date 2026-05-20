@@ -1,0 +1,26 @@
+import SwiftData
+import Foundation
+
+@Model
+final class TrackEntity {
+    @Attribute(.unique) var trackMBID: String
+    var recordingMBID: String
+    var position: String
+    var title: String
+    var durationMs: Int?
+    var artistCredit: String
+    var fetchedAt: Date
+
+    var collectionItem: CollectionItemEntity?
+
+    init(trackMBID: String, recordingMBID: String, position: String, title: String,
+         durationMs: Int?, artistCredit: String) {
+        self.trackMBID = trackMBID
+        self.recordingMBID = recordingMBID
+        self.position = position
+        self.title = title
+        self.durationMs = durationMs
+        self.artistCredit = artistCredit
+        self.fetchedAt = .now
+    }
+}
