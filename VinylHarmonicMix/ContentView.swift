@@ -1,16 +1,27 @@
 import SwiftUI
 
+enum SidebarItem: String, Hashable {
+    case collection = "Collection"
+    case stats = "Stats"
+}
+
 struct ContentView: View {
     @Environment(SettingsViewModel.self) private var settings
     @Environment(CollectionViewModel.self) private var collection
     @State private var showSettings = false
+    @State private var sidebarSelection: SidebarItem? = .collection
 
     var body: some View {
 #if os(macOS)
         NavigationSplitView {
             macSidebar
         } detail: {
-            CollectionGridView()
+            switch sidebarSelection {
+            case .stats:
+                CollectionStatsView()
+            default:
+                CollectionGridView()
+            }
         }
 #else
         NavigationStack {
@@ -32,8 +43,12 @@ struct ContentView: View {
 
 #if os(macOS)
     private var macSidebar: some View {
-        List {
+        List(selection: $sidebarSelection) {
             Label("Collection", systemImage: "record.circle")
+                .tag(SidebarItem.collection)
+            Label("Stats", systemImage: "chart.bar.xaxis")
+                .tag(SidebarItem.stats)
+            Divider()
             Button(action: { showSettings = true }) {
                 Label("Settings", systemImage: "gear")
             }

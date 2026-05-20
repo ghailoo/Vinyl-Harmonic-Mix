@@ -4,6 +4,8 @@ struct SettingsView: View {
     @Environment(SettingsViewModel.self) private var settings
     @Environment(\.dismiss) private var dismiss
 
+    @State private var mbSavedConfirmation = false
+
     var body: some View {
         @Bindable var settings = settings
 
@@ -76,10 +78,24 @@ struct SettingsView: View {
             }
 
             Section {
-                HStack {
+                HStack(spacing: 8) {
+                    Button("Save") {
+                        settings.save()
+                        settings.mbSuccessMessage = nil
+                        settings.mbErrorMessage = nil
+                        mbSavedConfirmation = true
+                        Task {
+                            try? await Task.sleep(for: .seconds(3))
+                            mbSavedConfirmation = false
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+
                     Button("Test Connection") {
+                        mbSavedConfirmation = false
                         Task { await settings.testMBConnection() }
                     }
+                    .buttonStyle(.bordered)
                     .disabled(settings.mbIsTesting)
 
                     if settings.mbIsTesting {
@@ -87,17 +103,20 @@ struct SettingsView: View {
                             .padding(.leading, 4)
                     }
                 }
-            }
 
-            if let message = settings.mbSuccessMessage {
-                Section {
+                if mbSavedConfirmation {
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                        Text("Saved")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if let message = settings.mbSuccessMessage {
                     Label(message, systemImage: "checkmark.circle.fill")
                         .foregroundStyle(.green)
-                }
-            }
-
-            if let error = settings.mbErrorMessage {
-                Section {
+                } else if let error = settings.mbErrorMessage {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.red)
                 }

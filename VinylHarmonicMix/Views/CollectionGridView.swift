@@ -1,22 +1,83 @@
 import SwiftUI
+import SwiftData
+
+enum CollectionSort: String, CaseIterable, Identifiable {
+    case artistAsc  = "Artist (A → Z)"
+    case artistDesc = "Artist (Z → A)"
+    case titleAsc   = "Title (A → Z)"
+    case titleDesc  = "Title (Z → A)"
+    case yearDesc   = "Year (newest first)"
+    case yearAsc    = "Year (oldest first)"
+    case addedDesc  = "Recently added"
+    case addedAsc   = "Added (oldest first)"
+    case ratingDesc = "Rating (highest first)"
+    case labelAsc   = "Label (A → Z)"
+
+    var id: String { rawValue }
+
+    var icon: String {
+        switch self {
+        case .artistAsc, .artistDesc:   return "person"
+        case .titleAsc, .titleDesc:     return "textformat"
+        case .yearDesc, .yearAsc:       return "calendar"
+        case .addedDesc, .addedAsc:     return "clock"
+        case .ratingDesc:               return "star"
+        case .labelAsc:                 return "tag"
+        }
+    }
+}
+
+enum CollectionFilter: String, CaseIterable, Identifiable {
+    case all       = "All"
+    case matched   = "Matched"
+    case notFound  = "Not found"
+    case failed    = "Failed"
+    case unscanned = "Unscanned"
+
+    var id: String { rawValue }
+
+    var icon: String {
+        switch self {
+        case .all:      return "circle.grid.2x2"
+        case .matched:  return "checkmark.seal.fill"
+        case .notFound: return "questionmark.circle"
+        case .failed:   return "exclamationmark.triangle"
+        case .unscanned: return "circle.dotted"
+        }
+    }
+}
 
 struct CollectionGridView: View {
     @Environment(CollectionViewModel.self) private var viewModel
     @Environment(MBIDScanCoordinator.self) private var scanCoordinator
+    @Environment(\.modelContext) private var modelContext
+
+    @Query private var allEntities: [CollectionItemEntity]
+
     @State private var searchQuery = ""
     @State private var selectedItem: CollectionItem?
     @State private var showRescanAlert = false
+    @State private var activeFilter: CollectionFilter = .all
+    @State private var activeSort: CollectionSort = .yearDesc
 
     private let columns = [GridItem(.adaptive(minimum: 160, maximum: 200), spacing: 16)]
 
     var body: some View {
         VStack(spacing: 0) {
-            if scanCoordinator.showBanner {
-                MBIDScanBanner()
-                    .transition(.move(edge: .top).combined(with: .opacity))
+            if scanCoordinator.shouldShowPanel {
+                MBIDScanResultsView(coordinator: scanCoordinator) { filter in
+                    activeFilter = filter
+                    scanCoordinator.dismissPanel()
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 12)
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
             if viewModel.items.isEmpty {
                 emptyState
+            } else if displayedItems.isEmpty && activeFilter != .all {
+                filteredEmptyState
             } else {
                 gridContent
                     .sheet(item: $selectedItem) { item in
@@ -24,12 +85,16 @@ struct CollectionGridView: View {
                     }
             }
         }
-        .animation(.easeInOut(duration: 0.25), value: scanCoordinator.showBanner)
+        .animation(.easeInOut(duration: 0.25), value: scanCoordinator.shouldShowPanel)
+        .animation(.easeInOut(duration: 0.2), value: activeFilter)
+        .animation(.easeInOut(duration: 0.2), value: activeSort)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 TextField("Search artist, title, year…", text: $searchQuery)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 240)
+                sortButton
+                filterButton
                 scanButton
                 Button {
                     Task { await viewModel.importCollection() }
@@ -46,6 +111,109 @@ struct CollectionGridView: View {
             Text("This will clear all existing MusicBrainz matches and re-scan every release.")
         }
     }
+
+    // MARK: - Sort button
+
+    private var sortButton: some View {
+        Menu {
+            ForEach(CollectionSort.allCases) { sort in
+                Button {
+                    activeSort = sort
+                } label: {
+                    HStack {
+                        Image(systemName: sort.icon)
+                        Text(sort.rawValue)
+                        if activeSort == sort {
+                            Spacer()
+                            Image(systemName: "checkmark")
+                                .foregroundStyle(Color.accentColor)
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: activeSort.icon)
+                    .font(.system(size: 12, weight: .semibold))
+                Text(activeSort.rawValue)
+                    .font(.system(size: 13))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(Color.secondary.opacity(0.12)))
+            .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.2), lineWidth: 0.5))
+            .foregroundStyle(Color.primary)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+    }
+
+    // MARK: - Filter button
+
+    private var filterButton: some View {
+        Menu {
+            ForEach(CollectionFilter.allCases) { filter in
+                Button {
+                    activeFilter = filter
+                } label: {
+                    HStack {
+                        Image(systemName: filter.icon)
+                        Text(filter.rawValue)
+                        Spacer()
+                        Text("\(filterCount(for: filter))")
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: activeFilter.icon)
+                    .font(.system(size: 12, weight: .semibold))
+                Text("\(activeFilter.rawValue) (\(filterCount(for: activeFilter)))")
+                    .font(.system(size: 13))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                Capsule()
+                    .fill(activeFilter == .all
+                          ? Color.secondary.opacity(0.12)
+                          : Color.accentColor.opacity(0.15))
+            )
+            .overlay(
+                Capsule()
+                    .strokeBorder(
+                        activeFilter == .all
+                            ? Color.secondary.opacity(0.2)
+                            : Color.accentColor.opacity(0.3),
+                        lineWidth: 0.5
+                    )
+            )
+            .foregroundStyle(activeFilter == .all ? Color.primary : Color.accentColor)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+    }
+
+    private func filterCount(for filter: CollectionFilter) -> Int {
+        switch filter {
+        case .all:      return viewModel.items.count
+        case .matched:  return allEntities.filter { $0.mbidScanState == "matched" || $0.mbidScanState == "matchedViaSearch" }.count
+        case .notFound: return allEntities.filter { $0.mbidScanState == "notFound" }.count
+        case .failed:   return allEntities.filter { $0.mbidScanState == "failed" }.count
+        case .unscanned: return allEntities.filter { $0.mbidScanState == "unscanned" }.count
+        }
+    }
+
+    private var matchedInstanceIds: Set<Int> {
+        let matched = allEntities.filter {
+            $0.mbidScanState == "matched" || $0.mbidScanState == "matchedViaSearch"
+        }
+        return Set(matched.map { $0.instanceId })
+    }
+
+    // MARK: - Scan toolbar button
 
     private var scanButton: some View {
         let unscanned = scanCoordinator.unscannedCount
@@ -101,12 +269,14 @@ struct CollectionGridView: View {
         .help("Scan MusicBrainz IDs")
     }
 
+    // MARK: - Grid
+
     private var gridContent: some View {
         ScrollView {
             LazyVGrid(columns: columns, spacing: 20) {
-                ForEach(filteredItems) { item in
+                ForEach(displayedItems) { item in
                     Button { selectedItem = item } label: {
-                        CollectionCardView(item: item)
+                        CollectionCardView(item: item, hasMBID: matchedInstanceIds.contains(item.id))
                     }
                     .buttonStyle(.plain)
                 }
@@ -117,15 +287,97 @@ struct CollectionGridView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private var filteredItems: [CollectionItem] {
-        guard !searchQuery.isEmpty else { return viewModel.items }
-        let q = searchQuery.lowercased()
-        return viewModel.items.filter { item in
-            item.basicInformation.title.lowercased().contains(q) ||
-            item.basicInformation.artists.map(\.name).joined(separator: " & ").lowercased().contains(q) ||
-            String(item.basicInformation.year).contains(q)
+    private var displayedItems: [CollectionItem] {
+        var items = viewModel.items
+
+        if activeFilter != .all {
+            let matchingIds: Set<Int>
+            switch activeFilter {
+            case .all:
+                matchingIds = []
+            case .matched:
+                matchingIds = Set(allEntities.filter { $0.mbidScanState == "matched" || $0.mbidScanState == "matchedViaSearch" }.map(\.instanceId))
+            case .notFound:
+                matchingIds = Set(allEntities.filter { $0.mbidScanState == "notFound" }.map(\.instanceId))
+            case .failed:
+                matchingIds = Set(allEntities.filter { $0.mbidScanState == "failed" }.map(\.instanceId))
+            case .unscanned:
+                matchingIds = Set(allEntities.filter { $0.mbidScanState == "unscanned" }.map(\.instanceId))
+            }
+            items = items.filter { matchingIds.contains($0.id) }
         }
+
+        if !searchQuery.isEmpty {
+            let q = searchQuery.lowercased()
+            items = items.filter { item in
+                item.basicInformation.title.lowercased().contains(q) ||
+                item.basicInformation.artists.map(\.name).joined(separator: " & ").lowercased().contains(q) ||
+                String(item.basicInformation.year).contains(q)
+            }
+        }
+
+        items.sort { lhs, rhs in
+            switch activeSort {
+            case .artistAsc:
+                return artistKey(lhs).localizedCaseInsensitiveCompare(artistKey(rhs)) == .orderedAscending
+            case .artistDesc:
+                return artistKey(lhs).localizedCaseInsensitiveCompare(artistKey(rhs)) == .orderedDescending
+            case .titleAsc:
+                return lhs.basicInformation.title.localizedCaseInsensitiveCompare(rhs.basicInformation.title) == .orderedAscending
+            case .titleDesc:
+                return lhs.basicInformation.title.localizedCaseInsensitiveCompare(rhs.basicInformation.title) == .orderedDescending
+            case .yearDesc:
+                let l = lhs.basicInformation.year, r = rhs.basicInformation.year
+                if l == 0 && r == 0 { return false }
+                if l == 0 { return false }
+                if r == 0 { return true }
+                return l > r
+            case .yearAsc:
+                let l = lhs.basicInformation.year, r = rhs.basicInformation.year
+                if l == 0 && r == 0 { return false }
+                if l == 0 { return false }
+                if r == 0 { return true }
+                return l < r
+            case .addedDesc:
+                return lhs.dateAdded > rhs.dateAdded
+            case .addedAsc:
+                return lhs.dateAdded < rhs.dateAdded
+            case .ratingDesc:
+                return lhs.rating > rhs.rating
+            case .labelAsc:
+                return labelKey(lhs).localizedCaseInsensitiveCompare(labelKey(rhs)) == .orderedAscending
+            }
+        }
+
+        return items
     }
+
+    private func artistKey(_ item: CollectionItem) -> String {
+        item.basicInformation.artists.first?.name ?? ""
+    }
+
+    private func labelKey(_ item: CollectionItem) -> String {
+        item.basicInformation.labels.first?.name ?? ""
+    }
+
+    private var filteredEmptyState: some View {
+        VStack(spacing: 16) {
+            Spacer()
+            Image(systemName: "line.3.horizontal.decrease.circle")
+                .font(.system(size: 48))
+                .foregroundStyle(.secondary)
+            Text("No releases match the current filter.")
+                .foregroundStyle(.secondary)
+            Button("Clear filter") {
+                activeFilter = .all
+            }
+            .buttonStyle(.bordered)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Empty state
 
     private var emptyState: some View {
         VStack(spacing: 24) {

@@ -19,13 +19,26 @@ final class MBIDScanCoordinator {
         case searchFallback
     }
 
+    enum ScanPass {
+        case urlRelationship
+        case indexedSearch
+    }
+
+    struct ScanningItemInfo {
+        let title: String
+        let artist: String
+    }
+
     var phase: Phase = .idle
     var scanMode: ScanMode = .urlLookup
     var scanned: Int = 0
     var total: Int = 0
-    var unscannedCount: Int = 0
-    var notFoundCount: Int = 0
     var showBanner: Bool = false
+    var currentItem: ScanningItemInfo? = nil
+
+    // Per-pass progress (aliases for scanned/total — updated each iteration)
+    var passProcessed: Int { scanned }
+    var passTotal: Int     { total }
 
     private let context: ModelContext
     private let client = MusicBrainzClient()
@@ -34,34 +47,76 @@ final class MBIDScanCoordinator {
 
     init(context: ModelContext) {
         self.context = context
-        refreshCounts()
     }
 
-    // MARK: - Count refresh
+    // MARK: - Live counts (computed on each access; re-evaluated on processedCount change)
 
-    func refreshUnscannedCount() {
-        let descriptor = FetchDescriptor<CollectionItemEntity>(
-            predicate: #Predicate { $0.mbidScanState == "unscanned" }
+    private func fetchCount(state: MBIDScanState) -> Int {
+        let raw = state.rawValue
+        let d = FetchDescriptor<CollectionItemEntity>(
+            predicate: #Predicate { $0.mbidScanState == raw }
         )
-        unscannedCount = (try? context.fetchCount(descriptor)) ?? 0
+        return (try? context.fetchCount(d)) ?? 0
     }
 
-    func refreshNotFoundCount() {
-        let descriptor = FetchDescriptor<CollectionItemEntity>(
-            predicate: #Predicate { $0.mbidScanState == "notFound" }
+    var matchedCount: Int       { fetchCount(state: .matched) }
+    var searchMatchedCount: Int { fetchCount(state: .matchedViaSearch) }
+    var notFoundCount: Int      { fetchCount(state: .notFound) }
+    var failedCount: Int        { fetchCount(state: .failed) }
+    var unscannedCount: Int     { fetchCount(state: .unscanned) }
+
+    var totalCount: Int {
+        (try? context.fetchCount(FetchDescriptor<CollectionItemEntity>())) ?? 0
+    }
+
+    var processedSoFar: Int {
+        matchedCount + searchMatchedCount + notFoundCount + failedCount
+    }
+
+    var overallMatchRate: Double {
+        Double(matchedCount + searchMatchedCount) / Double(max(totalCount, 1))
+    }
+
+    var failedItems: [(title: String, artist: String, error: String)] {
+        let d = FetchDescriptor<CollectionItemEntity>(
+            predicate: #Predicate { $0.mbidScanState == "failed" }
         )
-        notFoundCount = (try? context.fetchCount(descriptor)) ?? 0
+        return ((try? context.fetch(d)) ?? []).map { entity in
+            (
+                title: entity.basicInformation?.title ?? "Unknown",
+                artist: entity.basicInformation?.artists.map(\.name).joined(separator: " & ") ?? "",
+                error: "Network error or invalid response"
+            )
+        }
     }
 
-    private func refreshCounts() {
-        refreshUnscannedCount()
-        refreshNotFoundCount()
+    // MARK: - Panel state
+
+    var currentPass: ScanPass {
+        scanMode == .urlLookup ? .urlRelationship : .indexedSearch
+    }
+
+    var shouldShowPanel: Bool {
+        switch phase {
+        case .scanning, .paused, .completed, .cancelled, .failed: return true
+        case .idle: return false
+        }
+    }
+
+    var estimatedRemainingMinutes: Int {
+        guard case .scanning = phase, scanned > 0, total > 0 else { return 0 }
+        let remaining = max(0, total - scanned)
+        let seconds = Double(remaining) * 1.05
+        return Int(ceil(seconds / 60.0))
     }
 
     // MARK: - URL-lookup pass (first pass)
 
     func start() {
-        guard case .idle = phase else { return }
+        switch phase {
+        case .idle, .completed: break
+        default: return
+        }
         scanMode = .urlLookup
         processedCount = 0
         scanned = 0
@@ -80,18 +135,15 @@ final class MBIDScanCoordinator {
 
 #if DEBUG
         let allRows = (try? context.fetchCount(FetchDescriptor<CollectionItemEntity>())) ?? -1
-        let matchedRows = (try? context.fetchCount(FetchDescriptor<CollectionItemEntity>(predicate: #Predicate { $0.mbidScanState == "matched" }))) ?? -1
-        print("📊 Scanner sees: total=\(total) (= already processed \(processedCount) + remaining \(remaining))")
-        print("📊 Total CollectionItemEntity rows in store: \(allRows)")
-        print("📊 Rows where mbidScanState == matched: \(matchedRows)")
+        print("📊 Scanner sees: total=\(total) (processed \(processedCount) + remaining \(remaining)), allRows=\(allRows)")
 #endif
 
         scanTask = Task { await performScan() }
     }
 
     private func performScan() async {
-        // Fetch all unscanned entities once — avoids SwiftData pending-change
-        // cache returning 0 results on re-fetch inside a mutation loop.
+        // Single up-front fetch — avoids SwiftData pending-change cache returning 0
+        // on re-fetch inside a mutation loop.
         let descriptor = FetchDescriptor<CollectionItemEntity>(
             predicate: #Predicate { $0.mbidScanState == "unscanned" }
         )
@@ -108,10 +160,15 @@ final class MBIDScanCoordinator {
         var saveCounter = 0
         for entity in queue {
             if Task.isCancelled {
-                do { try context.save() } catch { print("❌ Save on cancel failed: \(error)") }
+                currentItem = nil
+                do { try context.save() } catch { print("❌ Save on cancel: \(error)") }
                 return
             }
 
+            currentItem = ScanningItemInfo(
+                title: entity.basicInformation?.title ?? "—",
+                artist: entity.basicInformation?.artists.first?.name ?? "Unknown artist"
+            )
             let releaseId = entity.releaseId
             do {
                 let match = try await client.findMBID(forDiscogsReleaseId: releaseId)
@@ -126,7 +183,6 @@ final class MBIDScanCoordinator {
             } catch {
                 entity.mbidScanState = MBIDScanState.failed.rawValue
                 print("⚠️ Failed item \(releaseId): \(error)")
-                // TODO: add retry-failed-items action
             }
             entity.mbidScannedAt = Date()
 
@@ -137,7 +193,6 @@ final class MBIDScanCoordinator {
             if saveCounter >= 10 {
                 do {
                     try context.save()
-                    print("💾 Batch saved after \(saveCounter) items at position \(processedCount)/\(queue.count)")
                 } catch {
                     print("❌ Batch save failed: \(error)")
                 }
@@ -146,28 +201,21 @@ final class MBIDScanCoordinator {
         }
 
         do { try context.save() } catch { print("❌ Final save failed: \(error)") }
-
+        currentItem = nil
         phase = .completed
-        refreshCounts()
-        scheduleAutoDismiss()
     }
 
     // MARK: - Search-fallback pass (second pass)
 
     func startSearchScan() {
-        print("🟢 [2] startSearchScan() entered, phase=\(phase)")
         switch phase {
         case .idle, .completed, .cancelled: break
-        default:
-            print("🟢 [2] guard failed — phase \(phase) is not startable")
-            return
+        default: return
         }
         scanMode = .searchFallback
         processedCount = 0
         scanned = 0
-        print("🟢 [2b] Past guard, calling startSearchScanInternal()")
         startSearchScanInternal()
-        print("🟢 [2c] startSearchScanInternal() returned, phase=\(phase)")
     }
 
     private func startSearchScanInternal() {
@@ -179,47 +227,38 @@ final class MBIDScanCoordinator {
         )
         let remaining = (try? context.fetchCount(descriptor)) ?? 0
         total = processedCount + remaining
-        print("🟢 [3] startSearchScanInternal: remaining=\(remaining), total=\(total)")
 
-        scanTask = Task {
-            print("🟢 [3a] Task started, calling scanMissingViaSearch()")
-            await scanMissingViaSearch()
-            print("🟢 [3b] scanMissingViaSearch() returned")
-        }
+        scanTask = Task { await scanMissingViaSearch() }
     }
 
     private func scanMissingViaSearch() async {
-        print("🟡 [4] scanMissingViaSearch() entered")
         let descriptor = FetchDescriptor<CollectionItemEntity>(
             predicate: #Predicate { $0.mbidScanState == "notFound" }
         )
         let queue: [CollectionItemEntity]
         do {
             queue = try context.fetch(descriptor)
-            print("🟡 [4a] Fetched \(queue.count) notFound entities")
         } catch {
-            print("🔴 [4b] Fetch failed: \(error)")
             phase = .failed("Database fetch failed: \(error.localizedDescription)")
             return
         }
         if queue.isEmpty {
-            print("🟡 [4c] Queue empty — exiting")
             phase = .completed
-            refreshCounts()
-            scheduleAutoDismiss()
             return
         }
-        print("🟡 [4d] About to start processing loop")
 
         var saveCounter = 0
         for entity in queue {
-            print("🟡 [5] Processing item \(processedCount + 1) of \(queue.count): releaseId=\(entity.releaseId)")
             if Task.isCancelled {
-                do { try context.save() } catch { print("❌ Save on cancel failed: \(error)") }
+                currentItem = nil
+                do { try context.save() } catch { print("❌ Save on cancel: \(error)") }
                 return
             }
 
-            // Join artist names with space — MusicBrainz indexes individual names better than "&"
+            currentItem = ScanningItemInfo(
+                title: entity.basicInformation?.title ?? "—",
+                artist: entity.basicInformation?.artists.first?.name ?? "Unknown artist"
+            )
             let artistName = entity.basicInformation?.artists.map(\.name).joined(separator: " ") ?? ""
             let title = entity.basicInformation?.title ?? ""
             let rawYear = entity.basicInformation?.year ?? 0
@@ -247,7 +286,6 @@ final class MBIDScanCoordinator {
             if saveCounter >= 10 {
                 do {
                     try context.save()
-                    print("💾 Batch saved after \(saveCounter) items at position \(processedCount)/\(queue.count)")
                 } catch {
                     print("❌ Batch save failed: \(error)")
                 }
@@ -256,13 +294,11 @@ final class MBIDScanCoordinator {
         }
 
         do { try context.save() } catch { print("❌ Final save failed: \(error)") }
-
+        currentItem = nil
         phase = .completed
-        refreshCounts()
-        scheduleAutoDismiss()
     }
 
-    // MARK: - Shared controls
+    // MARK: - Controls
 
     func resume() {
         guard case .paused = phase else { return }
@@ -281,15 +317,16 @@ final class MBIDScanCoordinator {
     func cancel() {
         scanTask?.cancel()
         scanTask = nil
+        currentItem = nil
         phase = .cancelled
     }
 
-    func dismissBanner() {
-        showBanner = false
+    func dismissPanel() {
         phase = .idle
         scanned = 0
         total = 0
         processedCount = 0
+        showBanner = false
     }
 
     func startRescan() {
@@ -304,20 +341,10 @@ final class MBIDScanCoordinator {
                 entity.mbidMatchedArtist = nil
             }
             try? context.save()
-            refreshCounts()
             processedCount = 0
             scanned = 0
             phase = .idle
             start()
-        }
-    }
-
-    private func scheduleAutoDismiss() {
-        Task {
-            try? await Task.sleep(nanoseconds: 8_000_000_000)
-            if case .completed = phase {
-                showBanner = false
-            }
         }
     }
 }

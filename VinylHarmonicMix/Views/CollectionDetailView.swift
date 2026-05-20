@@ -12,6 +12,7 @@ struct CollectionDetailView: View {
     @State private var isLoading = false
     @State private var loadError: String?
     @State private var itemEntity: CollectionItemEntity?
+    @State private var mbidCopied = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -75,6 +76,7 @@ struct CollectionDetailView: View {
                     headerSection(detail: detail)
                     tagSection
                     tracklistSection(detail: detail)
+                    mbidSection
                     if let extraartists = detail.extraartists, !extraartists.isEmpty {
                         creditsSection(extraartists: extraartists)
                     }
@@ -84,7 +86,6 @@ struct CollectionDetailView: View {
                     if let identifiers = detail.identifiers, !identifiers.isEmpty {
                         identifiersSection(identifiers: identifiers)
                     }
-                    mbidSection
                     discogsLinkSection
                 }
                 .padding(.bottom, 24)
@@ -392,152 +393,113 @@ struct CollectionDetailView: View {
         }
     }
 
+    @ViewBuilder
     private func mbidStatusRow(entity: CollectionItemEntity) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("MusicBrainz")
-                    .font(.system(size: 16, weight: .semibold))
-                Divider()
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 20)
-            .padding(.bottom, 8)
-
-            switch entity.scanState {
-            case .matched:
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                            .font(.system(size: 13))
-                        Text(entity.mbidMatchedTitle ?? "Matched")
-                            .font(.system(size: 13))
-                        if let matchedTitle = entity.mbidMatchedTitle,
-                           matchedTitle.lowercased() != item.basicInformation.title.lowercased() {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.orange)
-                                .font(.system(size: 12))
-                                .help("Title mismatch — Discogs: \(item.basicInformation.title) · MusicBrainz: \(matchedTitle)")
-                        }
-                    }
-                    if let artist = entity.mbidMatchedArtist, !artist.isEmpty {
-                        Text(artist)
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                    }
-                    if let mbid = entity.mbid {
-                        Button {
-                            if let url = URL(string: "https://musicbrainz.org/release/\(mbid)") {
-                                openURL(url)
+        switch entity.scanState {
+        case .matched, .matchedViaSearch:
+            VStack(alignment: .leading, spacing: 0) {
+                mbidSectionHeader
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Release: \(entity.mbidMatchedTitle ?? "—") — \(entity.mbidMatchedArtist ?? "—")")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        if let mbid = entity.mbid {
+                            Button {
+                                if let url = URL(string: "https://musicbrainz.org/release/\(mbid)") {
+                                    openURL(url)
+                                }
+                            } label: {
+                                Label("View on MusicBrainz", systemImage: "arrow.up.right.square")
                             }
-                        } label: {
-                            Label("View on MusicBrainz", systemImage: "arrow.up.right.square")
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            Button {
+                                copyMBID(mbid)
+                            } label: {
+                                Text(mbidCopied ? "✓ Copied" : "Copy MBID")
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
                         }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .padding(.top, 4)
+                    }
+                    if entity.scanState == .matchedViaSearch {
+                        Text("Matched via search")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .help("This match was found via indexed search rather than a direct Discogs↔MusicBrainz URL relationship. Verify it matches your pressing.")
                     }
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 12)
+            }
 
-            case .notFound:
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "questionmark.circle")
-                            .foregroundStyle(.secondary)
-                            .font(.system(size: 13))
-                        Text("No MusicBrainz match found")
-                            .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
-                    }
+        case .notFound:
+            VStack(alignment: .leading, spacing: 0) {
+                mbidSectionHeader
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("No MusicBrainz match")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
                     Button {
-                        let query = [item.basicInformation.artists.first?.name, item.basicInformation.title]
-                            .compactMap { $0 }
-                            .joined(separator: " ")
+                        let artist = item.basicInformation.artists.map(\.name).joined(separator: " ")
+                        let encodedQuery = "\(item.basicInformation.title) \(artist)"
                             .addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-                        if let url = URL(string: "https://musicbrainz.org/search?query=\(query)&type=release") {
+                        if let url = URL(string: "https://musicbrainz.org/search?type=release&query=\(encodedQuery)") {
                             openURL(url)
                         }
                     } label: {
-                        Label("Search manually on MusicBrainz", systemImage: "magnifyingglass")
+                        Label("Search manually", systemImage: "arrow.up.right.square")
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
-                    .padding(.top, 4)
-                }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 12)
-
-            case .failed:
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .foregroundStyle(.orange)
-                        .font(.system(size: 13))
-                    Text("Scan failed — will retry on next scan")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 12)
-
-            case .matchedViaSearch:
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                            .font(.system(size: 13))
-                        Text(entity.mbidMatchedTitle ?? "Matched")
-                            .font(.system(size: 13))
-                        Text("via search")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(Color.secondary.opacity(0.1))
-                            .cornerRadius(3)
-                        if let matchedTitle = entity.mbidMatchedTitle,
-                           matchedTitle.lowercased() != item.basicInformation.title.lowercased() {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.orange)
-                                .font(.system(size: 12))
-                                .help("Title mismatch — Discogs: \(item.basicInformation.title) · MusicBrainz: \(matchedTitle)")
-                        }
-                    }
-                    if let artist = entity.mbidMatchedArtist, !artist.isEmpty {
-                        Text(artist)
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                    }
-                    if let mbid = entity.mbid {
-                        Button {
-                            if let url = URL(string: "https://musicbrainz.org/release/\(mbid)") {
-                                openURL(url)
-                            }
-                        } label: {
-                            Label("View on MusicBrainz", systemImage: "arrow.up.right.square")
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .help("Matched via indexed search — verify the release matches your pressing.")
-                        .padding(.top, 4)
-                    }
-                }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 12)
-
-            case .unscanned:
-                HStack(spacing: 6) {
-                    Image(systemName: "clock")
-                        .foregroundStyle(.secondary)
-                        .font(.system(size: 13))
-                    Text("Not yet scanned")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 12)
             }
+
+        case .failed:
+            VStack(alignment: .leading, spacing: 0) {
+                mbidSectionHeader
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("MBID lookup failed")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                    Text("Retry next scan")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 12)
+            }
+
+        case .unscanned:
+            EmptyView()
+        }
+    }
+
+    private var mbidSectionHeader: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("MusicBrainz")
+                .font(.system(size: 16, weight: .semibold))
+            Divider()
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 20)
+        .padding(.bottom, 8)
+    }
+
+    private func copyMBID(_ mbid: String) {
+#if os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(mbid, forType: .string)
+#else
+        UIPasteboard.general.string = mbid
+#endif
+        mbidCopied = true
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            mbidCopied = false
         }
     }
 

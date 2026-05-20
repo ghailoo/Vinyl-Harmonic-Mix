@@ -103,7 +103,7 @@ struct MBIDScanBanner: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
         case .completed, .cancelled, .failed:
-            Button("Dismiss") { coordinator.dismissBanner() }
+            Button("Dismiss") { coordinator.dismissPanel() }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
         case .idle:
