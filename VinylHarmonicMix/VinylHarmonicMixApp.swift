@@ -25,7 +25,14 @@ struct VinylHarmonicMixApp: App {
                 RecordingFeaturesEntity.self,
                 LocalFileEntity.self,
             ])
-            container = try ModelContainer(for: schema)
+            // Sandbox is disabled so the default store path moves to ~/Library/Application Support/.
+            // Pin to the container path so existing Discogs/MusicBrainz data is preserved
+            // regardless of sandbox state. SwiftData will auto-migrate the schema on first open.
+            let bundleID = Bundle.main.bundleIdentifier ?? "VinylHarmonicMix"
+            let containerStoreURL = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Containers/\(bundleID)/Data/Library/Application Support/default.store")
+            let config = ModelConfiguration(url: containerStoreURL)
+            container = try ModelContainer(for: schema, configurations: config)
         } catch {
             fatalError("SwiftData container init failed: \(error)")
         }
