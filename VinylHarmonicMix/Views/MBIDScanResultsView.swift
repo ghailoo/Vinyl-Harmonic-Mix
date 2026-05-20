@@ -4,8 +4,11 @@ import SwiftUI
 struct MBIDScanResultsView: View {
     let coordinator: MBIDScanCoordinator
     let onFilterSelect: (CollectionFilter) -> Void
+    let onOpenItem: (Int) -> Void
 
     @State private var isExpanded: Bool = true
+    @State private var mbidEntryItem: MBIDScanCoordinator.FailedItemInfo? = nil
+    @State private var toastMessage: String? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -15,7 +18,7 @@ struct MBIDScanResultsView: View {
                 collapsedContent
             }
         }
-        .frame(maxWidth: 720)
+        .frame(maxWidth: 1200)
         .fixedSize(horizontal: false, vertical: true)
         .background(.regularMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -25,6 +28,31 @@ struct MBIDScanResultsView: View {
         )
         .shadow(color: .black.opacity(0.12), radius: 12, x: 0, y: 3)
         .animation(.easeInOut(duration: 0.2), value: isExpanded)
+        .overlay(alignment: .bottom) {
+            if let msg = toastMessage {
+                Text(msg)
+                    .font(.caption.weight(.medium))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(.thinMaterial, in: Capsule())
+                    .padding(.bottom, 12)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: toastMessage)
+        .sheet(item: $mbidEntryItem) { item in
+            MBIDManualEntryView(
+                item: item,
+                onSubmit: { mbid in
+                    coordinator.setMBIDManually(instanceId: item.instanceId, mbid: mbid)
+                    mbidEntryItem = nil
+                    showToast("MBID set for \(item.title)")
+                },
+                onCancel: {
+                    mbidEntryItem = nil
+                }
+            )
+        }
     }
 
     // MARK: - Expanded branch
@@ -178,6 +206,11 @@ struct MBIDScanResultsView: View {
                 matchRow(icon: "checkmark.circle.fill", iconColor: .green,
                          label: "Via indexed search",   count: coordinator.searchMatchedCount,
                          filter: .matched)
+                if coordinator.manualMatchCount > 0 {
+                    matchRow(icon: "pencil.circle.fill", iconColor: .green,
+                             label: "Manually matched",  count: coordinator.manualMatchCount,
+                             filter: .matched)
+                }
                 matchRow(icon: "circle",                iconColor: .secondary,
                          label: "Not found",            count: coordinator.notFoundCount,
                          filter: .notFound)
@@ -232,20 +265,20 @@ struct MBIDScanResultsView: View {
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 8) {
-                        ForEach(coordinator.failedItems, id: \.title) { item in
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(item.title)
-                                    .font(.system(size: 13, weight: .medium))
-                                    .lineLimit(1)
-                                Text(item.artist)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                Text(item.error)
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
-                                    .lineLimit(1)
-                            }
+                        ForEach(coordinator.failedItems) { item in
+                            FailedRowView(
+                                item: item,
+                                onOpenDetail: {
+                                    onOpenItem(item.instanceId)
+                                },
+                                onResetToNotFound: {
+                                    coordinator.resetToNotFound(instanceId: item.instanceId)
+                                    showToast("Reset to \"Not found\" — use Retry not found to rescan")
+                                },
+                                onSetMBIDManually: {
+                                    mbidEntryItem = item
+                                }
+                            )
                         }
                     }
                     .padding(.horizontal, 16)
@@ -304,7 +337,7 @@ struct MBIDScanResultsView: View {
                 : "Scanning MusicBrainz IDs (search pass)"
         case .paused:   return "Scan paused"
         case .completed:
-            let matched = coordinator.matchedCount + coordinator.searchMatchedCount
+            let matched = coordinator.matchedCount + coordinator.searchMatchedCount + coordinator.manualMatchCount
             return "Scan complete — \(matched) of \(coordinator.totalCount) matched"
         case .cancelled:
             return "Scan cancelled — \(coordinator.scanned) of \(coordinator.total) processed"
@@ -331,5 +364,148 @@ struct MBIDScanResultsView: View {
             .padding(.horizontal, 16)
             .padding(.top, 10)
             .padding(.bottom, 8)
+    }
+
+    private func showToast(_ message: String) {
+        toastMessage = message
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            toastMessage = nil
+        }
+    }
+}
+
+// MARK: - Failed row with popover
+
+private struct FailedRowView: View {
+    let item: MBIDScanCoordinator.FailedItemInfo
+    let onOpenDetail: () -> Void
+    let onResetToNotFound: () -> Void
+    let onSetMBIDManually: () -> Void
+
+    @State private var showPopover = false
+
+    var body: some View {
+        Button { showPopover = true } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title)
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
+                Text(item.artist)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Text(item.error)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $showPopover, arrowEdge: .leading) {
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(2)
+                    Text(item.artist)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 0) {
+                    popoverButton("Open in detail view", systemImage: "doc.text.magnifyingglass") {
+                        showPopover = false
+                        onOpenDetail()
+                    }
+                    popoverButton("Reset to \"Not found\"", systemImage: "arrow.counterclockwise") {
+                        showPopover = false
+                        onResetToNotFound()
+                    }
+                    popoverButton("Set MBID manually…", systemImage: "pencil") {
+                        showPopover = false
+                        onSetMBIDManually()
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            .frame(width: 260)
+        }
+    }
+
+    private func popoverButton(_ label: String, systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(label, systemImage: systemImage)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - MBID manual entry sheet
+
+private struct MBIDManualEntryView: View {
+    let item: MBIDScanCoordinator.FailedItemInfo
+    let onSubmit: (String) -> Void
+    let onCancel: () -> Void
+
+    @State private var mbidText = ""
+    @State private var validationError: String? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Set MBID manually")
+                .font(.headline)
+
+            Text("\(item.title) — \(item.artist)")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 6) {
+                TextField("e.g. 550e8400-e29b-41d4-a716-446655440000", text: $mbidText)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.body, design: .monospaced))
+                if let error = validationError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+
+            HStack {
+                Button("Cancel", action: onCancel)
+                    .buttonStyle(.bordered)
+                Spacer()
+                Button("Set MBID") {
+                    let trimmed = mbidText.trimmingCharacters(in: .whitespaces)
+                    if isValidMBID(trimmed) {
+                        validationError = nil
+                        onSubmit(trimmed)
+                    } else {
+                        validationError = "Not a valid MBID. Format: 8-4-4-4-12 hex characters."
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(mbidText.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(24)
+        .frame(width: 420)
+    }
+
+    private func isValidMBID(_ s: String) -> Bool {
+        let pattern = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        return s.range(of: pattern, options: .regularExpression) != nil
     }
 }

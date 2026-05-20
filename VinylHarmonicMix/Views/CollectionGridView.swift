@@ -65,13 +65,20 @@ struct CollectionGridView: View {
     var body: some View {
         VStack(spacing: 0) {
             if scanCoordinator.shouldShowPanel {
-                MBIDScanResultsView(coordinator: scanCoordinator) { filter in
-                    activeFilter = filter
-                    scanCoordinator.dismissPanel()
-                }
-                .padding(.horizontal, 16)
+                MBIDScanResultsView(
+                    coordinator: scanCoordinator,
+                    onFilterSelect: { filter in
+                        activeFilter = filter
+                        scanCoordinator.dismissPanel()
+                    },
+                    onOpenItem: { instanceId in
+                        selectedItem = viewModel.items.first { $0.id == instanceId }
+                    }
+                )
+                .padding(.horizontal, 24)
                 .padding(.top, 12)
                 .padding(.bottom, 12)
+                .frame(maxWidth: .infinity)
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
             if viewModel.items.isEmpty {
@@ -209,7 +216,9 @@ struct CollectionGridView: View {
     private func filterCount(for filter: CollectionFilter) -> Int {
         switch filter {
         case .all:      return viewModel.items.count
-        case .matched:  return allEntities.filter { $0.mbidScanState == "matched" || $0.mbidScanState == "matchedViaSearch" }.count
+        case .matched:  return allEntities.filter {
+            $0.mbidScanState == "matched" || $0.mbidScanState == "matchedViaSearch" || $0.mbidScanState == "matchedManually"
+        }.count
         case .notFound: return allEntities.filter { $0.mbidScanState == "notFound" }.count
         case .failed:   return allEntities.filter { $0.mbidScanState == "failed" }.count
         case .unscanned: return allEntities.filter { $0.mbidScanState == "unscanned" }.count
@@ -218,7 +227,7 @@ struct CollectionGridView: View {
 
     private var matchedInstanceIds: Set<Int> {
         let matched = allEntities.filter {
-            $0.mbidScanState == "matched" || $0.mbidScanState == "matchedViaSearch"
+            $0.mbidScanState == "matched" || $0.mbidScanState == "matchedViaSearch" || $0.mbidScanState == "matchedManually"
         }
         return Set(matched.map { $0.instanceId })
     }
@@ -306,7 +315,9 @@ struct CollectionGridView: View {
             case .all:
                 matchingIds = []
             case .matched:
-                matchingIds = Set(allEntities.filter { $0.mbidScanState == "matched" || $0.mbidScanState == "matchedViaSearch" }.map(\.instanceId))
+                matchingIds = Set(allEntities.filter {
+                    $0.mbidScanState == "matched" || $0.mbidScanState == "matchedViaSearch" || $0.mbidScanState == "matchedManually"
+                }.map(\.instanceId))
             case .notFound:
                 matchingIds = Set(allEntities.filter { $0.mbidScanState == "notFound" }.map(\.instanceId))
             case .failed:

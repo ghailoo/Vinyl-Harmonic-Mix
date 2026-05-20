@@ -29,6 +29,14 @@ final class MBIDScanCoordinator {
         let artist: String
     }
 
+    struct FailedItemInfo: Identifiable {
+        let instanceId: Int
+        let title: String
+        let artist: String
+        let error: String
+        var id: Int { instanceId }
+    }
+
     var phase: Phase = .idle
     var scanMode: ScanMode = .urlLookup
     var scanned: Int = 0
@@ -61,6 +69,7 @@ final class MBIDScanCoordinator {
 
     var matchedCount: Int       { fetchCount(state: .matched) }
     var searchMatchedCount: Int { fetchCount(state: .matchedViaSearch) }
+    var manualMatchCount: Int   { fetchCount(state: .matchedManually) }
     var notFoundCount: Int      { fetchCount(state: .notFound) }
     var failedCount: Int        { fetchCount(state: .failed) }
     var unscannedCount: Int     { fetchCount(state: .unscanned) }
@@ -74,20 +83,53 @@ final class MBIDScanCoordinator {
     }
 
     var overallMatchRate: Double {
-        Double(matchedCount + searchMatchedCount) / Double(max(totalCount, 1))
+        Double(matchedCount + searchMatchedCount + manualMatchCount) / Double(max(totalCount, 1))
     }
 
-    var failedItems: [(title: String, artist: String, error: String)] {
+    var failedItems: [FailedItemInfo] {
         let d = FetchDescriptor<CollectionItemEntity>(
             predicate: #Predicate { $0.mbidScanState == "failed" }
         )
         return ((try? context.fetch(d)) ?? []).map { entity in
-            (
+            FailedItemInfo(
+                instanceId: entity.instanceId,
                 title: entity.basicInformation?.title ?? "Unknown",
                 artist: entity.basicInformation?.artists.map(\.name).joined(separator: " & ") ?? "",
                 error: "Network error or invalid response"
             )
         }
+    }
+
+    // MARK: - Manual fix actions
+
+    func resetToNotFound(instanceId: Int) {
+        let id = instanceId
+        var descriptor = FetchDescriptor<CollectionItemEntity>(
+            predicate: #Predicate { $0.instanceId == id }
+        )
+        descriptor.fetchLimit = 1
+        guard let entity = try? context.fetch(descriptor).first else { return }
+        entity.mbidScanState = MBIDScanState.notFound.rawValue
+        entity.mbid = nil
+        entity.mbidScannedAt = nil
+        entity.mbidMatchedTitle = nil
+        entity.mbidMatchedArtist = nil
+        try? context.save()
+    }
+
+    func setMBIDManually(instanceId: Int, mbid: String) {
+        let id = instanceId
+        var descriptor = FetchDescriptor<CollectionItemEntity>(
+            predicate: #Predicate { $0.instanceId == id }
+        )
+        descriptor.fetchLimit = 1
+        guard let entity = try? context.fetch(descriptor).first else { return }
+        entity.mbid = mbid
+        entity.mbidScanState = MBIDScanState.matchedManually.rawValue
+        entity.mbidMatchedTitle = nil
+        entity.mbidMatchedArtist = nil
+        entity.mbidScannedAt = Date()
+        try? context.save()
     }
 
     // MARK: - Panel state
@@ -127,8 +169,10 @@ final class MBIDScanCoordinator {
         phase = .scanning
         showBanner = true
 
+        let rawUnscanned = MBIDScanState.unscanned.rawValue
+        let rawFailed = MBIDScanState.failed.rawValue
         let descriptor = FetchDescriptor<CollectionItemEntity>(
-            predicate: #Predicate { $0.mbidScanState == "unscanned" }
+            predicate: #Predicate { $0.mbidScanState == rawUnscanned || $0.mbidScanState == rawFailed }
         )
         let remaining = (try? context.fetchCount(descriptor)) ?? 0
         total = processedCount + remaining
@@ -144,8 +188,10 @@ final class MBIDScanCoordinator {
     private func performScan() async {
         // Single up-front fetch — avoids SwiftData pending-change cache returning 0
         // on re-fetch inside a mutation loop.
+        let rawUnscanned = MBIDScanState.unscanned.rawValue
+        let rawFailed    = MBIDScanState.failed.rawValue
         let descriptor = FetchDescriptor<CollectionItemEntity>(
-            predicate: #Predicate { $0.mbidScanState == "unscanned" }
+            predicate: #Predicate { $0.mbidScanState == rawUnscanned || $0.mbidScanState == rawFailed }
         )
         let queue: [CollectionItemEntity]
         do {
@@ -180,6 +226,11 @@ final class MBIDScanCoordinator {
                 } else {
                     entity.mbidScanState = MBIDScanState.notFound.rawValue
                 }
+            } catch is CancellationError {
+                print("⏸️ Scan cancelled mid-request for releaseId=\(releaseId), state unchanged")
+                try? context.save()
+                currentItem = nil
+                return
             } catch {
                 entity.mbidScanState = MBIDScanState.failed.rawValue
                 print("⚠️ Failed item \(releaseId): \(error)")
@@ -222,8 +273,10 @@ final class MBIDScanCoordinator {
         phase = .scanning
         showBanner = true
 
+        let rawNotFound = MBIDScanState.notFound.rawValue
+        let rawFailed   = MBIDScanState.failed.rawValue
         let descriptor = FetchDescriptor<CollectionItemEntity>(
-            predicate: #Predicate { $0.mbidScanState == "notFound" }
+            predicate: #Predicate { $0.mbidScanState == rawNotFound || $0.mbidScanState == rawFailed }
         )
         let remaining = (try? context.fetchCount(descriptor)) ?? 0
         total = processedCount + remaining
@@ -232,8 +285,10 @@ final class MBIDScanCoordinator {
     }
 
     private func scanMissingViaSearch() async {
+        let rawNotFound = MBIDScanState.notFound.rawValue
+        let rawFailed   = MBIDScanState.failed.rawValue
         let descriptor = FetchDescriptor<CollectionItemEntity>(
-            predicate: #Predicate { $0.mbidScanState == "notFound" }
+            predicate: #Predicate { $0.mbidScanState == rawNotFound || $0.mbidScanState == rawFailed }
         )
         let queue: [CollectionItemEntity]
         do {
@@ -273,6 +328,11 @@ final class MBIDScanCoordinator {
                     entity.mbidScanState = MBIDScanState.matchedViaSearch.rawValue
                 }
                 // nil → score below threshold; leave state as notFound
+            } catch is CancellationError {
+                print("⏸️ Search scan cancelled mid-request for releaseId=\(entity.releaseId), state unchanged")
+                try? context.save()
+                currentItem = nil
+                return
             } catch {
                 entity.mbidScanState = MBIDScanState.failed.rawValue
                 print("⚠️ Search failed item \(entity.releaseId): \(error)")

@@ -14,7 +14,7 @@ struct DetailCachePanelView: View {
                 collapsedContent
             }
         }
-        .frame(maxWidth: 720)
+        .frame(maxWidth: 1200)
         .fixedSize(horizontal: false, vertical: true)
         .background(.regularMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 12))

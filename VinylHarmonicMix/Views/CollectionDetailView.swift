@@ -396,13 +396,15 @@ struct CollectionDetailView: View {
     @ViewBuilder
     private func mbidStatusRow(entity: CollectionItemEntity) -> some View {
         switch entity.scanState {
-        case .matched, .matchedViaSearch:
+        case .matched, .matchedViaSearch, .matchedManually:
             VStack(alignment: .leading, spacing: 0) {
                 mbidSectionHeader
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Release: \(entity.mbidMatchedTitle ?? "—") — \(entity.mbidMatchedArtist ?? "—")")
-                        .font(.body)
-                        .foregroundStyle(.secondary)
+                    if let title = entity.mbidMatchedTitle {
+                        Text("Release: \(title) — \(entity.mbidMatchedArtist ?? "—")")
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                    }
                     HStack(spacing: 8) {
                         if let mbid = entity.mbid {
                             Button {
@@ -428,6 +430,10 @@ struct CollectionDetailView: View {
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                             .help("This match was found via indexed search rather than a direct Discogs↔MusicBrainz URL relationship. Verify it matches your pressing.")
+                    } else if entity.scanState == .matchedManually {
+                        Text("Set manually")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
                     }
                 }
                 .padding(.horizontal, 20)

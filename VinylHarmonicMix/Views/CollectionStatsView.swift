@@ -24,9 +24,10 @@ struct CollectionStatsView: View {
                 VStack(spacing: 0) {
                     if cacheCoordinator.shouldShowPanel {
                         DetailCachePanelView(coordinator: cacheCoordinator)
-                            .padding(.horizontal, 16)
+                            .padding(.horizontal, 24)
                             .padding(.top, 12)
                             .padding(.bottom, 8)
+                            .frame(maxWidth: .infinity)
                             .transition(.move(edge: .top).combined(with: .opacity))
                     }
                     ScrollView {
