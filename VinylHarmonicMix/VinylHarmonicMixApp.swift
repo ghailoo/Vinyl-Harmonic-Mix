@@ -10,6 +10,7 @@ struct VinylHarmonicMixApp: App {
     @State private var cacheCoordinator: DetailCacheCoordinator
     @State private var recordingsCoordinator: RecordingsScanCoordinator
     @State private var audioFeaturesCoordinator: AudioFeaturesScanCoordinator
+    @State private var fileMatchCoordinator: FileMatchCoordinator
 
     init() {
         do {
@@ -22,6 +23,7 @@ struct VinylHarmonicMixApp: App {
                 ReleaseDetailEntity.self,
                 TrackEntity.self,
                 RecordingFeaturesEntity.self,
+                LocalFileEntity.self,
             ])
             container = try ModelContainer(for: schema)
         } catch {
@@ -33,6 +35,7 @@ struct VinylHarmonicMixApp: App {
         _cacheCoordinator = State(initialValue: DetailCacheCoordinator(context: ctx))
         _recordingsCoordinator = State(initialValue: RecordingsScanCoordinator(context: ctx))
         _audioFeaturesCoordinator = State(initialValue: AudioFeaturesScanCoordinator(context: ctx))
+        _fileMatchCoordinator = State(initialValue: FileMatchCoordinator(context: ctx))
 #if DEBUG
         Task { @MainActor in
             let itemDescriptor = FetchDescriptor<CollectionItemEntity>()
@@ -41,7 +44,9 @@ struct VinylHarmonicMixApp: App {
             let detailCount = (try? ctx.fetchCount(detailDescriptor)) ?? -1
             let allItems = (try? ctx.fetch(itemDescriptor)) ?? []
             let distinctIds = Set(allItems.map(\.instanceId)).count
+            let fileCount = (try? ctx.fetchCount(FetchDescriptor<LocalFileEntity>())) ?? -1
             print("📊 SwiftData state: CollectionItemEntity rows = \(itemCount), distinct instanceIds = \(distinctIds), ReleaseDetailEntity rows = \(detailCount)")
+            print("📊 LocalFileEntity rows = \(fileCount)")
             if distinctIds < itemCount {
                 print("⚠️ DUPLICATE ROWS DETECTED: \(itemCount - distinctIds) duplicates with same instanceId — @Attribute(.unique) is not being enforced")
             }
@@ -60,6 +65,7 @@ struct VinylHarmonicMixApp: App {
                 .environment(cacheCoordinator)
                 .environment(recordingsCoordinator)
                 .environment(audioFeaturesCoordinator)
+                .environment(fileMatchCoordinator)
         }
         .modelContainer(container)
 #if os(macOS)
@@ -68,6 +74,7 @@ struct VinylHarmonicMixApp: App {
                 SettingsView()
             }
             .environment(settingsViewModel)
+            .environment(fileMatchCoordinator)
         }
 #endif
     }

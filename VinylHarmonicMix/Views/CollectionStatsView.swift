@@ -5,10 +5,12 @@ struct CollectionStatsView: View {
     @Environment(DetailCacheCoordinator.self) private var cacheCoordinator
     @Environment(RecordingsScanCoordinator.self) private var recordingsCoordinator
     @Environment(AudioFeaturesScanCoordinator.self) private var audioFeaturesCoordinator
+    @Environment(FileMatchCoordinator.self) private var fileMatchCoordinator
     @Query private var entities: [CollectionItemEntity]
     @Query private var detailEntities: [ReleaseDetailEntity]
     @Query private var trackEntities: [TrackEntity]
     @Query private var featureEntities: [RecordingFeaturesEntity]
+    @Query private var localFileEntities: [LocalFileEntity]
 
     @State private var cachedDetails: [ReleaseDetail] = []
     @State private var showRefreshAlert = false
@@ -51,6 +53,7 @@ struct CollectionStatsView: View {
                             tracksCard
                             recordingsCard
                             audioFeaturesCard
+                            localFilesCard
                         }
                         .padding(.horizontal, 24)
                         .padding(.vertical, 20)
@@ -505,6 +508,82 @@ struct CollectionStatsView: View {
             .buttonStyle(.bordered)
             .controlSize(.small)
             .disabled(isRunning || !canScan)
+            .padding(.top, 10)
+        }
+    }
+
+    // MARK: - Local Files card
+
+    private var localFilesCard: some View {
+        let totalWithMBID = fileMatchCoordinator.totalTracksWithRecordingMBID
+        let matched       = fileMatchCoordinator.matchedFileCount
+        let unconfirmed   = fileMatchCoordinator.unconfirmedFileCount
+        let noCandidate   = fileMatchCoordinator.noCandidateFileCount
+        let pct           = totalWithMBID > 0 ? min(100, matched * 100 / totalWithMBID) : 0
+        let isRunning: Bool = {
+            switch fileMatchCoordinator.phase {
+            case .indexing, .narrowing, .confirming, .paused: return true
+            default: return false
+            }
+        }()
+
+        return sectionCard {
+            sectionHeader(title: "Local Files")
+
+            if localFileEntities.isEmpty && matched == 0 {
+                Text("No files matched yet. Run 'Test match' in Settings to link local audio files to collection tracks.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("\(matched.formatted()) of \(totalWithMBID.formatted()) tracks matched to local files (\(pct)%)")
+                        .font(.system(size: 14))
+
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.secondary.opacity(0.15)).frame(height: 8)
+                            Capsule()
+                                .fill(Color.green)
+                                .frame(
+                                    width: totalWithMBID > 0
+                                        ? geo.size.width * CGFloat(matched) / CGFloat(max(totalWithMBID, 1))
+                                        : 0,
+                                    height: 8
+                                )
+                        }
+                    }
+                    .frame(height: 8)
+
+                    VStack(spacing: 4) {
+                        recordingStateRow(icon: "checkmark.circle.fill",      iconColor: .green,    label: "Matched (fingerprint)", count: matched)
+                        recordingStateRow(icon: "questionmark.circle.fill",   iconColor: .orange,   label: "Possible (unconfirmed)", count: unconfirmed)
+                        recordingStateRow(icon: "circle",                     iconColor: .secondary, label: "No file found",          count: noCandidate)
+                        recordingStateRow(icon: "waveform",                   iconColor: .secondary, label: "Files indexed",           count: localFileEntities.count)
+                    }
+                    .padding(.top, 4)
+                }
+            }
+
+            if fileMatchCoordinator.shouldShowPanel {
+                FileMatchPanelView(coordinator: fileMatchCoordinator)
+                    .padding(.top, 8)
+            }
+
+            HStack(spacing: 8) {
+                Button(isRunning ? "Scanning…" : "Test match (150)") {
+                    fileMatchCoordinator.startTestBatch()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(isRunning || fileMatchCoordinator.phase != .idle)
+
+                Button("Match all") {
+                    fileMatchCoordinator.startFullScan()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(isRunning || !fileMatchCoordinator.hasRunTestBatch)
+            }
             .padding(.top, 10)
         }
     }

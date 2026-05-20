@@ -13,6 +13,12 @@ final class TrackEntity {
 
     var collectionItem: CollectionItemEntity?
 
+    @Relationship(deleteRule: .nullify, inverse: \LocalFileEntity.track)
+    var localFiles: [LocalFileEntity] = []
+
+    var fileMatchState: String = "unscanned"
+    var primaryLocalFilePath: String? = nil
+
     init(trackMBID: String, recordingMBID: String, position: String, title: String,
          durationMs: Int?, artistCredit: String) {
         self.trackMBID = trackMBID

@@ -46,6 +46,7 @@ private struct LibraryScanProgressPanel: View {
 
 struct SettingsView: View {
     @Environment(SettingsViewModel.self) private var settings
+    @Environment(FileMatchCoordinator.self) private var fileMatchCoordinator
     @Environment(\.dismiss) private var dismiss
 
     @State private var mbSavedConfirmation = false
@@ -308,6 +309,28 @@ struct SettingsView: View {
                 } else if let error = settings.mbErrorMessage {
                     Label(error, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.red)
+                }
+            }
+            // MARK: Scan Library
+            Section("Scan Library") {
+                Text("Match collection tracks to local audio files via AcoustID fingerprinting.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 8) {
+                    Button("Test match (first 150)") {
+                        fileMatchCoordinator.startTestBatch()
+                    }
+                    .disabled(fileMatchCoordinator.phase != .idle)
+
+                    Button("Match all tracks") {
+                        fileMatchCoordinator.startFullScan()
+                    }
+                    .disabled(!fileMatchCoordinator.hasRunTestBatch || fileMatchCoordinator.phase != .idle)
+                }
+
+                if fileMatchCoordinator.shouldShowPanel {
+                    FileMatchPanelView(coordinator: fileMatchCoordinator)
                 }
             }
         }

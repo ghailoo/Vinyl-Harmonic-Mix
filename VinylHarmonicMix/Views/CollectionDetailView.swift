@@ -625,6 +625,27 @@ struct CollectionDetailView: View {
                         .padding(.vertical, 2)
                         .background(Capsule().fill(CamelotColor.background(for: code)))
                 }
+
+                // Format pill — shown when track has a matched local file
+                if let matchedTrack = trackEntities.first(where: { $0.recordingMBID == rmbid }),
+                   matchedTrack.fileMatchState == "matched",
+                   let filePath = matchedTrack.primaryLocalFilePath {
+                    let ext = URL(fileURLWithPath: filePath).pathExtension.uppercased()
+                    Text(ext)
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color(red: 0.25, green: 0.50, blue: 0.90)))
+                } else if let matchedTrack = trackEntities.first(where: { $0.recordingMBID == rmbid }),
+                          matchedTrack.fileMatchState == "candidateUnconfirmed" {
+                    Text("?")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.secondary.opacity(0.2)))
+                }
             }
         }
         .buttonStyle(.plain)
