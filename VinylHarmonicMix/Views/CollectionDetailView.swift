@@ -266,8 +266,8 @@ struct CollectionDetailView: View {
             .padding(.top, 20)
             .padding(.bottom, 4)
 
-            ForEach(Array(detail.tracklist.enumerated()), id: \.offset) { _, track in
-                let rmbid = recordingMBID(forPosition: track.position)
+            ForEach(Array(detail.tracklist.enumerated()), id: \.offset) { index, track in
+                let rmbid = recordingMBID(forPosition: track.position, fallbackIndex: index)
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(spacing: 0) {
                         Text(track.position)
@@ -554,10 +554,32 @@ struct CollectionDetailView: View {
         s.replacingOccurrences(of: " ", with: "").uppercased()
     }
 
-    private func recordingMBID(forPosition position: String) -> String? {
+    private func recordingMBID(forPosition position: String, fallbackIndex: Int? = nil) -> String? {
         guard !position.isEmpty else { return nil }
+        // Primary: exact position string match (works when both sides use same notation)
         let norm = normalizePosition(position)
-        return trackEntities.first { normalizePosition($0.position) == norm }?.recordingMBID
+        if let match = trackEntities.first(where: { normalizePosition($0.position) == norm }),
+           !match.recordingMBID.isEmpty {
+            return match.recordingMBID
+        }
+        // Fallback: index-based match — handles Discogs A1/B1 vs MusicBrainz 1/2/3
+        if let idx = fallbackIndex {
+            let sorted = trackEntitiesSortedNumerically
+            if idx < sorted.count {
+                let mbid = sorted[idx].recordingMBID
+                return mbid.isEmpty ? nil : mbid
+            }
+        }
+        return nil
+    }
+
+    // Track entities sorted numerically by position (1, 2, 3 … 10, 11) for index matching
+    private var trackEntitiesSortedNumerically: [TrackEntity] {
+        trackEntities.sorted {
+            let a = Int($0.position) ?? Int.max
+            let b = Int($1.position) ?? Int.max
+            return a == b ? $0.position < $1.position : a < b
+        }
     }
 
     private func recordingMBIDCaption(_ rmbid: String) -> some View {
