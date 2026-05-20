@@ -51,6 +51,7 @@ struct CollectionGridView: View {
     @Environment(CollectionViewModel.self) private var viewModel
     @Environment(MBIDScanCoordinator.self) private var scanCoordinator
     @Environment(RecordingsScanCoordinator.self) private var recordingsCoordinator
+    @Environment(AudioFeaturesScanCoordinator.self) private var audioFeaturesCoordinator
     @Environment(\.modelContext) private var modelContext
 
     @Query private var allEntities: [CollectionItemEntity]
@@ -59,6 +60,7 @@ struct CollectionGridView: View {
     @State private var selectedItem: CollectionItem?
     @State private var showRescanAlert = false
     @State private var showRefetchAlert = false
+    @State private var showRescanAudioAlert = false
     @State private var activeFilter: CollectionFilter = .all
     @State private var activeSort: CollectionSort = .yearDesc
 
@@ -66,6 +68,19 @@ struct CollectionGridView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if audioFeaturesCoordinator.shouldShowPanel {
+                AudioFeaturesScanResultsView(
+                    coordinator: audioFeaturesCoordinator,
+                    onOpenItem: { instanceId in
+                        selectedItem = viewModel.items.first { $0.id == instanceId }
+                    }
+                )
+                .padding(.horizontal, 24)
+                .padding(.top, 12)
+                .padding(.bottom, 0)
+                .frame(maxWidth: .infinity)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
             if recordingsCoordinator.shouldShowPanel {
                 RecordingsScanResultsView(
                     coordinator: recordingsCoordinator,
@@ -107,6 +122,7 @@ struct CollectionGridView: View {
                     }
             }
         }
+        .animation(.easeInOut(duration: 0.25), value: audioFeaturesCoordinator.shouldShowPanel)
         .animation(.easeInOut(duration: 0.25), value: recordingsCoordinator.shouldShowPanel)
         .animation(.easeInOut(duration: 0.25), value: scanCoordinator.shouldShowPanel)
         .animation(.easeInOut(duration: 0.2), value: activeFilter)
@@ -128,6 +144,7 @@ struct CollectionGridView: View {
                     .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.2), lineWidth: 0.5))
                 sortButton
                 fetchTracksButton
+                scanAudioButton
                 filterButton
                 scanButton
                 Button {
@@ -149,6 +166,12 @@ struct CollectionGridView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This will delete all stored recording MBIDs and re-fetch every matched release. Takes ~7–8 minutes.")
+        }
+        .alert("Rescan all audio features?", isPresented: $showRescanAudioAlert) {
+            Button("Rescan", role: .destructive) { audioFeaturesCoordinator.rescanAll() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will delete all stored BPM/key data and re-query AcousticBrainz for every recording MBID. Takes ~3 minutes.")
         }
     }
 
@@ -315,6 +338,68 @@ struct CollectionGridView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .help("Fetch recording MBIDs from MusicBrainz")
+    }
+
+    // MARK: - Scan audio toolbar button
+
+    private var scanAudioButton: some View {
+        let unqueried = audioFeaturesCoordinator.unqueriedCount
+        let missing = audioFeaturesCoordinator.missingBatchCount
+        let isActive: Bool = {
+            switch audioFeaturesCoordinator.phase {
+            case .scanning, .paused: return true
+            default: return false
+            }
+        }()
+        let badgeCount = unqueried > 0 ? unqueried : missing
+
+        return Menu {
+            Button {
+                audioFeaturesCoordinator.start()
+            } label: {
+                Label("Scan unqueried (\(unqueried))", systemImage: "waveform.badge.magnifyingglass")
+            }
+            .disabled(unqueried == 0 || isActive)
+
+            Button {
+                audioFeaturesCoordinator.refetchMissing()
+            } label: {
+                Label("Refetch missing (\(missing))", systemImage: "arrow.clockwise.circle")
+            }
+            .disabled(missing == 0 || isActive)
+
+            Divider()
+
+            Button(role: .destructive) {
+                showRescanAudioAlert = true
+            } label: {
+                Label("Rescan everything…", systemImage: "arrow.counterclockwise")
+            }
+            .disabled(isActive)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "waveform")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Scan audio")
+                    .font(.system(size: 13))
+                if badgeCount > 0 {
+                    Text("\(badgeCount)")
+                        .font(.system(size: 11, weight: .semibold))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.accentColor.opacity(0.2))
+                        .cornerRadius(4)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(Color.secondary.opacity(0.12)))
+            .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.2), lineWidth: 0.5))
+            .foregroundStyle(Color.primary)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .help("Fetch BPM and key from AcousticBrainz")
     }
 
     // MARK: - Scan toolbar button

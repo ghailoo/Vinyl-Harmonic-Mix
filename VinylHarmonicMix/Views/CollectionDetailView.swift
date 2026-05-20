@@ -13,6 +13,7 @@ struct CollectionDetailView: View {
     @State private var loadError: String?
     @State private var itemEntity: CollectionItemEntity?
     @State private var trackEntities: [TrackEntity] = []
+    @State private var featureEntities: [RecordingFeaturesEntity] = []
     @State private var mbidCopied = false
     @State private var copiedRecordingMBID: String? = nil
 
@@ -27,6 +28,7 @@ struct CollectionDetailView: View {
             await load()
             loadEntity()
             loadTrackEntities()
+            loadFeatureEntities()
         }
     }
 
@@ -537,6 +539,17 @@ struct CollectionDetailView: View {
         trackEntities = entity.tracks
     }
 
+    private func loadFeatureEntities() {
+        let mbids = Set(trackEntities.map(\.recordingMBID).filter { !$0.isEmpty })
+        guard !mbids.isEmpty else { featureEntities = []; return }
+        let all = (try? modelContext.fetch(FetchDescriptor<RecordingFeaturesEntity>())) ?? []
+        featureEntities = all.filter { mbids.contains($0.recordingMBID) }
+    }
+
+    private func featuresEntity(forRecordingMBID rmbid: String) -> RecordingFeaturesEntity? {
+        featureEntities.first { $0.recordingMBID == rmbid }
+    }
+
     private func normalizePosition(_ s: String) -> String {
         s.replacingOccurrences(of: " ", with: "").uppercased()
     }
@@ -549,6 +562,10 @@ struct CollectionDetailView: View {
 
     private func recordingMBIDCaption(_ rmbid: String) -> some View {
         let short = rmbid.count >= 8 ? String(rmbid.prefix(8)) + "…" : rmbid
+        let features = featuresEntity(forRecordingMBID: rmbid)
+        let bpmText: String? = features?.bpm.map { String(format: "%.0f BPM", $0) }
+        let camelot = features?.camelotCode
+
         return Button {
             #if os(macOS)
             NSPasteboard.general.clearContents()
@@ -562,16 +579,46 @@ struct CollectionDetailView: View {
                 copiedRecordingMBID = nil
             }
         } label: {
-            HStack(spacing: 4) {
-                Text("REC:")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.tertiary)
-                Text(copiedRecordingMBID == rmbid ? "✓ Copied" : short)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.tertiary)
+            HStack(spacing: 6) {
+                HStack(spacing: 4) {
+                    Text("REC:")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                    Text(copiedRecordingMBID == rmbid ? "✓ Copied" : short)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                }
+                if let bpm = bpmText {
+                    Text("·")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                    Text(bpm)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                }
+                if let code = camelot {
+                    Text("·")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                    Text(code)
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(camelotColor(for: code)))
+                }
             }
         }
         .buttonStyle(.plain)
+    }
+
+    private func camelotColor(for code: String) -> Color {
+        guard let number = Int(code.dropLast()),
+              let letter = code.last,
+              number >= 1, number <= 12 else { return Color.gray.opacity(0.6) }
+        let hue = Double(number - 1) / 12.0
+        let isMinor = letter == "A"
+        return Color(hue: hue, saturation: 0.65, brightness: isMinor ? 0.55 : 0.75)
     }
 
     // MARK: - Data loading

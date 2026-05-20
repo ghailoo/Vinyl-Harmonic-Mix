@@ -4,9 +4,11 @@ import SwiftData
 struct CollectionStatsView: View {
     @Environment(DetailCacheCoordinator.self) private var cacheCoordinator
     @Environment(RecordingsScanCoordinator.self) private var recordingsCoordinator
+    @Environment(AudioFeaturesScanCoordinator.self) private var audioFeaturesCoordinator
     @Query private var entities: [CollectionItemEntity]
     @Query private var detailEntities: [ReleaseDetailEntity]
     @Query private var trackEntities: [TrackEntity]
+    @Query private var featureEntities: [RecordingFeaturesEntity]
 
     @State private var cachedDetails: [ReleaseDetail] = []
     @State private var showRefreshAlert = false
@@ -48,6 +50,7 @@ struct CollectionStatsView: View {
                             if !artistCounts.isEmpty  { artistsCard }
                             tracksCard
                             recordingsCard
+                            audioFeaturesCard
                         }
                         .padding(.horizontal, 24)
                         .padding(.vertical, 20)
@@ -428,6 +431,123 @@ struct CollectionStatsView: View {
             Spacer()
             Text(count.formatted())
                 .font(.system(size: 13).monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - Audio Features card
+
+    private var audioFeaturesCard: some View {
+        let withData    = featureEntities.filter { $0.bpm != nil }.count
+        let noData      = featureEntities.filter { $0.bpm == nil }.count
+        let withBPM     = featureEntities.filter { $0.bpm != nil }.count
+        let withKey     = featureEntities.filter { $0.keyNote != nil }.count
+        let withBoth    = featureEntities.filter { $0.bpm != nil && $0.keyNote != nil }.count
+        let totalMBIDs  = Set(trackEntities.map(\.recordingMBID).filter { !$0.isEmpty }).count
+        let notQueried  = max(0, totalMBIDs - featureEntities.count)
+        let pct         = totalMBIDs > 0 ? min(100, withData * 100 / max(totalMBIDs, 1)) : 0
+        let isRunning: Bool = {
+            switch audioFeaturesCoordinator.phase {
+            case .scanning, .paused: return true
+            default: return false
+            }
+        }()
+        let canScan = audioFeaturesCoordinator.unqueriedCount > 0
+
+        return sectionCard {
+            sectionHeader(title: "Audio Features")
+
+            if featureEntities.isEmpty {
+                Text("No audio features yet. Use \"Scan audio\" to query AcousticBrainz for BPM and key data (~3 min).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("\(withData.formatted()) tracks have BPM and key data (\(pct)% of recording MBIDs)")
+                        .font(.system(size: 14))
+
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.secondary.opacity(0.15)).frame(height: 8)
+                            Capsule()
+                                .fill(Color.accentColor)
+                                .frame(
+                                    width: totalMBIDs > 0
+                                        ? geo.size.width * CGFloat(withData) / CGFloat(max(totalMBIDs, 1))
+                                        : 0,
+                                    height: 8
+                                )
+                        }
+                    }
+                    .frame(height: 8)
+
+                    VStack(spacing: 4) {
+                        audioFeatureRow(icon: "checkmark.circle.fill", iconColor: .green,     label: "BPM available",       count: withBPM)
+                        audioFeatureRow(icon: "checkmark.circle.fill", iconColor: .green,     label: "Key available",       count: withKey)
+                        audioFeatureRow(icon: "checkmark.circle.fill", iconColor: .accentColor, label: "Both BPM + key",   count: withBoth)
+                        audioFeatureRow(icon: "circle",                iconColor: .secondary, label: "Queried, no data",   count: noData)
+                        audioFeatureRow(icon: "circle",                iconColor: .secondary, label: "Not yet queried",    count: notQueried)
+                    }
+                    .padding(.top, 4)
+
+                    if withBPM >= 50 {
+                        bpmRangeRow
+                    }
+                    if withKey >= 50 {
+                        topCamelotRow
+                    }
+                }
+            }
+
+            Button(isRunning ? "Scanning…" : (canScan ? "Scan unqueried tracks" : "All queried")) {
+                audioFeaturesCoordinator.start()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(isRunning || !canScan)
+            .padding(.top, 10)
+        }
+    }
+
+    private func audioFeatureRow(icon: String, iconColor: Color, label: String, count: Int) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .foregroundStyle(count > 0 ? iconColor : Color.secondary.opacity(0.3))
+                .font(.system(size: 13))
+                .frame(width: 16)
+            Text(label)
+                .font(.system(size: 13))
+                .foregroundStyle(count > 0 ? .primary : .secondary)
+            Spacer()
+            Text(count.formatted())
+                .font(.system(size: 13).monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var bpmRangeRow: some View {
+        let bpms = featureEntities.compactMap(\.bpm).sorted()
+        if let minBPM = bpms.first, let maxBPM = bpms.last {
+            let median = bpms[bpms.count / 2]
+            Text("BPM range: \(Int(minBPM))–\(Int(maxBPM))  (median \(Int(median)))")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var topCamelotRow: some View {
+        let codes = featureEntities.compactMap(\.camelotCode)
+        if !codes.isEmpty {
+            let counts = Dictionary(codes.map { ($0, 1) }, uniquingKeysWith: +)
+            let top3 = counts.sorted { $0.value > $1.value }.prefix(3)
+            let parts = top3.map { code, count -> String in
+                let desc = CamelotConverter.descriptions[code] ?? ""
+                return "\(code) (\(desc)): \(count)"
+            }.joined(separator: "  ·  ")
+            Text("Most common keys:  \(parts)")
+                .font(.system(size: 13))
                 .foregroundStyle(.secondary)
         }
     }
