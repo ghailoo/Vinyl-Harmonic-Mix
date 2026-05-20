@@ -24,6 +24,18 @@ actor AcousticBrainzClient {
         let genreDortmund: String?
     }
 
+    struct LowLevelFeatures {
+        let bpm: Double?
+        let keyNote: String?
+        let keyScale: String?
+        let keyConfidence: Double?
+    }
+
+    struct LowLevelBatch {
+        let results: [String: LowLevelFeatures]
+        let missing: [String]
+    }
+
     func fetchFeatures(recordingMBIDs: [String], isRetry: Bool = false) async throws -> FeaturesBatch {
         guard recordingMBIDs.count <= 25 else {
             throw AcousticBrainzError.tooManyMBIDs(recordingMBIDs.count)
@@ -114,6 +126,78 @@ actor AcousticBrainzClient {
             danceabilityLabel: hlValue("danceability"),
             danceabilityProb: hlProb("danceability"),
             genreDortmund: hlValue("genre_dortmund")
+        )
+    }
+
+    // MARK: - Low-level endpoint (BPM and key)
+
+    func fetchLowLevel(recordingMBIDs: [String], isRetry: Bool = false) async throws -> LowLevelBatch {
+        guard recordingMBIDs.count <= 25 else {
+            throw AcousticBrainzError.tooManyMBIDs(recordingMBIDs.count)
+        }
+
+        await throttle.wait()
+
+        let mbidParam = recordingMBIDs.joined(separator: ";")
+        var components = URLComponents(string: "https://acousticbrainz.org/api/v1/low-level")!
+        components.queryItems = [URLQueryItem(name: "recording_ids", value: mbidParam)]
+        guard let url = components.url else {
+            throw AcousticBrainzError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.setValue("VinylHarmonicMix/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let (data, response) = try await session.data(for: request)
+        guard let httpResp = response as? HTTPURLResponse else {
+            throw AcousticBrainzError.invalidResponse
+        }
+
+        if httpResp.statusCode == 429 || httpResp.statusCode == 503 {
+            guard !isRetry else {
+                throw AcousticBrainzError.httpError(statusCode: httpResp.statusCode)
+            }
+            try await Task.sleep(nanoseconds: 5_000_000_000)
+            return try await fetchLowLevel(recordingMBIDs: recordingMBIDs, isRetry: true)
+        }
+
+        guard (200..<300).contains(httpResp.statusCode) else {
+            throw AcousticBrainzError.httpError(statusCode: httpResp.statusCode)
+        }
+
+        return try parseLowLevelResponse(data: data, requestedMBIDs: recordingMBIDs)
+    }
+
+    private func parseLowLevelResponse(data: Data, requestedMBIDs: [String]) throws -> LowLevelBatch {
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw AcousticBrainzError.invalidResponse
+        }
+
+        var results: [String: LowLevelFeatures] = [:]
+
+        for mbid in requestedMBIDs {
+            let key = mbid.lowercased()
+            guard let mbidEntry = json[key] as? [String: Any],
+                  let offsetZero = mbidEntry["0"] as? [String: Any] else { continue }
+            results[key] = extractLowLevelFeatures(from: offsetZero)
+        }
+
+        let foundKeys = Set(results.keys)
+        let missing = requestedMBIDs.filter { !foundKeys.contains($0.lowercased()) }
+
+        return LowLevelBatch(results: results, missing: missing)
+    }
+
+    private func extractLowLevelFeatures(from doc: [String: Any]) -> LowLevelFeatures {
+        let rhythm = doc["rhythm"] as? [String: Any]
+        let tonal  = doc["tonal"]  as? [String: Any]
+
+        return LowLevelFeatures(
+            bpm:          rhythm?["bpm"]          as? Double,
+            keyNote:      tonal?["key_key"]        as? String,
+            keyScale:     tonal?["key_scale"]      as? String,
+            keyConfidence: tonal?["key_strength"]  as? Double
         )
     }
 }

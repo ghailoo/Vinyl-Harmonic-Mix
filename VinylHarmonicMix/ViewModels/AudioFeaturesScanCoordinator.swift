@@ -22,11 +22,13 @@ final class AudioFeaturesScanCoordinator {
     var tracksFailed: Int = 0
     var currentBatchPreview: String? = nil
     var showBanner: Bool = false
+    var isEnrichPass: Bool = false
 
     private let context: ModelContext
     private let client = AcousticBrainzClient()
     private var scanTask: Task<Void, Never>?
     private var processedBatches: Int = 0
+    private var secondsPerBatch: Double = 2.2
 
     init(context: ModelContext) {
         self.context = context
@@ -47,6 +49,8 @@ final class AudioFeaturesScanCoordinator {
         return all.filter { $0.bpm == nil }.count
     }
 
+    var noBpmCount: Int { missingBatchCount }
+
     var foundCount: Int {
         let all = (try? context.fetch(FetchDescriptor<RecordingFeaturesEntity>())) ?? []
         return all.filter { $0.bpm != nil }.count
@@ -62,7 +66,7 @@ final class AudioFeaturesScanCoordinator {
     var estimatedRemainingMinutes: Int {
         guard case .scanning = phase, batchesProcessed > 0, batchesTotal > 0 else { return 0 }
         let remaining = max(0, batchesTotal - batchesProcessed)
-        let seconds = Double(remaining) * 1.1
+        let seconds = Double(remaining) * secondsPerBatch
         return Int(ceil(seconds / 60.0))
     }
 
@@ -73,12 +77,29 @@ final class AudioFeaturesScanCoordinator {
         case .idle, .completed, .cancelled: break
         default: return
         }
+        isEnrichPass = false
+        secondsPerBatch = 2.2
         processedBatches = 0
         batchesProcessed = 0
         tracksFound = 0
         tracksMissing = 0
         tracksFailed = 0
         startScanInternal()
+    }
+
+    func startEnrich() {
+        switch phase {
+        case .idle, .completed, .cancelled: break
+        default: return
+        }
+        isEnrichPass = true
+        secondsPerBatch = 1.1
+        processedBatches = 0
+        batchesProcessed = 0
+        tracksFound = 0
+        tracksMissing = 0
+        tracksFailed = 0
+        startEnrichInternal()
     }
 
     func refetchMissing() {
@@ -119,7 +140,11 @@ final class AudioFeaturesScanCoordinator {
 
     func resume() {
         guard case .paused = phase else { return }
-        startScanInternal()
+        if isEnrichPass {
+            startEnrichInternal()
+        } else {
+            startScanInternal()
+        }
     }
 
     func pause() {
@@ -182,31 +207,38 @@ final class AudioFeaturesScanCoordinator {
             currentBatchPreview = batch.first.map { String($0.prefix(8)) + "…" }
 
             do {
-                let result = try await client.fetchFeatures(recordingMBIDs: batch)
+                let high = try await client.fetchFeatures(recordingMBIDs: batch)
+                let low  = try await client.fetchLowLevel(recordingMBIDs: batch)
 
-                for (mbid, features) in result.results {
-                    let entity = RecordingFeaturesEntity(recordingMBID: mbid)
-                    entity.bpm = features.bpm
-                    entity.keyNote = features.keyNote
-                    entity.keyScale = features.keyScale
-                    entity.keyConfidence = features.keyConfidence
-                    entity.danceabilityValue = features.danceabilityValue
-                    entity.moodHappy = features.moodHappy
-                    entity.moodPartyProb = features.moodPartyProb
-                    entity.moodElectronicProb = features.moodElectronicProb
-                    entity.moodAcousticProb = features.moodAcousticProb
-                    entity.danceabilityLabel = features.danceabilityLabel
-                    entity.danceabilityProb = features.danceabilityProb
-                    entity.genreDortmund = features.genreDortmund
-                    entity.camelotCode = CamelotConverter.camelotCode(forNote: features.keyNote, scale: features.keyScale)
-                    context.insert(entity)
-                    tracksFound += 1
-                }
+                for mbid in batch {
+                    let key = mbid.lowercased()
+                    let highFeat = high.results[key]
+                    let lowFeat  = low.results[key]
 
-                for mbid in result.missing {
                     let entity = RecordingFeaturesEntity(recordingMBID: mbid)
+
+                    if let h = highFeat {
+                        entity.danceabilityValue    = h.danceabilityValue
+                        entity.moodHappy            = h.moodHappy
+                        entity.moodPartyProb        = h.moodPartyProb
+                        entity.moodElectronicProb   = h.moodElectronicProb
+                        entity.moodAcousticProb     = h.moodAcousticProb
+                        entity.danceabilityLabel    = h.danceabilityLabel
+                        entity.danceabilityProb     = h.danceabilityProb
+                        entity.genreDortmund        = h.genreDortmund
+                    }
+                    if let l = lowFeat {
+                        entity.bpm          = l.bpm
+                        entity.keyNote      = l.keyNote
+                        entity.keyScale     = l.keyScale
+                        entity.keyConfidence = l.keyConfidence
+                        entity.camelotCode  = CamelotConverter.camelotCode(forNote: l.keyNote, scale: l.keyScale)
+                    }
+
                     context.insert(entity)
-                    tracksMissing += 1
+
+                    if entity.bpm != nil { tracksFound  += 1 }
+                    else                 { tracksMissing += 1 }
                 }
 
             } catch is CancellationError {
@@ -216,6 +248,88 @@ final class AudioFeaturesScanCoordinator {
                 return
             } catch {
                 print("⚠️ Audio features batch failed: \(error)")
+                tracksFailed += batch.count
+            }
+
+            processedBatches += 1
+            batchesProcessed = processedBatches
+            saveCounter += 1
+
+            if saveCounter >= 5 {
+                do { try context.save() } catch { print("❌ Batch save: \(error)") }
+                saveCounter = 0
+            }
+        }
+
+        do { try context.save() } catch { print("❌ Final save: \(error)") }
+        currentBatchPreview = nil
+        phase = .completed
+    }
+
+    // MARK: - Enrich pass (fills BPM/key into existing rows that have highlevel data)
+
+    private func startEnrichInternal() {
+        phase = .scanning
+        showBanner = true
+
+        let allFeatures = (try? context.fetch(FetchDescriptor<RecordingFeaturesEntity>())) ?? []
+        let noBpmRows = allFeatures.filter { $0.bpm == nil }
+        let lookup = Dictionary(uniqueKeysWithValues: noBpmRows.map { ($0.recordingMBID, $0) })
+        let mbids = Array(lookup.keys)
+
+        let batches = stride(from: 0, to: mbids.count, by: 25).map {
+            Array(mbids[$0..<min($0 + 25, mbids.count)])
+        }
+
+        batchesTotal = processedBatches + batches.count
+
+        if batches.isEmpty {
+            phase = .completed
+            return
+        }
+
+        scanTask = Task { await performEnrich(batches: batches, lookup: lookup) }
+    }
+
+    private func performEnrich(batches: [[String]], lookup: [String: RecordingFeaturesEntity]) async {
+        var saveCounter = 0
+
+        for batch in batches {
+            if Task.isCancelled {
+                try? context.save()
+                currentBatchPreview = nil
+                return
+            }
+
+            currentBatchPreview = batch.first.map { String($0.prefix(8)) + "…" }
+
+            do {
+                let low = try await client.fetchLowLevel(recordingMBIDs: batch)
+
+                for mbid in batch {
+                    let key = mbid.lowercased()
+                    guard let entity = lookup[mbid] ?? lookup[key] else { continue }
+
+                    if let l = low.results[key] {
+                        entity.bpm           = l.bpm
+                        entity.keyNote       = l.keyNote
+                        entity.keyScale      = l.keyScale
+                        entity.keyConfidence = l.keyConfidence
+                        entity.camelotCode   = CamelotConverter.camelotCode(forNote: l.keyNote, scale: l.keyScale)
+                        entity.fetchedAt     = .now
+                        tracksFound  += 1
+                    } else {
+                        tracksMissing += 1
+                    }
+                }
+
+            } catch is CancellationError {
+                print("⏸️ BPM enrich cancelled mid-batch")
+                try? context.save()
+                currentBatchPreview = nil
+                return
+            } catch {
+                print("⚠️ Low-level batch failed: \(error)")
                 tracksFailed += batch.count
             }
 

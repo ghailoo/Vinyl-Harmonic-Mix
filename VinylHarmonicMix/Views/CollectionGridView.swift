@@ -353,6 +353,8 @@ struct CollectionGridView: View {
         }()
         let badgeCount = unqueried > 0 ? unqueried : missing
 
+        let noBpm = audioFeaturesCoordinator.noBpmCount
+
         return Menu {
             Button {
                 audioFeaturesCoordinator.start()
@@ -360,6 +362,13 @@ struct CollectionGridView: View {
                 Label("Scan unqueried (\(unqueried))", systemImage: "waveform.badge.magnifyingglass")
             }
             .disabled(unqueried == 0 || isActive)
+
+            Button {
+                audioFeaturesCoordinator.startEnrich()
+            } label: {
+                Label("Fill in BPM + key (\(noBpm))", systemImage: "music.quarternote.3")
+            }
+            .disabled(noBpm == 0 || isActive)
 
             Button {
                 audioFeaturesCoordinator.refetchMissing()

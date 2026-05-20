@@ -249,16 +249,22 @@ struct AudioFeaturesScanResultsView: View {
     }
 
     private var headerTitle: String {
+        let isEnrich = coordinator.isEnrichPass
         switch coordinator.phase {
         case .scanning:
-            return "Fetching audio features (1.1s/batch)"
+            return isEnrich
+                ? "Filling in BPM + key (1.1s/batch)"
+                : "Fetching audio features (2.2s/batch)"
         case .paused:
-            return "Audio features scan paused"
+            return isEnrich ? "BPM + key fill paused" : "Audio features scan paused"
         case .completed:
             let total = coordinator.tracksFound + coordinator.tracksMissing
-            return "Audio features complete — \(coordinator.tracksFound.formatted()) of \(total.formatted()) tracks in dataset"
+            return isEnrich
+                ? "BPM + key complete — \(coordinator.tracksFound.formatted()) of \(total.formatted()) tracks filled"
+                : "Audio features complete — \(coordinator.tracksFound.formatted()) of \(total.formatted()) tracks in dataset"
         case .cancelled:
-            return "Audio features cancelled — \(coordinator.batchesProcessed) of \(coordinator.batchesTotal) batches"
+            return (isEnrich ? "BPM + key fill cancelled" : "Audio features cancelled")
+                + " — \(coordinator.batchesProcessed) of \(coordinator.batchesTotal) batches"
         case .failed(let msg):
             return "Audio features scan failed — \(msg)"
         case .idle:
