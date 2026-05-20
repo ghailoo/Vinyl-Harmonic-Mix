@@ -55,6 +55,8 @@ struct CollectionGridView: View {
     @Environment(\.modelContext) private var modelContext
 
     @Query private var allEntities: [CollectionItemEntity]
+    @Query private var allTrackEntities: [TrackEntity]
+    @Query private var allFeatures: [RecordingFeaturesEntity]
 
     @State private var searchQuery = ""
     @State private var selectedItem: CollectionItem?
@@ -271,6 +273,22 @@ struct CollectionGridView: View {
         }
     }
 
+    private var featuresByMBID: [String: RecordingFeaturesEntity] {
+        var d: [String: RecordingFeaturesEntity] = [:]
+        d.reserveCapacity(allFeatures.count)
+        for f in allFeatures { d[f.recordingMBID] = f }
+        return d
+    }
+
+    private var tracksByInstanceId: [Int: [TrackEntity]] {
+        var d: [Int: [TrackEntity]] = [:]
+        for track in allTrackEntities {
+            guard let id = track.collectionItem?.instanceId else { continue }
+            d[id, default: []].append(track)
+        }
+        return d
+    }
+
     private var matchedInstanceIds: Set<Int> {
         let matched = allEntities.filter {
             $0.mbidScanState == "matched" || $0.mbidScanState == "matchedViaSearch" || $0.mbidScanState == "matchedManually"
@@ -474,7 +492,12 @@ struct CollectionGridView: View {
             LazyVGrid(columns: columns, spacing: 20) {
                 ForEach(displayedItems) { item in
                     Button { selectedItem = item } label: {
-                        CollectionCardView(item: item, hasMBID: matchedInstanceIds.contains(item.id))
+                        CollectionCardView(
+                                item: item,
+                                hasMBID: matchedInstanceIds.contains(item.id),
+                                tracks: tracksByInstanceId[item.id] ?? [],
+                                featuresByMBID: featuresByMBID
+                            )
                     }
                     .buttonStyle(.plain)
                 }

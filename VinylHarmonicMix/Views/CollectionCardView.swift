@@ -1,8 +1,11 @@
 import SwiftUI
+import SwiftData
 
 struct CollectionCardView: View {
     let item: CollectionItem
     var hasMBID: Bool = false
+    var tracks: [TrackEntity] = []
+    var featuresByMBID: [String: RecordingFeaturesEntity] = [:]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -14,12 +17,50 @@ struct CollectionCardView: View {
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
-            Text(String(item.basicInformation.year))
+            let year = item.basicInformation.year
+            let bpmLabel = bpmDisplayLabel
+            if year > 0 || bpmLabel != nil {
+                HStack(spacing: 6) {
+                    if year > 0 { Text(String(year)) }
+                    if let bpm = bpmLabel {
+                        if year > 0 { Text("·").foregroundStyle(.tertiary) }
+                        Text(bpm)
+                    }
+                }
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
+            }
         }
         .contentShape(Rectangle())
     }
+
+    // MARK: - Harmonic data
+
+    private var trackFeatures: [RecordingFeaturesEntity] {
+        tracks.compactMap { featuresByMBID[$0.recordingMBID] }
+    }
+
+    private var dominantCamelot: String? {
+        let codes = trackFeatures.compactMap(\.camelotCode)
+        guard !codes.isEmpty else { return nil }
+        let counts = Dictionary(codes.map { ($0, 1) }, uniquingKeysWith: +)
+        return counts.max(by: { $0.value < $1.value })?.key
+    }
+
+    private var bpmDisplayLabel: String? {
+        let bpms = trackFeatures.compactMap(\.bpm)
+        guard !bpms.isEmpty else { return nil }
+        let sorted = bpms.sorted()
+        let minBPM = Int(sorted.first!.rounded())
+        let maxBPM = Int(sorted.last!.rounded())
+        if maxBPM - minBPM <= 4 {
+            return "\(Int(sorted[sorted.count / 2].rounded())) BPM"
+        } else {
+            return "\(minBPM)–\(maxBPM) BPM"
+        }
+    }
+
+    // MARK: - Cover image
 
     private var coverImage: some View {
         GeometryReader { geo in
@@ -45,8 +86,24 @@ struct CollectionCardView: View {
             .overlay(alignment: .topTrailing) {
                 if hasMBID { mbidBadge.padding(6) }
             }
+            .overlay(alignment: .topLeading) {
+                if let code = dominantCamelot {
+                    camelotBadge(code).padding(6)
+                }
+            }
         }
         .aspectRatio(1, contentMode: .fit)
+    }
+
+    private func camelotBadge(_ code: String) -> some View {
+        Text(code)
+            .font(.system(size: 9, weight: .bold, design: .rounded))
+            .monospacedDigit()
+            .foregroundStyle(CamelotColor.text(for: code))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(CamelotColor.background(for: code)))
+            .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
     }
 
     private var mbidBadge: some View {
