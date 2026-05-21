@@ -153,7 +153,10 @@ final class SettingsViewModel {
             var audioCount = 0
             var examined = 0
 
-            for case let fileURL as URL in enumerator {
+            // Use nextObject() — for-in over NSDirectoryEnumerator is unavailable in async contexts.
+            while let obj = enumerator.nextObject() {
+                guard let fileURL = obj as? URL else { continue }
+
                 if Task.isCancelled {
                     await MainActor.run {
                         self.scanProgress = nil

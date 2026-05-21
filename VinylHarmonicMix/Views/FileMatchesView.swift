@@ -45,6 +45,7 @@ struct FileMatchesView: View {
             }
         }
         .navigationTitle("File Matches")
+        .onAppear { coordinator.hydrateReviewCandidatesIfNeeded() }
     }
 
     // MARK: - Empty state
@@ -156,6 +157,13 @@ struct FileMatchesView: View {
     }
 }
 
+// MARK: - Library root URL helper
+
+private func libraryRootURL() -> URL? {
+    guard let path = UserDefaults.standard.string(forKey: LocalLibraryService.displayPathKey) else { return nil }
+    return URL(fileURLWithPath: path)
+}
+
 // MARK: - Confident row
 
 private struct ConfidentRowView: View {
@@ -218,6 +226,7 @@ private struct ConfidentRowView: View {
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = false
+        panel.directoryURL = libraryRootURL()
         panel.message = "Choose a replacement audio file"
         panel.prompt = "Select"
         if panel.runModal() == .OK, let url = panel.url {
@@ -233,11 +242,13 @@ private struct ReviewRowView: View {
     let track: TrackEntity
     let coordinator: FileMatchCoordinator
 
-    private var candidates: [FileMatchCoordinator.ScoredCandidate] {
+    @State private var showFileSearch = false
+
+    private var candidates: [ScoredCandidate] {
         coordinator.reviewCandidates[track.trackMBID] ?? []
     }
 
-    private var top: FileMatchCoordinator.ScoredCandidate? { candidates.first }
+    private var top: ScoredCandidate? { candidates.first }
 
     private var verifyState: FileMatchCoordinator.VerifyState? {
         coordinator.verifyStates[track.trackMBID]
@@ -265,8 +276,12 @@ private struct ReviewRowView: View {
                     Text(URL(fileURLWithPath: top.filePath).lastPathComponent)
                         .font(.caption).foregroundStyle(.primary)
                         .lineLimit(1).truncationMode(.middle)
-                    Text(String(format: "base %.2f · ver %.2f", top.baseScore, top.versionScore))
-                        .font(.caption2).foregroundStyle(.tertiary)
+                    // baseScore == 0 means candidate was loaded from persisted paths
+                    // (no live scan score available) — hide the numeric display.
+                    if top.baseScore > 0 {
+                        Text(String(format: "base %.2f · ver %.2f", top.baseScore, top.versionScore))
+                            .font(.caption2).foregroundStyle(.tertiary)
+                    }
                 }
 
                 // Verification badge
@@ -274,14 +289,14 @@ private struct ReviewRowView: View {
                     verifyBadge(state: state)
                 }
 
-                // Action buttons
+                // Primary action row
                 HStack(spacing: 8) {
                     Button("Confirm") {
                         coordinator.confirmMatch(trackMBID: track.trackMBID, filePath: top.filePath)
                     }
                     .controlSize(.small).buttonStyle(.borderedProminent)
 
-                    // Pick another — show other candidates
+                    // Pick another — show other candidates from this scan
                     if candidates.count > 1 {
                         Menu("Pick another ▾") {
                             ForEach(Array(candidates.dropFirst().enumerated()), id: \.offset) { _, c in
@@ -292,6 +307,18 @@ private struct ReviewRowView: View {
                         }
                         .controlSize(.small)
                     }
+
+                    Button("Skip") { coordinator.skipTrack(trackMBID: track.trackMBID) }
+                        .controlSize(.small).foregroundStyle(.secondary)
+                }
+
+                // Manual override row
+                HStack(spacing: 8) {
+                    Button("Browse…") { browseFile() }
+                        .controlSize(.small)
+
+                    Button("Search files…") { showFileSearch = true }
+                        .controlSize(.small)
 
                     Button("Verify with fingerprint") {
                         Task {
@@ -304,13 +331,14 @@ private struct ReviewRowView: View {
                     }
                     .controlSize(.small)
                     .disabled(verifyState != nil)
-
-                    Button("Skip") { coordinator.skipTrack(trackMBID: track.trackMBID) }
-                        .controlSize(.small).foregroundStyle(.secondary)
                 }
             }
         }
         .padding(.vertical, 8)
+        .sheet(isPresented: $showFileSearch) {
+            FileSearchSheet(trackMBID: track.trackMBID, coordinator: coordinator,
+                            isPresented: $showFileSearch)
+        }
     }
 
     @ViewBuilder
@@ -332,6 +360,21 @@ private struct ReviewRowView: View {
                 .font(.caption2).foregroundStyle(.orange)
         }
     }
+
+    private func browseFile() {
+#if os(macOS)
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = libraryRootURL()
+        panel.message = "Choose an audio file for this track"
+        panel.prompt = "Select"
+        if panel.runModal() == .OK, let url = panel.url {
+            coordinator.assignFile(trackMBID: track.trackMBID, url: url)
+        }
+#endif
+    }
 }
 
 // MARK: - No Match row
@@ -339,6 +382,8 @@ private struct ReviewRowView: View {
 private struct NoMatchRowView: View {
     let track: TrackEntity
     let coordinator: FileMatchCoordinator
+
+    @State private var showFileSearch = false
 
     var body: some View {
         HStack(alignment: .center, spacing: 10) {
@@ -353,25 +398,110 @@ private struct NoMatchRowView: View {
             Spacer()
 
             HStack(spacing: 6) {
-                Button("Assign file…") { pickFile() }.controlSize(.small)
+                Button("Browse…") { browseFile() }.controlSize(.small)
+                Button("Search files…") { showFileSearch = true }.controlSize(.small)
                 Button("Skip") { coordinator.skipTrack(trackMBID: track.trackMBID) }
                     .controlSize(.small).foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 6)
+        .sheet(isPresented: $showFileSearch) {
+            FileSearchSheet(trackMBID: track.trackMBID, coordinator: coordinator,
+                            isPresented: $showFileSearch)
+        }
     }
 
-    private func pickFile() {
+    private func browseFile() {
 #if os(macOS)
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = false
+        panel.directoryURL = libraryRootURL()
         panel.message = "Assign an audio file for this track"
         panel.prompt = "Assign"
         if panel.runModal() == .OK, let url = panel.url {
             coordinator.assignFile(trackMBID: track.trackMBID, url: url)
         }
 #endif
+    }
+}
+
+// MARK: - File search sheet
+
+private struct FileSearchSheet: View {
+    let trackMBID: String
+    let coordinator: FileMatchCoordinator
+    @Binding var isPresented: Bool
+
+    @State private var query = ""
+    @Query(sort: \LocalFileEntity.fileName) private var allFiles: [LocalFileEntity]
+
+    private var results: [LocalFileEntity] {
+        if query.isEmpty {
+            return Array(allFiles.prefix(100))
+        }
+        let q = query.lowercased()
+        return Array(
+            allFiles.filter {
+                $0.fileName.lowercased().contains(q) ||
+                $0.filePath.lowercased().contains(q)
+            }
+            .prefix(200)
+        )
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Text("Search Files")
+                    .font(.headline)
+                Spacer()
+                Button("Cancel") { isPresented = false }
+                    .keyboardShortcut(.cancelAction)
+            }
+            .padding()
+
+            Divider()
+
+            TextField("Filename or path…", text: $query)
+                .textFieldStyle(.roundedBorder)
+                .padding()
+
+            if results.isEmpty {
+                Spacer()
+                if query.isEmpty {
+                    Text("Type to search \(allFiles.count.formatted()) indexed files")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("No results for \"\(query)\"")
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            } else {
+                List(results, id: \.filePath) { file in
+                    Button {
+                        coordinator.assignFile(trackMBID: trackMBID,
+                                               url: URL(fileURLWithPath: file.filePath))
+                        isPresented = false
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(file.fileName)
+                                .font(.system(size: 13))
+                                .foregroundStyle(.primary)
+                            Text(file.filePath)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.head)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .frame(minWidth: 520, minHeight: 440)
     }
 }

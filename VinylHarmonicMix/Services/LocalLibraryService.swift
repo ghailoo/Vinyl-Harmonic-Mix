@@ -48,7 +48,8 @@ enum LocalLibraryService {
         }.value
     }
 
-    private static func countRecursive(in url: URL) throws -> Int {
+    // nonisolated: only touches FileManager, no actor state.
+    nonisolated private static func countRecursive(in url: URL) throws -> Int {
         let fm = FileManager()
         var count = 0
         guard let enumerator = fm.enumerator(
@@ -57,7 +58,9 @@ enum LocalLibraryService {
             options: [.skipsHiddenFiles, .skipsPackageDescendants]
         ) else { return 0 }
 
-        for case let fileURL as URL in enumerator {
+        // Use nextObject() — for-in over NSDirectoryEnumerator is unavailable in async contexts.
+        while let obj = enumerator.nextObject() {
+            guard let fileURL = obj as? URL else { continue }
             let name = fileURL.lastPathComponent
             if junkFolderNames.contains(name) {
                 enumerator.skipDescendants()

@@ -37,6 +37,21 @@ struct VinylHarmonicMixApp: App {
             fatalError("SwiftData container init failed: \(error)")
         }
         let ctx = container.mainContext
+
+        // One-time: wipe the stale/duplicated LocalFileEntity index so the next
+        // "Match all" re-scans cleanly with parentFolder populated.
+        // Guarded by a UserDefaults flag so it runs exactly once.
+        let wipeKey = "didClearLocalFileIndexV2"
+        if !UserDefaults.standard.bool(forKey: wipeKey) {
+            let stale = (try? ctx.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
+            if !stale.isEmpty {
+                for entity in stale { ctx.delete(entity) }
+                try? ctx.save()
+                print("🧹 Cleared \(stale.count) stale LocalFileEntity rows — re-index needed")
+            }
+            UserDefaults.standard.set(true, forKey: wipeKey)
+        }
+
         _collectionViewModel = State(initialValue: CollectionViewModel(context: ctx))
         _scanCoordinator = State(initialValue: MBIDScanCoordinator(context: ctx))
         _cacheCoordinator = State(initialValue: DetailCacheCoordinator(context: ctx))

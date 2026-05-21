@@ -1,8 +1,49 @@
 import Foundation
 import SwiftData
+import AVFoundation
 #if os(macOS)
 import AppKit
 #endif
+
+// Top-level Sendable value type — must NOT be nested inside the @MainActor class or
+// Swift 6 infers its init as @MainActor-isolated, causing a data race when
+// _scoreCandidates (nonisolated) constructs instances on the cooperative thread pool.
+struct ScoredCandidate: Sendable {
+    // nil only for candidates reconstructed from persisted paths at startup (no live scan);
+    // always set during an actual scan so applyResults can do O(1) identity-map lookup.
+    let fileID: PersistentIdentifier?
+    let filePath: String
+    let fileName: String
+    let format: String
+    let artistScore: Double   // fraction of artist tokens found anywhere in gp+parent+filename
+    let titleScore: Double    // Jaccard of track base-title vs cleaned filename stem
+    let baseScore: Double     // = artistScore * 0.4 + titleScore * 0.6
+    let versionScore: Double
+    let version: String?
+    let durationMs: Int       // file duration in ms; 0 = unknown / not yet read
+    let durationScore: Double // step-function on |trackMs−fileMs|; 0.5 when either is unknown
+    let combinedScore: Double // = baseScore * 0.7 + versionScore * 0.3
+
+    // nonisolated required: called from _scoreCandidates (nonisolated static).
+    // Without this, Swift 6 infers the init as @MainActor-isolated and the call is a data race.
+    nonisolated init(fileID: PersistentIdentifier?, filePath: String, fileName: String, format: String,
+                     artistScore: Double, titleScore: Double,
+                     versionScore: Double, version: String?,
+                     durationMs: Int = 0, durationScore: Double = 0.5) {
+        self.fileID        = fileID
+        self.filePath      = filePath
+        self.fileName      = fileName
+        self.format        = format
+        self.artistScore   = artistScore
+        self.titleScore    = titleScore
+        self.baseScore     = artistScore * 0.4 + titleScore * 0.6
+        self.versionScore  = versionScore
+        self.version       = version
+        self.durationMs    = durationMs
+        self.durationScore = durationScore
+        self.combinedScore = self.baseScore * 0.7 + versionScore * 0.3
+    }
+}
 
 @MainActor
 @Observable
@@ -15,15 +56,6 @@ final class FileMatchCoordinator {
         case confirmed(score: Double)
         case conflicted(foundTitle: String)
         case failed(String)
-    }
-
-    struct ScoredCandidate: Sendable {
-        let filePath: String
-        let fileName: String
-        let format: String
-        let baseScore: Double
-        let versionScore: Double
-        var combinedScore: Double { baseScore * 0.7 + versionScore * 0.3 }
     }
 
     // MARK: - Scan state
@@ -55,7 +87,11 @@ final class FileMatchCoordinator {
 
     var shouldShowPanel: Bool { phase != .idle }
 
-    init(context: ModelContext) { self.context = context }
+    init(context: ModelContext) {
+        self.context = context
+        // Defer hydration so it doesn't block app startup; runs after first runloop turn.
+        Task { @MainActor [weak self] in self?.hydrateReviewCandidatesIfNeeded() }
+    }
 
     // MARK: - Controls
 
@@ -159,9 +195,15 @@ final class FileMatchCoordinator {
         var fd = FetchDescriptor<LocalFileEntity>(predicate: #Predicate { $0.filePath == path })
         fd.fetchLimit = 1
         if (try? context.fetch(fd))?.isEmpty != false {
-            let name = url.lastPathComponent
+            let name             = url.lastPathComponent
+            let parentFolder     = url.deletingLastPathComponent().lastPathComponent
+            let grandparentFolder = url.deletingLastPathComponent()
+                                       .deletingLastPathComponent().lastPathComponent
             let ext = url.pathExtension.lowercased()
-            let newFile = LocalFileEntity(filePath: path, fileName: name, format: ext, fileSizeBytes: nil)
+            let newFile = LocalFileEntity(filePath: path, fileName: name,
+                                          parentFolder: parentFolder,
+                                          grandparentFolder: grandparentFolder,
+                                          format: ext, fileSizeBytes: nil)
             context.insert(newFile)
         }
         linkFile(filePath: path, toTrackMBID: trackMBID, score: 1.0, method: "manual")
@@ -204,123 +246,238 @@ final class FileMatchCoordinator {
         confidentCount = 0; reviewCount = 0; noMatchCount = 0
         currentTrackLabel = ""; lastError = nil
 
-        scanTask = Task.detached(priority: .userInitiated) { [weak self] in
+        // Task inherits @MainActor from call site — all self accesses below are safe.
+        scanTask = Task { [weak self] in
             guard let self else { return }
-
             await self.runPhase1()
             if Task.isCancelled { return }
-
-            await MainActor.run { self.phase = .matching }
+            self.phase = .matching
             await self.runPhase2(limit: limit)
             if Task.isCancelled { return }
-
-            await MainActor.run {
-                try? self.context.save()
-                self.phase = .completed
-            }
+            try? self.context.save()
+            self.phase = .completed
         }
     }
 
-    // MARK: - Phase 1: Index files (unchanged)
+    // MARK: - Phase 1: Index local audio files
 
     private struct FileInfo: Sendable {
         let path: String
         let name: String
+        let parentFolder: String      // direct parent folder (album or artist)
+        let grandparentFolder: String // one level up — artist folder in nested structures
         let format: String
         let size: Int?
     }
 
     private func runPhase1() async {
+        deduplicateFileIndex()
+        backfillFolderNames()             // ensure parentFolder + grandparentFolder set for all rows
+        backfillArtistFoldersIfNeeded()   // parse artistFolder from stored filePath
+
         guard let url = LocalLibraryService.resolveLibraryBookmark() else { return }
 
-        // Skip if files are already indexed
-        let existing: Set<String> = await MainActor.run {
-            let all = (try? self.context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
+        let existing: Set<String> = {
+            let all = (try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
             return Set(all.map(\.filePath))
-        }
+        }()
         if !existing.isEmpty {
-            await MainActor.run { self.indexedCount = existing.count }
+            indexedCount = existing.count
+            await backfillDurationsIfNeeded()  // fill any durationMs == 0 rows from previous runs
             return
         }
 
-        let audioExtensions: Set<String> = ["flac","mp3","aiff","aif","wav","m4a","mp4","ogg","opus"]
-        let skipDirs: Set<String> = ["#recycle","@eaDir",".Trashes",".Spotlight-V100"]
+        // Run the synchronous file walk off the main actor
+        let filesToInsert = await Task.detached(priority: .userInitiated) {
+            FileMatchCoordinator.collectAudioFiles(at: url, skipping: existing)
+        }.value
+
+        for f in filesToInsert {
+            context.insert(LocalFileEntity(filePath: f.path, fileName: f.name,
+                                           parentFolder: f.parentFolder,
+                                           grandparentFolder: f.grandparentFolder,
+                                           format: f.format, fileSizeBytes: f.size))
+        }
+        indexedCount = filesToInsert.count
+        try? context.save()
+        await backfillDurationsIfNeeded()  // read durations for the newly indexed files
+    }
+
+    /// Remove duplicate LocalFileEntity rows (same filePath), keeping the matched one when possible.
+    private func deduplicateFileIndex() {
+        let all = (try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
+        var seen: [String: LocalFileEntity] = [:]
+        var toDelete: [LocalFileEntity] = []
+        for file in all {
+            if let kept = seen[file.filePath] {
+                // Prefer the row that already has a track association
+                if file.track != nil && kept.track == nil {
+                    toDelete.append(kept)
+                    seen[file.filePath] = file
+                } else {
+                    toDelete.append(file)
+                }
+            } else {
+                seen[file.filePath] = file
+            }
+        }
+        guard !toDelete.isEmpty else { return }
+        toDelete.forEach { context.delete($0) }
+        try? context.save()
+        print("[DEDUP] Removed \(toDelete.count) duplicate LocalFileEntity rows; kept \(seen.count)")
+    }
+
+    /// Backfill parentFolder and grandparentFolder for rows where either is missing.
+    /// Derives both from the stored filePath — no disk re-scan needed.
+    private func backfillFolderNames() {
+        let all = (try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
+        let needs = all.filter { $0.parentFolder.isEmpty || $0.grandparentFolder.isEmpty }
+        guard !needs.isEmpty else { return }
+        for file in needs {
+            let url = URL(fileURLWithPath: file.filePath)
+            let parent      = url.deletingLastPathComponent().lastPathComponent
+            let grandparent = url.deletingLastPathComponent()
+                                 .deletingLastPathComponent().lastPathComponent
+            if file.parentFolder.isEmpty      { file.parentFolder      = parent }
+            if file.grandparentFolder.isEmpty { file.grandparentFolder = grandparent }
+        }
+        try? context.save()
+        print("[BACKFILL] Set folder names on \(needs.count) rows")
+    }
+
+    /// Returns the first path component after "Tracks/" in filePath, or "" if not found.
+    /// Pure string operation — no disk I/O.
+    nonisolated static func extractArtistFolder(from filePath: String) -> String {
+        let components = filePath.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        guard let idx = components.firstIndex(where: { $0.caseInsensitiveCompare("Tracks") == .orderedSame }),
+              idx + 1 < components.count else { return "" }
+        return components[idx + 1]
+    }
+
+    /// Backfill artistFolder for any LocalFileEntity where it is still empty.
+    /// Path-only parsing — does NOT re-read file durations or access disk.
+    private func backfillArtistFoldersIfNeeded() {
+        let needs = ((try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? [])
+            .filter { $0.artistFolder.isEmpty }
+        guard !needs.isEmpty else { return }
+        for file in needs {
+            file.artistFolder = FileMatchCoordinator.extractArtistFolder(from: file.filePath)
+        }
+        try? context.save()
+        print("[BACKFILL] Set artistFolder on \(needs.count) rows")
+    }
+
+    /// Reads AVAsset duration for every LocalFileEntity that still has durationMs == 0.
+    /// First call after the app update processes all existing rows; subsequent calls are near-instant
+    /// because only genuinely unreadable files remain at 0.
+    private func backfillDurationsIfNeeded() async {
+        let needsDuration = (try? context.fetch(FetchDescriptor<LocalFileEntity>(
+            predicate: #Predicate { $0.durationMs == 0 }
+        ))) ?? []
+        guard !needsDuration.isEmpty else { return }
+        print("[DURATION] Backfilling durations for \(needsDuration.count) files…")
+
+        struct Stub: Sendable { let id: PersistentIdentifier; let path: String }
+        let stubs = needsDuration.map { Stub(id: $0.persistentModelID, path: $0.filePath) }
+
+        let chunkSize = 100
+        var filled = 0
+        for offset in stride(from: 0, to: stubs.count, by: chunkSize) {
+            if Task.isCancelled { break }
+            let chunk = Array(stubs[offset ..< min(offset + chunkSize, stubs.count)])
+            currentTrackLabel = "Reading durations… (\(offset)/\(stubs.count))"
+
+            // Parallel AVAsset header reads — each task creates + discards its own asset instance.
+            let pairs: [(PersistentIdentifier, Int)] = await withTaskGroup(
+                of: (PersistentIdentifier, Int).self
+            ) { group in
+                for stub in chunk {
+                    let path = stub.path
+                    let id   = stub.id
+                    group.addTask {
+                        let asset = AVURLAsset(url: URL(fileURLWithPath: path))
+                        let cm    = try? await asset.load(.duration)
+                        let ms    = cm.map { Int(CMTimeGetSeconds($0) * 1000) } ?? 0
+                        return (id, ms)
+                    }
+                }
+                var out: [(PersistentIdentifier, Int)] = []
+                for await pair in group { out.append(pair) }
+                return out
+            }
+
+            for (id, ms) in pairs {
+                if let file = context.model(for: id) as? LocalFileEntity {
+                    file.durationMs = ms > 0 ? ms : -1  // -1 = tried, permanently unreadable
+                }
+            }
+            filled += pairs.filter { $0.1 > 0 }.count
+            try? context.save()
+            await Task.yield()
+        }
+        print("[DURATION] Backfill complete: \(filled)/\(stubs.count) durations read")
+    }
+
+    /// Synchronous directory walk — no actor state, safe for Task.detached.
+    nonisolated private static func collectAudioFiles(at url: URL,
+                                                       skipping existing: Set<String>) -> [FileInfo] {
+        let audioExts: Set<String> = ["flac","mp3","aiff","aif","wav","m4a","mp4","ogg","opus"]
+        let skipDirs: Set<String>  = ["#recycle","@eaDir",".Trashes",".Spotlight-V100"]
 
         guard let enumerator = FileManager().enumerator(
             at: url,
             includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey],
             options: [.skipsHiddenFiles]
-        ) else { return }
+        ) else { return [] }
 
-        var batch: [FileInfo] = []
-        var examined = 0
-
-        for case let fileURL as URL in enumerator {
-            if Task.isCancelled { break }
-            examined += 1
-
+        var files: [FileInfo] = []
+        // Use nextObject() — for-in over NSDirectoryEnumerator is unavailable in async contexts.
+        while let obj = enumerator.nextObject() {
+            guard let fileURL = obj as? URL else { continue }
             let name = fileURL.lastPathComponent
             if skipDirs.contains(name) { enumerator.skipDescendants(); continue }
-
             let ext = fileURL.pathExtension.lowercased()
-            guard audioExtensions.contains(ext) else { continue }
-
+            guard audioExts.contains(ext) else { continue }
             let path = fileURL.path
             if existing.contains(path) { continue }
-
             let size = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize
-            batch.append(FileInfo(path: path, name: name, format: ext, size: size))
-
-            if batch.count >= 200 {
-                let toInsert = batch; batch = []
-                await MainActor.run { [weak self] in
-                    guard let self else { return }
-                    for f in toInsert {
-                        let e = LocalFileEntity(filePath: f.path, fileName: f.name, format: f.format, fileSizeBytes: f.size)
-                        self.context.insert(e)
-                    }
-                    self.indexedCount += toInsert.count
-                    try? self.context.save()
-                }
-            }
-
-            if examined % 250 == 0 {
-                let folder = fileURL.deletingLastPathComponent().lastPathComponent
-                await MainActor.run { self.currentTrackLabel = folder }
-            }
+            let parentFolder      = fileURL.deletingLastPathComponent().lastPathComponent
+            let grandparentFolder = fileURL.deletingLastPathComponent()
+                                           .deletingLastPathComponent().lastPathComponent
+            files.append(FileInfo(path: path, name: name,
+                                  parentFolder: parentFolder, grandparentFolder: grandparentFolder,
+                                  format: ext, size: size))
         }
-
-        if !batch.isEmpty {
-            let toInsert = batch
-            await MainActor.run { [weak self] in
-                guard let self else { return }
-                for f in toInsert {
-                    let e = LocalFileEntity(filePath: f.path, fileName: f.name, format: f.format, fileSizeBytes: f.size)
-                    self.context.insert(e)
-                }
-                self.indexedCount += toInsert.count
-                try? self.context.save()
-            }
-        }
+        return files
     }
 
     // MARK: - Phase 2: String-only bulk scoring
 
     private struct TrackSummary: Sendable {
+        let id: PersistentIdentifier   // for context.model(for:) in write-back — no dict re-fetch
         let trackMBID: String
         let recordingMBID: String
         let artist: String
         let title: String
+        let durationMs: Int  // 0 = unknown (TrackEntity.durationMs is Int?)
     }
 
     private struct FileSummary: Sendable {
+        let id: PersistentIdentifier   // for context.model(for:) in write-back — no predicate fetch
         let filePath: String
         let fileName: String
+        let parentFolder: String
+        let grandparentFolder: String
         let format: String
+        let durationMs: Int  // 0 = not yet backfilled or AVAsset failed
+        let artistFolder: String     // first path component under "Tracks/" root
     }
 
-    private struct TrackResult: Sendable {
-        let trackMBID: String
+    // MatchResult carries PersistentIdentifiers so write-back never touches the context
+    // off the main actor — identifiers are Sendable value types.
+    private struct MatchResult: Sendable {
+        let trackID: PersistentIdentifier  // → context.model(for:) in applyResults
+        let trackMBID: String              // → reviewCandidates dict key (UI state)
         let tier: MatchTier
         let topCandidate: ScoredCandidate?
         let allCandidates: [ScoredCandidate]
@@ -331,196 +488,275 @@ final class FileMatchCoordinator {
     }
 
     private func runPhase2(limit: Int?) async {
-        // Snapshot all data on main actor
-        let (tracks, files): ([TrackSummary], [FileSummary]) = await MainActor.run {
-            let allTracks = (try? self.context.fetch(FetchDescriptor<TrackEntity>())) ?? []
-            let eligible = allTracks.filter { t in
-                !t.recordingMBID.isEmpty &&
-                !["confident", "skip"].contains(t.fileMatchState)
-            }
-            let scoped = limit.map { Array(eligible.prefix($0)) } ?? Array(eligible)
+        // ── Snapshot: extract Sendable value types from SwiftData models ──────────────
+        // All model access happens HERE on the MainActor. The scoring step below is
+        // nonisolated and must never touch the context or any @Model object.
+        let allTracksFromDB = (try? context.fetch(FetchDescriptor<TrackEntity>())) ?? []
+        let eligible = allTracksFromDB.filter { t in
+            !t.recordingMBID.isEmpty && !["confident", "skip"].contains(t.fileMatchState)
+        }
+        let scoped = limit.map { Array(eligible.prefix($0)) } ?? Array(eligible)
 
-            let tracks = scoped.map { t -> TrackSummary in
-                let artist = t.artistCredit.isEmpty
-                    ? (t.collectionItem?.basicInformation?.artists.first?.name ?? "")
-                    : t.artistCredit
-                return TrackSummary(trackMBID: t.trackMBID, recordingMBID: t.recordingMBID,
-                                    artist: artist, title: t.title)
-            }
+        let tracks: [TrackSummary] = scoped.map { t -> TrackSummary in
+            let artist = t.artistCredit.isEmpty
+                ? (t.collectionItem?.basicInformation?.artists.first?.name ?? "")
+                : t.artistCredit
+            // persistentModelID is Sendable — safe to pass to nonisolated scoring
+            return TrackSummary(id: t.persistentModelID,
+                                trackMBID: t.trackMBID, recordingMBID: t.recordingMBID,
+                                artist: artist, title: t.title,
+                                durationMs: t.durationMs ?? 0)
+        }
 
-            let allFiles = (try? self.context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
-            let files = allFiles.map { f in
-                FileSummary(filePath: f.filePath, fileName: f.fileName, format: f.format)
-            }
-            return (tracks, files)
+        // Load files into the context's identity map so context.model(for:) in
+        // applyResults is O(1) — no predicate fetch needed at write-back time.
+        let allFiles = (try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
+        let files: [FileSummary] = allFiles.map { f in
+            FileSummary(id: f.persistentModelID,
+                        filePath: f.filePath, fileName: f.fileName,
+                        parentFolder: f.parentFolder, grandparentFolder: f.grandparentFolder,
+                        format: f.format, durationMs: f.durationMs,
+                        artistFolder: f.artistFolder)
         }
 
         if tracks.isEmpty || files.isEmpty { return }
+        totalTracks = tracks.count
 
-        await MainActor.run { self.totalTracks = tracks.count }
-
-        // Score off the main actor — nonisolated static, cooperative thread pool
+        // ── Scoring (nonisolated, cooperative thread pool) ────────────────────────────
+        // progressCallback hops back to MainActor via MainActor.run; it ONLY touches
+        // simple stored properties, never the ModelContext.
+        let progressCallback: @Sendable (Int, String) async -> Void = { [weak self] count, label in
+            await MainActor.run { [weak self] in
+                self?.processedTracks = count
+                self?.currentTrackLabel = label
+            }
+        }
         let results = await FileMatchCoordinator._scoreCandidates(
             tracks: tracks,
             files: files,
-            onProgress: { [weak self] count, label in
-                await MainActor.run {
-                    self?.processedTracks = count
-                    self?.currentTrackLabel = label
-                }
-            }
+            onProgress: progressCallback
         )
 
-        // Apply results in chunks on main actor
-        let chunkSize = 50
-        var allTracks: [TrackEntity] = []
-        var allFiles: [LocalFileEntity] = []
-        await MainActor.run {
-            allTracks = (try? self.context.fetch(FetchDescriptor<TrackEntity>())) ?? []
-            allFiles  = (try? self.context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
-        }
+        // ── Write-back (MainActor, chunked) ───────────────────────────────────────────
+        // applyResults uses context.model(for:) — O(1) identity map lookup for both
+        // TrackEntity and LocalFileEntity. No dict build, no predicate fetches.
+        await applyResults(results)
+    }
 
-        var trackDict: [String: TrackEntity] = [:]
-        var fileDict: [String: LocalFileEntity] = [:]
-        for t in allTracks { trackDict[t.trackMBID] = t }
-        for f in allFiles  { fileDict[f.filePath]   = f }
-
-        var offset = 0
-        while offset < results.count {
+    // All SwiftData writes happen here, on the MainActor, in 25-item chunks.
+    // context.model(for:) resolves PersistentIdentifiers via the identity map — O(1),
+    // no predicate scanning. Task.yield() after each chunk keeps the UI responsive.
+    @MainActor
+    private func applyResults(_ results: [MatchResult]) async {
+        let chunkSize = 25
+        for offset in stride(from: 0, to: results.count, by: chunkSize) {
             if Task.isCancelled { break }
             let end = min(offset + chunkSize, results.count)
-            let chunk = Array(results[offset..<end])
-            offset = end
 
-            await MainActor.run { [weak self] in
-                guard let self else { return }
-                self.applyChunk(chunk, trackDict: trackDict, fileDict: fileDict)
-                try? self.context.save()
-            }
-        }
-    }
+            for result in results[offset..<end] {
+                guard let track = context.model(for: result.trackID) as? TrackEntity else { continue }
 
-    private func applyChunk(
-        _ results: [TrackResult],
-        trackDict: [String: TrackEntity],
-        fileDict: [String: LocalFileEntity]
-    ) {
-        for result in results {
-            guard let track = trackDict[result.trackMBID] else { continue }
+                switch result.tier {
+                case .confident:
+                    guard let top = result.topCandidate else {
+                        track.fileMatchState = "noMatch"; noMatchCount += 1; continue
+                    }
+                    // O(1) identity lookup — fileID was snapshotted from the loaded LocalFileEntity.
+                    if let fileID = top.fileID,
+                       let file = context.model(for: fileID) as? LocalFileEntity {
+                        file.track = track
+                        file.matchMethod = "string"
+                        file.matchScore = top.combinedScore
+                    }
+                    track.fileMatchState = "confident"
+                    track.primaryLocalFilePath = top.filePath
+                    confidentCount += 1
 
-            switch result.tier {
-            case .confident:
-                guard let top = result.topCandidate,
-                      let file = fileDict[top.filePath] else {
+                case .review:
+                    track.fileMatchState = "review"
+                    track.primaryLocalFilePath = result.topCandidate?.filePath
+                    reviewCandidates[result.trackMBID] = result.allCandidates
+                    // Persist paths so candidates survive app restart without re-scanning.
+                    track.candidateFilePaths = result.allCandidates.map(\.filePath)
+                    reviewCount += 1
+
+                case .noMatch:
                     track.fileMatchState = "noMatch"
-                    noMatchCount += 1; processedTracks += 1
-                    continue
+                    noMatchCount += 1
                 }
-                file.track = track
-                file.matchMethod = "string"
-                file.matchScore = top.combinedScore
-                track.fileMatchState = "confident"
-                track.primaryLocalFilePath = top.filePath
-                confidentCount += 1
-
-            case .review:
-                track.fileMatchState = "review"
-                track.primaryLocalFilePath = result.topCandidate?.filePath
-                reviewCandidates[result.trackMBID] = result.allCandidates
-                reviewCount += 1
-
-            case .noMatch:
-                track.fileMatchState = "noMatch"
-                noMatchCount += 1
             }
-            processedTracks += 1
+
+            try? context.save()
+            await Task.yield()
         }
     }
 
-    // Nonisolated: runs on cooperative thread pool, never touches SwiftData models
+    // Nonisolated: runs on the cooperative thread pool.
+    // Contract: NEVER touches self.context or any @Model object.
+    // Only operates on Sendable value-type snapshots (TrackSummary, FileSummary, PersistentIdentifier).
     nonisolated private static func _scoreCandidates(
         tracks: [TrackSummary],
         files: [FileSummary],
         onProgress: @Sendable (Int, String) async -> Void
-    ) async -> [TrackResult] {
+    ) async -> [MatchResult] {
 
         struct IndexedFile {
             let summary: FileSummary
-            let fullTokens: Set<String>
-            let baseTokens: Set<String>
+            let stemTokens: Set<String>
             let version: String?
         }
 
-        // Pre-process every file once
+        // Pre-process every file once — stem tokens from filename only
         let indexed: [IndexedFile] = files.map { file in
-            let stem = URL(fileURLWithPath: file.fileName).deletingPathExtension().lastPathComponent
-            let (base, version) = FuzzyMatch.splitVersion(stem)
-            let baseTokens = Set(base.split(separator: " ").map(String.init))
-            let fullNorm = FuzzyMatch.normalize(stem)
-            let fullTokens = Set(fullNorm.split(separator: " ").map(String.init))
-            return IndexedFile(summary: file, fullTokens: fullTokens, baseTokens: baseTokens, version: version)
-        }
-
-        // Inverted index on all tokens for fast candidate lookup
-        var tokenIndex: [String: [IndexedFile]] = [:]
-        for file in indexed {
-            for token in file.fullTokens where token.count >= 3 {
-                tokenIndex[token, default: []].append(file)
+            var stem = URL(fileURLWithPath: file.fileName).deletingPathExtension().lastPathComponent
+            stem = stem.replacingOccurrences(of: #"^\d{1,3}[\s\.\-_]+"#, with: "", options: .regularExpression)
+            // Strip "Artist - Title" / "Artist – Title" naming convention prefix so the
+            // artist name doesn't dilute the title's Jaccard score (e.g. "49ers – Die Walküre").
+            if let dashRange = stem.range(of: " - ") ?? stem.range(of: " \u{2013} ") {
+                let rest = String(stem[dashRange.upperBound...]).trimmingCharacters(in: .whitespaces)
+                if !rest.isEmpty { stem = rest }
             }
+            let (base, version) = FuzzyMatch.splitVersion(stem)
+            let stemTokens = Set(base.split(separator: " ").map(String.init))
+            return IndexedFile(summary: file, stemTokens: stemTokens, version: version)
         }
 
-        var results: [TrackResult] = []
+        // Build per-folder index keyed by artistFolder
+        var folderIndex: [String: [IndexedFile]] = [:]
+        for file in indexed where !file.summary.artistFolder.isEmpty {
+            folderIndex[file.summary.artistFolder, default: []].append(file)
+        }
+
+        // Pre-compute normalised tokens for each folder name once
+        struct FolderEntry { let name: String; let tokens: Set<String> }
+        let folderEntries: [FolderEntry] = folderIndex.keys.map { name in
+            let norm   = FuzzyMatch.normalizeFolderName(name)
+            let tokens = Set(norm.split(separator: " ").map(String.init)).filter { $0.count >= 2 }
+            return FolderEntry(name: name, tokens: tokens)
+        }
+
+        var results: [MatchResult] = []
         results.reserveCapacity(tracks.count)
 
         for (i, track) in tracks.enumerated() {
             if Task.isCancelled { break }
 
-            // Narrow candidates using full-text token lookup
-            let trackFullNorm = FuzzyMatch.normalize("\(track.artist) \(track.title)")
-            let queryTokens = Set(trackFullNorm.split(separator: " ").map(String.init)).filter { $0.count >= 3 }
+            // Stage 1: artist-folder hard filter
+            // Splits collaboration artists ("D-Mob & Cathy Dennis" → ["D-Mob", "Cathy Dennis"])
+            // and scores each sub-artist against each folder using bidirectional max denominator:
+            //   shared / max(folderTokens, subArtistTokens)
+            // This prevents single-token coincidences from matching (e.g. "people" in "M People"
+            // folder matching "Aquatic People" artist — 1/max(1,2)=0.5, below threshold).
+            var artistSubTokenSets: [Set<String>] = []
+            var remainingArtist = track.artist
+            for delim in [" & ", " feat. ", " feat ", " featuring ", " vs. ", " vs ", ", "] {
+                remainingArtist = remainingArtist.replacingOccurrences(of: delim, with: "|||",
+                                                                       options: .caseInsensitive)
+            }
+            for part in remainingArtist.components(separatedBy: "|||") {
+                let norm   = FuzzyMatch.normalize(part.trimmingCharacters(in: .whitespaces))
+                let tokens = Set(norm.split(separator: " ").map(String.init)).filter { $0.count >= 2 }
+                if !tokens.isEmpty { artistSubTokenSets.append(tokens) }
+            }
 
-            var seen = Set<String>()
-            var candidates: [IndexedFile] = []
-            for token in queryTokens {
-                for file in tokenIndex[token] ?? [] {
-                    if seen.insert(file.summary.filePath).inserted {
-                        candidates.append(file)
-                    }
+            var bestFolderScore = 0.0
+            var bestFolderName  = ""
+            var matchedFiles: [IndexedFile] = []
+
+            for entry in folderEntries {
+                guard !entry.tokens.isEmpty else { continue }
+                var bestSubScore = 0.0
+                for subTokens in artistSubTokenSets {
+                    let hit   = Double(subTokens.intersection(entry.tokens).count)
+                    let score = hit / Double(max(entry.tokens.count, subTokens.count))
+                    if score > bestSubScore { bestSubScore = score }
+                }
+                if bestSubScore >= 0.7 {
+                    matchedFiles += folderIndex[entry.name] ?? []
+                    if bestSubScore > bestFolderScore { bestFolderScore = bestSubScore; bestFolderName = entry.name }
                 }
             }
 
-            // Version-aware scoring against base tokens only
-            let (trackBase, trackVersion) = FuzzyMatch.splitVersion(track.title)
-            let artistNorm = FuzzyMatch.normalize(track.artist)
-            let combined = artistNorm.isEmpty ? trackBase : "\(artistNorm) \(trackBase)"
-            let trackBaseTokens = Set(combined.split(separator: " ").map(String.init))
+            guard !matchedFiles.isEmpty else {
+                if i < 20 {
+                    print("[MATCH \(i+1)] \(track.artist) – \(track.title)  [NO FOLDER MATCH]")
+                    print("  artistSubTokens=\(artistSubTokenSets.map { $0.sorted() })")
+                }
+                results.append(MatchResult(trackID: track.id, trackMBID: track.trackMBID,
+                                           tier: .noMatch, topCandidate: nil, allCandidates: []))
+                if (i + 1) % 20 == 0 { await onProgress(i + 1, "\(track.artist) \u{2013} \(track.title)") }
+                continue
+            }
 
-            let scored: [ScoredCandidate] = candidates.compactMap { file in
-                let base = FuzzyMatch.similarity(tokensA: trackBaseTokens, tokensB: file.baseTokens)
-                guard base >= 0.5 else { return nil }
+            // Stage 2: title / version / duration within matched folders
+            let (trackBase, trackVersion) = FuzzyMatch.splitVersion(track.title)
+            let trackTitleTokens = Set(trackBase.split(separator: " ").map(String.init))
+
+            let scored: [ScoredCandidate] = matchedFiles.compactMap { file -> ScoredCandidate? in
+                let titleScore = FuzzyMatch.similarity(tokensA: trackTitleTokens, tokensB: file.stemTokens)
+                guard titleScore >= 0.2 else { return nil }
+
                 let ver = FuzzyMatch.versionSimilarity(trackVersion, file.version)
-                return ScoredCandidate(filePath: file.summary.filePath,
+
+                let trackMs = track.durationMs
+                let fileMs  = file.summary.durationMs
+                let durScore: Double
+                if trackMs == 0 || fileMs <= 0 {  // 0 = unknown, -1 = read failed
+                    durScore = 0.5
+                } else {
+                    let diffSec = abs(trackMs - fileMs) / 1000
+                    switch diffSec {
+                    case 0...5:   durScore = 1.0
+                    case 6...15:  durScore = 0.8
+                    case 16...30: durScore = 0.5
+                    default:      durScore = 0.2
+                    }
+                }
+
+                return ScoredCandidate(fileID: file.summary.id,
+                                       filePath: file.summary.filePath,
                                        fileName: file.summary.fileName,
                                        format: file.summary.format,
-                                       baseScore: base, versionScore: ver)
+                                       artistScore: bestFolderScore,
+                                       titleScore: titleScore,
+                                       versionScore: ver,
+                                       version: file.version,
+                                       durationMs: fileMs,
+                                       durationScore: durScore)
             }.sorted { lhs, rhs in
                 if abs(lhs.combinedScore - rhs.combinedScore) > 0.01 { return lhs.combinedScore > rhs.combinedScore }
+                if abs(lhs.durationScore - rhs.durationScore) > 0.05 { return lhs.durationScore > rhs.durationScore }
                 return (formatPriority[lhs.format] ?? 99) < (formatPriority[rhs.format] ?? 99)
             }
 
             let top = scored.first
             let tier: MatchTier
-            if let top, top.baseScore >= 0.85 {
-                let versionConflict   = trackVersion != nil && top.versionScore < 0.4
-                let versionAmbiguous  = top.versionScore < 0.6
-                let ambiguousChoice   = scored.count >= 2 &&
-                    (scored[0].combinedScore - scored[1].combinedScore) < 0.1
-                tier = (versionConflict || versionAmbiguous || ambiguousChoice) ? .review : .confident
+            if let top {
+                // Artist is already guaranteed by folder match — only title + version determine tier.
+                // Duration is a sort-order tiebreaker only; it never blocks a confident match.
+                let titleOK = top.titleScore >= 0.8
+                let verOK   = trackVersion == nil || top.versionScore >= 0.6
+                tier = (titleOK && verOK) ? .confident : .review
             } else {
                 tier = .noMatch
             }
 
-            results.append(TrackResult(
+            // Debug: first 20 tracks
+            if i < 20 {
+                let f2: (Double) -> String = { String(format: "%.2f", $0) }
+                let mmss: (Int) -> String = { ms in
+                    ms > 0 ? "\(ms/60000):\(String(format: "%02d", (ms%60000)/1000))" : "?"
+                }
+                let titStr  = top.map { f2($0.titleScore)    } ?? "—"
+                let verStr  = top.map { f2($0.versionScore)  } ?? "—"
+                let durStr  = top.map { f2($0.durationScore) } ?? "—"
+                let durInfo = top.map { "\(mmss(track.durationMs)) / \(mmss($0.durationMs))" } ?? "—"
+                print("[MATCH \(i+1)] \(track.artist) – \(track.title)  [folder=\(matchedFiles.count) scored=\(scored.count)]")
+                print("  artistFolder='\(bestFolderName)' | artistFolderScore=\(f2(bestFolderScore)) | title=\(titStr) | ver=\(verStr) | dur=\(durStr) (\(durInfo)) | tier=\(tier)")
+            }
+
+            results.append(MatchResult(
+                trackID: track.id,
                 trackMBID: track.trackMBID,
                 tier: tier,
                 topCandidate: top,
@@ -528,11 +764,83 @@ final class FileMatchCoordinator {
             ))
 
             if (i + 1) % 20 == 0 {
-                await onProgress(i + 1, "\(track.artist) — \(track.title)")
+                await onProgress(i + 1, "\(track.artist) \u{2013} \(track.title)")
             }
         }
 
+        // Conflict dedup: one physical file → at most one confident match.
+        // When two tracks both scored the same file as their best confident candidate,
+        // keep the higher combinedScore as confident and downgrade the other to review.
+        // Without this, multi-version releases (e.g. 5 "Voo-Doo Believe?" variants) all
+        // become confident on the one file that exists, producing bogus results.
+        var bestConfidentByPath: [String: (index: Int, score: Double)] = [:]
+        for (i, result) in results.enumerated() {
+            guard result.tier == .confident, let top = result.topCandidate else { continue }
+            let path = top.filePath
+            if let existing = bestConfidentByPath[path] {
+                if top.combinedScore > existing.score {
+                    let old = results[existing.index]
+                    results[existing.index] = MatchResult(trackID: old.trackID,
+                                                          trackMBID: old.trackMBID,
+                                                          tier: .review,
+                                                          topCandidate: old.topCandidate,
+                                                          allCandidates: old.allCandidates)
+                    bestConfidentByPath[path] = (i, top.combinedScore)
+                } else {
+                    results[i] = MatchResult(trackID: result.trackID,
+                                             trackMBID: result.trackMBID,
+                                             tier: .review,
+                                             topCandidate: result.topCandidate,
+                                             allCandidates: result.allCandidates)
+                }
+            } else {
+                bestConfidentByPath[path] = (i, top.combinedScore)
+            }
+        }
+
+        // Final flush so processedTracks == totalTracks before applyChunk runs.
+        // Prevents ProgressView out-of-bounds when applyChunk would otherwise push it past 1.0.
+        await onProgress(tracks.count, "Applying…")
+
         return results
+    }
+
+    // MARK: - Candidate hydration
+
+    // Rebuilds reviewCandidates from persisted TrackEntity.candidateFilePaths so
+    // review rows show their best guess after app restart without re-scanning.
+    // Called once at startup (deferred via Task so it doesn't block init).
+    func hydrateReviewCandidatesIfNeeded() {
+        let reviewTracks = (try? context.fetch(FetchDescriptor<TrackEntity>(
+            predicate: #Predicate { $0.fileMatchState == "review" }
+        ))) ?? []
+        guard reviewTracks.contains(where: { !$0.candidateFilePaths.isEmpty }) else { return }
+
+        // Bulk load all files into the context's identity map — O(N) once at startup;
+        // objects become available for O(1) context.model(for:) later.
+        let allFiles = (try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
+        var fileByPath: [String: LocalFileEntity] = [:]
+        fileByPath.reserveCapacity(allFiles.count)
+        for f in allFiles { fileByPath[f.filePath] = f }
+
+        for track in reviewTracks where reviewCandidates[track.trackMBID] == nil {
+            let candidates: [ScoredCandidate] = track.candidateFilePaths.compactMap { path in
+                guard let file = fileByPath[path] else { return nil }
+                // baseScore=0 signals "loaded from disk, no live score available";
+                // the UI hides the score line when baseScore == 0.
+                // artistScore=0 / titleScore=0 signals "loaded from disk, no live scores".
+                // The UI hides numeric score display when baseScore (= 0) is zero.
+                return ScoredCandidate(fileID: file.persistentModelID,
+                                       filePath: path,
+                                       fileName: file.fileName,
+                                       format: file.format,
+                                       artistScore: 0, titleScore: 0,
+                                       versionScore: 0.5, version: nil)
+            }
+            if !candidates.isEmpty {
+                reviewCandidates[track.trackMBID] = candidates
+            }
+        }
     }
 
     // MARK: - SwiftData helpers (all @MainActor)

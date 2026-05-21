@@ -18,6 +18,9 @@ final class TrackEntity {
 
     var fileMatchState: String = "unscanned"
     var primaryLocalFilePath: String? = nil
+    // Top-N candidate file paths from the last scan — persists across app restarts so
+    // review rows can show their best guess without re-running the scan.
+    var candidateFilePaths: [String] = []
 
     init(trackMBID: String, recordingMBID: String, position: String, title: String,
          durationMs: Int?, artistCredit: String) {
