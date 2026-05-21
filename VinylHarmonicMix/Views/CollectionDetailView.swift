@@ -626,9 +626,9 @@ struct CollectionDetailView: View {
                         .background(Capsule().fill(CamelotColor.background(for: code)))
                 }
 
-                // Format pill — shown when track has a matched local file
+                // Format pill — shown when track has a confident local file match
                 if let matchedTrack = trackEntities.first(where: { $0.recordingMBID == rmbid }),
-                   matchedTrack.fileMatchState == "matched",
+                   matchedTrack.fileMatchState == "confident",
                    let filePath = matchedTrack.primaryLocalFilePath {
                     let ext = URL(fileURLWithPath: filePath).pathExtension.uppercased()
                     Text(ext)
@@ -638,7 +638,7 @@ struct CollectionDetailView: View {
                         .padding(.vertical, 2)
                         .background(Capsule().fill(Color(red: 0.25, green: 0.50, blue: 0.90)))
                 } else if let matchedTrack = trackEntities.first(where: { $0.recordingMBID == rmbid }),
-                          matchedTrack.fileMatchState == "candidateUnconfirmed" {
+                          matchedTrack.fileMatchState == "review" {
                     Text("?")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(.secondary)

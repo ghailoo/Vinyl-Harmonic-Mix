@@ -1,8 +1,9 @@
 import SwiftUI
 
 enum SidebarItem: String, Hashable {
-    case collection = "Collection"
-    case stats = "Stats"
+    case collection  = "Collection"
+    case stats       = "Stats"
+    case fileMatches = "File Matches"
 }
 
 struct ContentView: View {
@@ -19,6 +20,8 @@ struct ContentView: View {
             switch sidebarSelection {
             case .stats:
                 CollectionStatsView()
+            case .fileMatches:
+                FileMatchesView()
             default:
                 CollectionGridView()
             }
@@ -48,6 +51,8 @@ struct ContentView: View {
                 .tag(SidebarItem.collection)
             Label("Stats", systemImage: "chart.bar.xaxis")
                 .tag(SidebarItem.stats)
+            Label("File Matches", systemImage: "waveform.and.magnifyingglass")
+                .tag(SidebarItem.fileMatches)
             Divider()
             Button(action: { showSettings = true }) {
                 Label("Settings", systemImage: "gear")

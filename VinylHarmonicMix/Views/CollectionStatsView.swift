@@ -515,14 +515,14 @@ struct CollectionStatsView: View {
     // MARK: - Local Files card
 
     private var localFilesCard: some View {
-        let totalWithMBID = fileMatchCoordinator.totalTracksWithRecordingMBID
-        let matched       = fileMatchCoordinator.matchedFileCount
-        let unconfirmed   = fileMatchCoordinator.unconfirmedFileCount
-        let noCandidate   = fileMatchCoordinator.noCandidateFileCount
-        let pct           = totalWithMBID > 0 ? min(100, matched * 100 / totalWithMBID) : 0
+        let total      = fileMatchCoordinator.totalTracksWithRecordingMBID
+        let confident  = fileMatchCoordinator.confidentFileCount
+        let review     = fileMatchCoordinator.reviewFileCount
+        let noMatch    = fileMatchCoordinator.noMatchFileCount
+        let pct        = total > 0 ? min(100, confident * 100 / total) : 0
         let isRunning: Bool = {
             switch fileMatchCoordinator.phase {
-            case .indexing, .narrowing, .confirming, .paused: return true
+            case .indexing, .matching, .paused: return true
             default: return false
             }
         }()
@@ -530,13 +530,13 @@ struct CollectionStatsView: View {
         return sectionCard {
             sectionHeader(title: "Local Files")
 
-            if localFileEntities.isEmpty && matched == 0 {
-                Text("No files matched yet. Run 'Test match' in Settings to link local audio files to collection tracks.")
+            if localFileEntities.isEmpty && confident == 0 {
+                Text("No files matched yet. Run 'Match all tracks' to link local audio files to collection tracks.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("\(matched.formatted()) of \(totalWithMBID.formatted()) tracks matched to local files (\(pct)%)")
+                    Text("\(confident.formatted()) confident · \(review.formatted()) to review · \(noMatch.formatted()) no match  (of \(total.formatted()))")
                         .font(.system(size: 14))
 
                     GeometryReader { geo in
@@ -545,8 +545,8 @@ struct CollectionStatsView: View {
                             Capsule()
                                 .fill(Color.green)
                                 .frame(
-                                    width: totalWithMBID > 0
-                                        ? geo.size.width * CGFloat(matched) / CGFloat(max(totalWithMBID, 1))
+                                    width: total > 0
+                                        ? geo.size.width * CGFloat(confident) / CGFloat(max(total, 1))
                                         : 0,
                                     height: 8
                                 )
@@ -555,10 +555,10 @@ struct CollectionStatsView: View {
                     .frame(height: 8)
 
                     VStack(spacing: 4) {
-                        recordingStateRow(icon: "checkmark.circle.fill",      iconColor: .green,    label: "Matched (fingerprint)", count: matched)
-                        recordingStateRow(icon: "questionmark.circle.fill",   iconColor: .orange,   label: "Possible (unconfirmed)", count: unconfirmed)
-                        recordingStateRow(icon: "circle",                     iconColor: .secondary, label: "No file found",          count: noCandidate)
-                        recordingStateRow(icon: "waveform",                   iconColor: .secondary, label: "Files indexed",           count: localFileEntities.count)
+                        recordingStateRow(icon: "checkmark.circle.fill",    iconColor: .green,    label: "Confident",     count: confident)
+                        recordingStateRow(icon: "questionmark.circle.fill", iconColor: .orange,   label: "Needs review",  count: review)
+                        recordingStateRow(icon: "circle",                   iconColor: .secondary, label: "No match",     count: noMatch)
+                        recordingStateRow(icon: "waveform",                 iconColor: .secondary, label: "Files indexed", count: localFileEntities.count)
                     }
                     .padding(.top, 4)
                 }
@@ -570,19 +570,12 @@ struct CollectionStatsView: View {
             }
 
             HStack(spacing: 8) {
-                Button(isRunning ? "Scanning…" : "Test match (150)") {
-                    fileMatchCoordinator.startTestBatch()
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(isRunning || fileMatchCoordinator.phase != .idle)
-
-                Button("Match all") {
+                Button(isRunning ? "Matching…" : "Match tracks to files") {
                     fileMatchCoordinator.startFullScan()
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
                 .controlSize(.small)
-                .disabled(isRunning || !fileMatchCoordinator.hasRunTestBatch)
+                .disabled(isRunning)
             }
             .padding(.top, 10)
         }

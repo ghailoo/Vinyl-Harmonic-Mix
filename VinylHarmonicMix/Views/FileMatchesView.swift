@@ -1,0 +1,377 @@
+import SwiftUI
+import SwiftData
+#if os(macOS)
+import AppKit
+#endif
+
+struct FileMatchesView: View {
+    @Environment(FileMatchCoordinator.self) private var coordinator
+
+    @Query(filter: #Predicate<TrackEntity> { $0.fileMatchState == "confident" },
+           sort: \TrackEntity.artistCredit)
+    private var confidentTracks: [TrackEntity]
+
+    @Query(filter: #Predicate<TrackEntity> { $0.fileMatchState == "review" },
+           sort: \TrackEntity.artistCredit)
+    private var reviewTracks: [TrackEntity]
+
+    @Query(filter: #Predicate<TrackEntity> { $0.fileMatchState == "noMatch" },
+           sort: \TrackEntity.artistCredit)
+    private var noMatchTracks: [TrackEntity]
+
+    @State private var expandConfident = false
+    @State private var expandReview    = true
+    @State private var expandNoMatch   = false
+
+    var body: some View {
+        Group {
+            if confidentTracks.isEmpty && reviewTracks.isEmpty && noMatchTracks.isEmpty {
+                emptyState
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("File Matches")
+                            .font(.system(size: 28, weight: .bold))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.bottom, 4)
+
+                        confidentSection
+                        reviewSection
+                        noMatchSection
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 20)
+                }
+            }
+        }
+        .navigationTitle("File Matches")
+    }
+
+    // MARK: - Empty state
+
+    private var emptyState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "waveform.and.magnifyingglass")
+                .font(.system(size: 48))
+                .foregroundStyle(.secondary)
+            Text("No matches yet.")
+                .foregroundStyle(.secondary)
+            Text("Run \"Match all tracks\" from Stats or Settings.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Confident section
+
+    private var confidentSection: some View {
+        sectionCard {
+            DisclosureGroup(isExpanded: $expandConfident) {
+                if confidentTracks.isEmpty {
+                    Text("None yet.").font(.caption).foregroundStyle(.tertiary).padding(.top, 4)
+                } else {
+                    LazyVStack(spacing: 0) {
+                        ForEach(confidentTracks, id: \.trackMBID) { track in
+                            ConfidentRowView(track: track, coordinator: coordinator)
+                            if track.trackMBID != confidentTracks.last?.trackMBID {
+                                Divider()
+                            }
+                        }
+                    }
+                    .padding(.top, 6)
+                }
+            } label: {
+                HStack {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                    Text("Confident (\(confidentTracks.count))")
+                        .font(.system(size: 16, weight: .semibold))
+                }
+            }
+        }
+    }
+
+    // MARK: - Review section
+
+    private var reviewSection: some View {
+        sectionCard {
+            DisclosureGroup(isExpanded: $expandReview) {
+                if reviewTracks.isEmpty {
+                    Text("None yet.").font(.caption).foregroundStyle(.tertiary).padding(.top, 4)
+                } else {
+                    LazyVStack(spacing: 0) {
+                        ForEach(reviewTracks, id: \.trackMBID) { track in
+                            ReviewRowView(track: track, coordinator: coordinator)
+                            if track.trackMBID != reviewTracks.last?.trackMBID {
+                                Divider()
+                            }
+                        }
+                    }
+                    .padding(.top, 6)
+                }
+            } label: {
+                HStack {
+                    Image(systemName: "questionmark.circle.fill").foregroundStyle(.orange)
+                    Text("Needs Review (\(reviewTracks.count))")
+                        .font(.system(size: 16, weight: .semibold))
+                }
+            }
+        }
+    }
+
+    // MARK: - No Match section
+
+    private var noMatchSection: some View {
+        sectionCard {
+            DisclosureGroup(isExpanded: $expandNoMatch) {
+                if noMatchTracks.isEmpty {
+                    Text("None yet.").font(.caption).foregroundStyle(.tertiary).padding(.top, 4)
+                } else {
+                    LazyVStack(spacing: 0) {
+                        ForEach(noMatchTracks, id: \.trackMBID) { track in
+                            NoMatchRowView(track: track, coordinator: coordinator)
+                            if track.trackMBID != noMatchTracks.last?.trackMBID {
+                                Divider()
+                            }
+                        }
+                    }
+                    .padding(.top, 6)
+                }
+            } label: {
+                HStack {
+                    Image(systemName: "circle").foregroundStyle(.secondary)
+                    Text("No Match (\(noMatchTracks.count))")
+                        .font(.system(size: 16, weight: .semibold))
+                }
+            }
+        }
+    }
+
+    // MARK: - Card wrapper
+
+    private func sectionCard<C: View>(@ViewBuilder content: () -> C) -> some View {
+        VStack(alignment: .leading, spacing: 0) { content() }
+            .padding(16)
+            .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+// MARK: - Confident row
+
+private struct ConfidentRowView: View {
+    let track: TrackEntity
+    let coordinator: FileMatchCoordinator
+
+    private var fileName: String {
+        guard let path = track.primaryLocalFilePath else { return "—" }
+        return URL(fileURLWithPath: path).lastPathComponent
+    }
+
+    private var format: String {
+        guard let path = track.primaryLocalFilePath else { return "" }
+        return URL(fileURLWithPath: path).pathExtension.uppercased()
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green).font(.caption)
+                .padding(.top, 3)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("\(track.artistCredit) – \(track.title)")
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
+
+                HStack(spacing: 6) {
+                    Text(fileName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    if !format.isEmpty {
+                        Text(format)
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 5).padding(.vertical, 2)
+                            .background(Color.accentColor, in: Capsule())
+                            .foregroundStyle(.white)
+                    }
+                }
+            }
+
+            Spacer()
+
+            HStack(spacing: 6) {
+                Button("Change") { pickFile() }
+                    .controlSize(.small)
+                Button("Unlink") { coordinator.unlinkMatch(trackMBID: track.trackMBID) }
+                    .controlSize(.small).foregroundStyle(.red)
+            }
+        }
+        .padding(.vertical, 8)
+    }
+
+    private func pickFile() {
+#if os(macOS)
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose a replacement audio file"
+        panel.prompt = "Select"
+        if panel.runModal() == .OK, let url = panel.url {
+            coordinator.assignFile(trackMBID: track.trackMBID, url: url)
+        }
+#endif
+    }
+}
+
+// MARK: - Review row
+
+private struct ReviewRowView: View {
+    let track: TrackEntity
+    let coordinator: FileMatchCoordinator
+
+    private var candidates: [FileMatchCoordinator.ScoredCandidate] {
+        coordinator.reviewCandidates[track.trackMBID] ?? []
+    }
+
+    private var top: FileMatchCoordinator.ScoredCandidate? { candidates.first }
+
+    private var verifyState: FileMatchCoordinator.VerifyState? {
+        coordinator.verifyStates[track.trackMBID]
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Track label
+            HStack(spacing: 6) {
+                Image(systemName: "questionmark.circle.fill")
+                    .foregroundStyle(.orange).font(.caption)
+                Text("\(track.artistCredit) – \(track.title)")
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
+            }
+
+            if candidates.isEmpty {
+                Text("Re-run scan to load candidates.")
+                    .font(.caption).foregroundStyle(.tertiary)
+            } else if let top {
+                // Best-guess candidate
+                HStack(spacing: 6) {
+                    Text("Best guess:")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Text(URL(fileURLWithPath: top.filePath).lastPathComponent)
+                        .font(.caption).foregroundStyle(.primary)
+                        .lineLimit(1).truncationMode(.middle)
+                    Text(String(format: "base %.2f · ver %.2f", top.baseScore, top.versionScore))
+                        .font(.caption2).foregroundStyle(.tertiary)
+                }
+
+                // Verification badge
+                if let state = verifyState {
+                    verifyBadge(state: state)
+                }
+
+                // Action buttons
+                HStack(spacing: 8) {
+                    Button("Confirm") {
+                        coordinator.confirmMatch(trackMBID: track.trackMBID, filePath: top.filePath)
+                    }
+                    .controlSize(.small).buttonStyle(.borderedProminent)
+
+                    // Pick another — show other candidates
+                    if candidates.count > 1 {
+                        Menu("Pick another ▾") {
+                            ForEach(Array(candidates.dropFirst().enumerated()), id: \.offset) { _, c in
+                                Button(URL(fileURLWithPath: c.filePath).lastPathComponent) {
+                                    coordinator.confirmMatch(trackMBID: track.trackMBID, filePath: c.filePath)
+                                }
+                            }
+                        }
+                        .controlSize(.small)
+                    }
+
+                    Button("Verify with fingerprint") {
+                        Task {
+                            await coordinator.verifyWithFingerprint(
+                                trackMBID: track.trackMBID,
+                                recordingMBID: track.recordingMBID,
+                                filePath: top.filePath
+                            )
+                        }
+                    }
+                    .controlSize(.small)
+                    .disabled(verifyState != nil)
+
+                    Button("Skip") { coordinator.skipTrack(trackMBID: track.trackMBID) }
+                        .controlSize(.small).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private func verifyBadge(state: FileMatchCoordinator.VerifyState) -> some View {
+        switch state {
+        case .running:
+            HStack(spacing: 4) {
+                ProgressView().controlSize(.mini)
+                Text("Fingerprinting…").font(.caption2).foregroundStyle(.secondary)
+            }
+        case .confirmed(let score):
+            Label(String(format: "Fingerprint verified ✓  (score %.2f)", score), systemImage: "checkmark.seal.fill")
+                .font(.caption2).foregroundStyle(.green)
+        case .conflicted(let title):
+            Label("Fingerprint says: \(title)", systemImage: "exclamationmark.triangle.fill")
+                .font(.caption2).foregroundStyle(.red)
+        case .failed(let msg):
+            Label("Verify failed: \(msg)", systemImage: "xmark.circle.fill")
+                .font(.caption2).foregroundStyle(.orange)
+        }
+    }
+}
+
+// MARK: - No Match row
+
+private struct NoMatchRowView: View {
+    let track: TrackEntity
+    let coordinator: FileMatchCoordinator
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: "circle")
+                .foregroundStyle(.secondary).font(.caption)
+
+            Text("\(track.artistCredit) – \(track.title)")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+
+            Spacer()
+
+            HStack(spacing: 6) {
+                Button("Assign file…") { pickFile() }.controlSize(.small)
+                Button("Skip") { coordinator.skipTrack(trackMBID: track.trackMBID) }
+                    .controlSize(.small).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 6)
+    }
+
+    private func pickFile() {
+#if os(macOS)
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.message = "Assign an audio file for this track"
+        panel.prompt = "Assign"
+        if panel.runModal() == .OK, let url = panel.url {
+            coordinator.assignFile(trackMBID: track.trackMBID, url: url)
+        }
+#endif
+    }
+}

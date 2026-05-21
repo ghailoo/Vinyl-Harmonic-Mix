@@ -20,14 +20,14 @@ struct FileMatchPanelView: View {
                     .truncationMode(.middle)
             }
 
-            if coordinator.phase == .confirming || coordinator.phase == .completed {
+            if coordinator.phase == .matching || coordinator.phase == .completed {
                 HStack(spacing: 16) {
-                    countBadge(label: "Matched", count: coordinator.matchedCount, color: .green)
-                    countBadge(label: "Unconfirmed", count: coordinator.unconfirmedCount, color: .orange)
-                    countBadge(label: "No file", count: coordinator.noCandidateCount, color: .secondary)
+                    countBadge(label: "Confident", count: coordinator.confidentCount, color: .green)
+                    countBadge(label: "Review",    count: coordinator.reviewCount,    color: .orange)
+                    countBadge(label: "No match",  count: coordinator.noMatchCount,   color: .secondary)
                 }
 
-                if coordinator.totalTracks > 0 && coordinator.phase == .confirming {
+                if coordinator.totalTracks > 0 && coordinator.phase == .matching {
                     ProgressView(value: Double(coordinator.processedTracks),
                                  total: Double(coordinator.totalTracks))
                     Text("\(coordinator.processedTracks) / \(coordinator.totalTracks) tracks")
@@ -42,17 +42,20 @@ struct FileMatchPanelView: View {
             }
 
             if let err = coordinator.lastError {
-                Label(err, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red).font(.caption)
+                Label(err, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red).font(.caption)
             }
 
             HStack(spacing: 8) {
-                if coordinator.phase == .confirming || coordinator.phase == .indexing || coordinator.phase == .narrowing {
+                if coordinator.phase == .matching || coordinator.phase == .indexing {
                     Button("Pause") { coordinator.pause() }.controlSize(.small)
                 }
                 if coordinator.phase == .paused {
-                    Button("Resume") { coordinator.resume() }.buttonStyle(.borderedProminent).controlSize(.small)
+                    Button("Resume") { coordinator.resume() }
+                        .buttonStyle(.borderedProminent).controlSize(.small)
                 }
-                Button("Cancel") { coordinator.cancel() }.controlSize(.small).foregroundStyle(.red)
+                Button("Cancel") { coordinator.cancel() }
+                    .controlSize(.small).foregroundStyle(.red)
                 if coordinator.phase == .completed || coordinator.phase == .cancelled {
                     Button("Dismiss") { coordinator.dismissPanel() }.controlSize(.small)
                 }
@@ -66,26 +69,21 @@ struct FileMatchPanelView: View {
     @ViewBuilder
     private var phaseIcon: some View {
         switch coordinator.phase {
-        case .completed:
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-        case .cancelled:
-            Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
-        case .paused:
-            Image(systemName: "pause.circle.fill").foregroundStyle(.orange)
-        default:
-            ProgressView().controlSize(.small)
+        case .completed: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+        case .cancelled: Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
+        case .paused:    Image(systemName: "pause.circle.fill").foregroundStyle(.orange)
+        default:         ProgressView().controlSize(.small)
         }
     }
 
     private var phaseLabel: String {
         switch coordinator.phase {
-        case .idle:       return "Idle"
-        case .indexing:   return "Indexing local library…"
-        case .narrowing:  return "Narrowing candidates…"
-        case .confirming: return "Confirming via AcoustID…"
-        case .paused:     return "Paused"
-        case .completed:  return "Match complete"
-        case .cancelled:  return "Cancelled"
+        case .idle:      return "Idle"
+        case .indexing:  return "Indexing local library…"
+        case .matching:  return "Matching tracks…"
+        case .paused:    return "Paused"
+        case .completed: return "Match complete"
+        case .cancelled: return "Cancelled"
         }
     }
 
@@ -94,9 +92,7 @@ struct FileMatchPanelView: View {
             Text(count.formatted())
                 .font(.system(size: 16, weight: .bold).monospacedDigit())
                 .foregroundStyle(count > 0 ? color : Color.secondary.opacity(0.5))
-            Text(label)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            Text(label).font(.caption2).foregroundStyle(.secondary)
         }
     }
 }

@@ -313,7 +313,7 @@ struct SettingsView: View {
             }
             // MARK: Scan Library
             Section("Scan Library") {
-                Text("Match collection tracks to local audio files via AcoustID fingerprinting.")
+                Text("Match collection tracks to local audio files by title and artist (string matching, no fingerprinting). Fast — completes in seconds.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -321,12 +321,17 @@ struct SettingsView: View {
                     Button("Test match (first 150)") {
                         fileMatchCoordinator.startTestBatch()
                     }
-                    .disabled(fileMatchCoordinator.phase != .idle)
+                    .disabled(fileMatchCoordinator.phase != .idle &&
+                              fileMatchCoordinator.phase != .completed &&
+                              fileMatchCoordinator.phase != .cancelled)
 
                     Button("Match all tracks") {
                         fileMatchCoordinator.startFullScan()
                     }
-                    .disabled(!fileMatchCoordinator.hasRunTestBatch || fileMatchCoordinator.phase != .idle)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(fileMatchCoordinator.phase != .idle &&
+                              fileMatchCoordinator.phase != .completed &&
+                              fileMatchCoordinator.phase != .cancelled)
                 }
 
                 if fileMatchCoordinator.shouldShowPanel {

@@ -1,11 +1,32 @@
 import Foundation
 import SwiftData
+#if os(macOS)
+import AppKit
+#endif
 
 @MainActor
 @Observable
 final class FileMatchCoordinator {
 
-    enum Phase { case idle, indexing, narrowing, confirming, paused, completed, cancelled }
+    enum Phase { case idle, indexing, matching, paused, completed, cancelled }
+
+    enum VerifyState {
+        case running
+        case confirmed(score: Double)
+        case conflicted(foundTitle: String)
+        case failed(String)
+    }
+
+    struct ScoredCandidate: Sendable {
+        let filePath: String
+        let fileName: String
+        let format: String
+        let baseScore: Double
+        let versionScore: Double
+        var combinedScore: Double { baseScore * 0.7 + versionScore * 0.3 }
+    }
+
+    // MARK: - Scan state
 
     var phase: Phase = .idle
     var showPanel: Bool = false
@@ -13,12 +34,15 @@ final class FileMatchCoordinator {
     var indexedCount: Int = 0
     var totalTracks: Int = 0
     var processedTracks: Int = 0
-    var matchedCount: Int = 0
-    var unconfirmedCount: Int = 0
-    var noCandidateCount: Int = 0
+    var confidentCount: Int = 0
+    var reviewCount: Int = 0
+    var noMatchCount: Int = 0
     var currentTrackLabel: String = ""
-    var hasRunTestBatch: Bool = false
     var lastError: String? = nil
+
+    // In-memory candidates for review rows (transient — repopulated each scan run)
+    var reviewCandidates: [String: [ScoredCandidate]] = [:]
+    var verifyStates: [String: VerifyState] = [:]
 
     private let context: ModelContext
     private var scanTask: Task<Void, Never>?
@@ -29,116 +53,175 @@ final class FileMatchCoordinator {
         "mp3": 4, "ogg": 5, "opus": 6, "mp4": 7
     ]
 
-    var shouldShowPanel: Bool {
-        switch phase {
-        case .idle: return false
-        default: return true
-        }
-    }
+    var shouldShowPanel: Bool { phase != .idle }
 
     init(context: ModelContext) { self.context = context }
 
     // MARK: - Controls
 
     func startTestBatch(size: Int = 150) {
-        guard case .idle = phase else { return }
-        hasRunTestBatch = false
+        guard phase == .idle || phase == .completed || phase == .cancelled else { return }
         beginScan(limit: size)
     }
 
     func startFullScan() {
-        guard hasRunTestBatch || phase == .idle else { return }
+        guard phase == .idle || phase == .completed || phase == .cancelled else { return }
         beginScan(limit: nil)
     }
 
     func pause() {
-        scanTask?.cancel()
-        scanTask = nil
+        scanTask?.cancel(); scanTask = nil
         phase = .paused
     }
 
     func resume() {
-        guard case .paused = phase else { return }
+        guard phase == .paused else { return }
         beginScan(limit: pendingLimit)
     }
 
     func cancel() {
-        scanTask?.cancel()
-        scanTask = nil
+        scanTask?.cancel(); scanTask = nil
         phase = .cancelled
     }
 
     func dismissPanel() {
         phase = .idle
         indexedCount = 0; totalTracks = 0; processedTracks = 0
-        matchedCount = 0; unconfirmedCount = 0; noCandidateCount = 0
+        confidentCount = 0; reviewCount = 0; noMatchCount = 0
         currentTrackLabel = ""; lastError = nil
     }
 
-    // MARK: - Live stats helpers (for stats view)
+    // MARK: - Live stats (for Stats card)
 
-    var matchedFileCount: Int {
+    var confidentFileCount: Int {
         (try? context.fetchCount(FetchDescriptor<TrackEntity>(
-            predicate: #Predicate { $0.fileMatchState == "matched" }
+            predicate: #Predicate { $0.fileMatchState == "confident" }
         ))) ?? 0
     }
 
-    var unconfirmedFileCount: Int {
+    var reviewFileCount: Int {
         (try? context.fetchCount(FetchDescriptor<TrackEntity>(
-            predicate: #Predicate { $0.fileMatchState == "candidateUnconfirmed" }
+            predicate: #Predicate { $0.fileMatchState == "review" }
         ))) ?? 0
     }
 
-    var noCandidateFileCount: Int {
+    var noMatchFileCount: Int {
         (try? context.fetchCount(FetchDescriptor<TrackEntity>(
-            predicate: #Predicate { $0.fileMatchState == "noCandidate" }
+            predicate: #Predicate { $0.fileMatchState == "noMatch" }
         ))) ?? 0
     }
 
     var totalTracksWithRecordingMBID: Int {
-        let all = (try? context.fetch(FetchDescriptor<TrackEntity>())) ?? []
-        return all.filter { !$0.recordingMBID.isEmpty }.count
+        (try? context.fetchCount(FetchDescriptor<TrackEntity>(
+            predicate: #Predicate { !$0.recordingMBID.isEmpty }
+        ))) ?? 0
     }
 
-    // MARK: - Internal
+    // MARK: - Per-row actions
+
+    func confirmMatch(trackMBID: String, filePath: String) {
+        linkFile(filePath: filePath, toTrackMBID: trackMBID, score: 1.0, method: "manual")
+        reviewCandidates.removeValue(forKey: trackMBID)
+        verifyStates.removeValue(forKey: trackMBID)
+        try? context.save()
+    }
+
+    func unlinkMatch(trackMBID: String) {
+        var td = FetchDescriptor<TrackEntity>(predicate: #Predicate { $0.trackMBID == trackMBID })
+        td.fetchLimit = 1
+        guard let track = try? context.fetch(td).first else { return }
+        if let path = track.primaryLocalFilePath {
+            var fd = FetchDescriptor<LocalFileEntity>(predicate: #Predicate { $0.filePath == path })
+            fd.fetchLimit = 1
+            if let file = try? context.fetch(fd).first {
+                file.track = nil
+                file.matchMethod = "unmatched"
+                file.matchScore = nil
+            }
+        }
+        track.fileMatchState = "noMatch"
+        track.primaryLocalFilePath = nil
+        try? context.save()
+    }
+
+    func skipTrack(trackMBID: String) {
+        var td = FetchDescriptor<TrackEntity>(predicate: #Predicate { $0.trackMBID == trackMBID })
+        td.fetchLimit = 1
+        guard let track = try? context.fetch(td).first else { return }
+        track.fileMatchState = "skip"
+        reviewCandidates.removeValue(forKey: trackMBID)
+        verifyStates.removeValue(forKey: trackMBID)
+        try? context.save()
+    }
+
+    func assignFile(trackMBID: String, url: URL) {
+        let path = url.path
+        var fd = FetchDescriptor<LocalFileEntity>(predicate: #Predicate { $0.filePath == path })
+        fd.fetchLimit = 1
+        if (try? context.fetch(fd))?.isEmpty != false {
+            let name = url.lastPathComponent
+            let ext = url.pathExtension.lowercased()
+            let newFile = LocalFileEntity(filePath: path, fileName: name, format: ext, fileSizeBytes: nil)
+            context.insert(newFile)
+        }
+        linkFile(filePath: path, toTrackMBID: trackMBID, score: 1.0, method: "manual")
+        reviewCandidates.removeValue(forKey: trackMBID)
+        try? context.save()
+    }
+
+    func verifyWithFingerprint(trackMBID: String, recordingMBID: String, filePath: String) async {
+        verifyStates[trackMBID] = .running
+        guard let fpcalcPath = LocalLibraryService.fpcalcPath(),
+              let apiKey = KeychainService.shared.load(for: .acoustIDKey),
+              !apiKey.isEmpty else {
+            verifyStates[trackMBID] = .failed("fpcalc or AcoustID key not configured")
+            return
+        }
+        let client = AcoustIDClient(fpcalcPath: fpcalcPath, apiKey: apiKey)
+        do {
+            let fp = try await client.fingerprint(filePath: filePath)
+            let result = try await client.lookup(fingerprint: fp.fingerprint, duration: fp.duration)
+            if result.recordingMBIDs.contains(recordingMBID) {
+                verifyStates[trackMBID] = .confirmed(score: result.topScore)
+                linkFile(filePath: filePath, toTrackMBID: trackMBID, score: result.topScore, method: "fingerprint")
+                reviewCandidates.removeValue(forKey: trackMBID)
+                try? context.save()
+            } else {
+                verifyStates[trackMBID] = .conflicted(foundTitle: result.recordingMBIDs.first ?? "unknown recording")
+            }
+        } catch {
+            verifyStates[trackMBID] = .failed(error.localizedDescription)
+        }
+    }
+
+    // MARK: - Internal scan driver
 
     private func beginScan(limit: Int?) {
         pendingLimit = limit
         showPanel = true
         phase = .indexing
-        indexedCount = 0; processedTracks = 0
-        matchedCount = 0; unconfirmedCount = 0; noCandidateCount = 0
+        indexedCount = 0; processedTracks = 0; totalTracks = 0
+        confidentCount = 0; reviewCount = 0; noMatchCount = 0
         currentTrackLabel = ""; lastError = nil
 
         scanTask = Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
 
-            // ── Phase 1: Index files ──
             await self.runPhase1()
             if Task.isCancelled { return }
 
-            // ── Phase 2: Narrow ──
-            await MainActor.run { self.phase = .narrowing }
-            let candidates = await self.runPhase2(limit: limit)
-            if Task.isCancelled { return }
-
-            // ── Phase 3: Confirm via AcoustID ──
-            await MainActor.run {
-                self.phase = .confirming
-                self.totalTracks = candidates.count
-            }
-            await self.runPhase3(candidates: candidates)
+            await MainActor.run { self.phase = .matching }
+            await self.runPhase2(limit: limit)
             if Task.isCancelled { return }
 
             await MainActor.run {
                 try? self.context.save()
                 self.phase = .completed
-                if limit != nil { self.hasRunTestBatch = true }
             }
         }
     }
 
-    // MARK: - Phase 1: Index
+    // MARK: - Phase 1: Index files (unchanged)
 
     private struct FileInfo: Sendable {
         let path: String
@@ -150,14 +233,18 @@ final class FileMatchCoordinator {
     private func runPhase1() async {
         guard let url = LocalLibraryService.resolveLibraryBookmark() else { return }
 
-        let audioExtensions: Set<String> = ["flac","mp3","aiff","aif","wav","m4a","mp4","ogg","opus"]
-        let skipDirs: Set<String> = ["#recycle","@eaDir",".Trashes",".Spotlight-V100"]
-
-        // Fetch existing paths on main actor to avoid re-indexing
-        let existingPaths: Set<String> = await MainActor.run {
+        // Skip if files are already indexed
+        let existing: Set<String> = await MainActor.run {
             let all = (try? self.context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
             return Set(all.map(\.filePath))
         }
+        if !existing.isEmpty {
+            await MainActor.run { self.indexedCount = existing.count }
+            return
+        }
+
+        let audioExtensions: Set<String> = ["flac","mp3","aiff","aif","wav","m4a","mp4","ogg","opus"]
+        let skipDirs: Set<String> = ["#recycle","@eaDir",".Trashes",".Spotlight-V100"]
 
         guard let enumerator = FileManager().enumerator(
             at: url,
@@ -179,7 +266,7 @@ final class FileMatchCoordinator {
             guard audioExtensions.contains(ext) else { continue }
 
             let path = fileURL.path
-            if existingPaths.contains(path) { continue }
+            if existing.contains(path) { continue }
 
             let size = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize
             batch.append(FileInfo(path: path, name: name, format: ext, size: size))
@@ -217,30 +304,40 @@ final class FileMatchCoordinator {
         }
     }
 
-    // MARK: - Phase 2: Narrow
+    // MARK: - Phase 2: String-only bulk scoring
 
     private struct TrackSummary: Sendable {
         let trackMBID: String
         let recordingMBID: String
         let artist: String
         let title: String
-        let fileMatchState: String
     }
 
     private struct FileSummary: Sendable {
         let filePath: String
         let fileName: String
         let format: String
-        let artistFolderKey: String
-        let cachedFingerprint: String?
-        let cachedDuration: Int?
     }
 
-    private func runPhase2(limit: Int?) async -> [(track: TrackSummary, candidates: [FileSummary])] {
-        // Snapshot data on main actor — no heavy computation here
-        let (trackSummaries, fileSummaries): ([TrackSummary], [FileSummary]) = await MainActor.run {
+    private struct TrackResult: Sendable {
+        let trackMBID: String
+        let tier: MatchTier
+        let topCandidate: ScoredCandidate?
+        let allCandidates: [ScoredCandidate]
+    }
+
+    private enum MatchTier: String, Sendable {
+        case confident, review, noMatch
+    }
+
+    private func runPhase2(limit: Int?) async {
+        // Snapshot all data on main actor
+        let (tracks, files): ([TrackSummary], [FileSummary]) = await MainActor.run {
             let allTracks = (try? self.context.fetch(FetchDescriptor<TrackEntity>())) ?? []
-            let eligible = allTracks.filter { !$0.recordingMBID.isEmpty && $0.fileMatchState == "unscanned" }
+            let eligible = allTracks.filter { t in
+                !t.recordingMBID.isEmpty &&
+                !["confident", "skip"].contains(t.fileMatchState)
+            }
             let scoped = limit.map { Array(eligible.prefix($0)) } ?? Array(eligible)
 
             let tracks = scoped.map { t -> TrackSummary in
@@ -248,76 +345,143 @@ final class FileMatchCoordinator {
                     ? (t.collectionItem?.basicInformation?.artists.first?.name ?? "")
                     : t.artistCredit
                 return TrackSummary(trackMBID: t.trackMBID, recordingMBID: t.recordingMBID,
-                                    artist: artist, title: t.title, fileMatchState: t.fileMatchState)
+                                    artist: artist, title: t.title)
             }
 
             let allFiles = (try? self.context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
             let files = allFiles.map { f in
-                FileSummary(filePath: f.filePath, fileName: f.fileName, format: f.format,
-                            artistFolderKey: "", cachedFingerprint: f.fingerprint,
-                            cachedDuration: f.durationSeconds)
+                FileSummary(filePath: f.filePath, fileName: f.fileName, format: f.format)
             }
             return (tracks, files)
         }
 
-        if trackSummaries.isEmpty || fileSummaries.isEmpty { return [] }
+        if tracks.isEmpty || files.isEmpty { return }
 
-        // Computation runs nonisolated (cooperative thread pool, NOT main actor).
-        // Task cancellation propagates through the await chain.
-        return await FileMatchCoordinator._narrowCandidates(
-            tracks: trackSummaries,
-            files: fileSummaries,
-            onProgress: { [weak self] count in
-                await MainActor.run { self?.processedTracks = count }
+        await MainActor.run { self.totalTracks = tracks.count }
+
+        // Score off the main actor — nonisolated static, cooperative thread pool
+        let results = await FileMatchCoordinator._scoreCandidates(
+            tracks: tracks,
+            files: files,
+            onProgress: { [weak self] count, label in
+                await MainActor.run {
+                    self?.processedTracks = count
+                    self?.currentTrackLabel = label
+                }
             }
         )
+
+        // Apply results in chunks on main actor
+        let chunkSize = 50
+        var allTracks: [TrackEntity] = []
+        var allFiles: [LocalFileEntity] = []
+        await MainActor.run {
+            allTracks = (try? self.context.fetch(FetchDescriptor<TrackEntity>())) ?? []
+            allFiles  = (try? self.context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
+        }
+
+        var trackDict: [String: TrackEntity] = [:]
+        var fileDict: [String: LocalFileEntity] = [:]
+        for t in allTracks { trackDict[t.trackMBID] = t }
+        for f in allFiles  { fileDict[f.filePath]   = f }
+
+        var offset = 0
+        while offset < results.count {
+            if Task.isCancelled { break }
+            let end = min(offset + chunkSize, results.count)
+            let chunk = Array(results[offset..<end])
+            offset = end
+
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.applyChunk(chunk, trackDict: trackDict, fileDict: fileDict)
+                try? self.context.save()
+            }
+        }
     }
 
-    // Runs on cooperative thread pool (nonisolated async).
-    // Pre-normalizes every file stem once, builds an inverted token index,
-    // then for each track gathers only the files that share a token — typically
-    // dozens rather than the full 41 k, cutting comparisons by ~3 orders of magnitude.
-    nonisolated private static func _narrowCandidates(
+    private func applyChunk(
+        _ results: [TrackResult],
+        trackDict: [String: TrackEntity],
+        fileDict: [String: LocalFileEntity]
+    ) {
+        for result in results {
+            guard let track = trackDict[result.trackMBID] else { continue }
+
+            switch result.tier {
+            case .confident:
+                guard let top = result.topCandidate,
+                      let file = fileDict[top.filePath] else {
+                    track.fileMatchState = "noMatch"
+                    noMatchCount += 1; processedTracks += 1
+                    continue
+                }
+                file.track = track
+                file.matchMethod = "string"
+                file.matchScore = top.combinedScore
+                track.fileMatchState = "confident"
+                track.primaryLocalFilePath = top.filePath
+                confidentCount += 1
+
+            case .review:
+                track.fileMatchState = "review"
+                track.primaryLocalFilePath = result.topCandidate?.filePath
+                reviewCandidates[result.trackMBID] = result.allCandidates
+                reviewCount += 1
+
+            case .noMatch:
+                track.fileMatchState = "noMatch"
+                noMatchCount += 1
+            }
+            processedTracks += 1
+        }
+    }
+
+    // Nonisolated: runs on cooperative thread pool, never touches SwiftData models
+    nonisolated private static func _scoreCandidates(
         tracks: [TrackSummary],
         files: [FileSummary],
-        onProgress: @Sendable (Int) async -> Void
-    ) async -> [(track: TrackSummary, candidates: [FileSummary])] {
+        onProgress: @Sendable (Int, String) async -> Void
+    ) async -> [TrackResult] {
 
         struct IndexedFile {
             let summary: FileSummary
-            let tokens: Set<String>
+            let fullTokens: Set<String>
+            let baseTokens: Set<String>
+            let version: String?
         }
 
-        // Normalize each file stem once (41 k ops total, not 150 × 41 k)
+        // Pre-process every file once
         let indexed: [IndexedFile] = files.map { file in
             let stem = URL(fileURLWithPath: file.fileName).deletingPathExtension().lastPathComponent
-            let norm = FuzzyMatch.normalize(stem)
-            let tokens = Set(norm.split(separator: " ").map(String.init))
-            return IndexedFile(summary: file, tokens: tokens)
+            let (base, version) = FuzzyMatch.splitVersion(stem)
+            let baseTokens = Set(base.split(separator: " ").map(String.init))
+            let fullNorm = FuzzyMatch.normalize(stem)
+            let fullTokens = Set(fullNorm.split(separator: " ").map(String.init))
+            return IndexedFile(summary: file, fullTokens: fullTokens, baseTokens: baseTokens, version: version)
         }
 
-        // Inverted index: token → files that contain it (skip tokens shorter than 3 chars)
+        // Inverted index on all tokens for fast candidate lookup
         var tokenIndex: [String: [IndexedFile]] = [:]
         for file in indexed {
-            for token in file.tokens where token.count >= 3 {
+            for token in file.fullTokens where token.count >= 3 {
                 tokenIndex[token, default: []].append(file)
             }
         }
 
-        var result: [(track: TrackSummary, candidates: [FileSummary])] = []
-        result.reserveCapacity(tracks.count)
+        var results: [TrackResult] = []
+        results.reserveCapacity(tracks.count)
 
         for (i, track) in tracks.enumerated() {
             if Task.isCancelled { break }
 
-            let trackText = FuzzyMatch.normalize("\(track.artist) \(track.title)")
-            let trackTokens = Set(trackText.split(separator: " ").map(String.init))
-            let indexTokens = trackTokens.filter { $0.count >= 3 }
+            // Narrow candidates using full-text token lookup
+            let trackFullNorm = FuzzyMatch.normalize("\(track.artist) \(track.title)")
+            let queryTokens = Set(trackFullNorm.split(separator: " ").map(String.init)).filter { $0.count >= 3 }
 
-            // Gather unique candidate files from matching token buckets
             var seen = Set<String>()
             var candidates: [IndexedFile] = []
-            for token in indexTokens {
+            for token in queryTokens {
                 for file in tokenIndex[token] ?? [] {
                     if seen.insert(file.summary.filePath).inserted {
                         candidates.append(file)
@@ -325,184 +489,72 @@ final class FileMatchCoordinator {
                 }
             }
 
-            // Score only the gathered candidates using pre-computed token sets
-            let scored: [(FileSummary, Double)] = candidates.compactMap { file in
-                let score = FuzzyMatch.similarity(tokensA: trackTokens, tokensB: file.tokens)
-                return score >= 0.55 ? (file.summary, score) : nil
+            // Version-aware scoring against base tokens only
+            let (trackBase, trackVersion) = FuzzyMatch.splitVersion(track.title)
+            let artistNorm = FuzzyMatch.normalize(track.artist)
+            let combined = artistNorm.isEmpty ? trackBase : "\(artistNorm) \(trackBase)"
+            let trackBaseTokens = Set(combined.split(separator: " ").map(String.init))
+
+            let scored: [ScoredCandidate] = candidates.compactMap { file in
+                let base = FuzzyMatch.similarity(tokensA: trackBaseTokens, tokensB: file.baseTokens)
+                guard base >= 0.5 else { return nil }
+                let ver = FuzzyMatch.versionSimilarity(trackVersion, file.version)
+                return ScoredCandidate(filePath: file.summary.filePath,
+                                       fileName: file.summary.fileName,
+                                       format: file.summary.format,
+                                       baseScore: base, versionScore: ver)
+            }.sorted { lhs, rhs in
+                if abs(lhs.combinedScore - rhs.combinedScore) > 0.01 { return lhs.combinedScore > rhs.combinedScore }
+                return (formatPriority[lhs.format] ?? 99) < (formatPriority[rhs.format] ?? 99)
             }
 
-            let top = scored
-                .sorted { lhs, rhs in
-                    if abs(lhs.1 - rhs.1) > 0.001 { return lhs.1 > rhs.1 }
-                    return (formatPriority[lhs.0.format] ?? 99) < (formatPriority[rhs.0.format] ?? 99)
-                }
-                .prefix(5)
-                .map(\.0)
-
-            result.append((track: track, candidates: Array(top)))
-
-            if (i + 1) % 10 == 0 {
-                await onProgress(i + 1)
-            }
-        }
-
-        return result
-    }
-
-    // MARK: - Phase 3: Confirm
-
-    private func runPhase3(candidates: [(track: TrackSummary, candidates: [FileSummary])]) async {
-        guard let fpcalcPath = LocalLibraryService.fpcalcPath(),
-              let apiKey = KeychainService.shared.load(for: .acoustIDKey),
-              !apiKey.isEmpty else {
-            await MainActor.run { lastError = "fpcalc or AcoustID key not configured" }
-            return
-        }
-
-        let acoustID = AcoustIDClient(fpcalcPath: fpcalcPath, apiKey: apiKey)
-        var saveCounter = 0
-
-        for (track, fileCandidates) in candidates {
-            if Task.isCancelled { break }
-
-            await MainActor.run { self.currentTrackLabel = "\(track.artist) — \(track.title)" }
-
-            if fileCandidates.isEmpty {
-                await MainActor.run {
-                    self.updateMatchState(trackMBID: track.trackMBID, state: "noCandidate")
-                    self.noCandidateCount += 1
-                    self.processedTracks += 1
-                }
-                continue
-            }
-
-            // Sort candidates: format priority first, then fuzzy score
-            let sortedCandidates = fileCandidates.sorted {
-                (FileMatchCoordinator.formatPriority[$0.format] ?? 99) <
-                (FileMatchCoordinator.formatPriority[$1.format] ?? 99)
-            }
-
-            var matchedFilePath: String? = nil
-            var matchedScore: Double = 0
-            var allReturnedMBIDs: [String] = []
-            var bestCandidateForUnconfirmed: FileSummary? = nil
-
-            for candidate in sortedCandidates.prefix(3) {
-                if Task.isCancelled { break }
-
-                // Get or compute fingerprint
-                let fpResult: AcoustIDClient.FingerprintResult?
-                if let cachedFP = candidate.cachedFingerprint, let cachedDur = candidate.cachedDuration {
-                    fpResult = AcoustIDClient.FingerprintResult(duration: cachedDur, fingerprint: cachedFP)
-                } else {
-                    fpResult = try? await acoustID.fingerprint(filePath: candidate.filePath)
-                    if let r = fpResult {
-                        let fp = r.fingerprint; let dur = r.duration; let path = candidate.filePath
-                        await MainActor.run {
-                            self.cacheFingerprint(filePath: path, fingerprint: fp, duration: dur)
-                        }
-                    }
-                }
-
-                guard let fp = fpResult else { continue }
-
-                let lookup = try? await acoustID.lookup(fingerprint: fp.fingerprint, duration: fp.duration)
-                guard let lookup else { continue }
-
-                allReturnedMBIDs.append(contentsOf: lookup.recordingMBIDs)
-
-                if lookup.recordingMBIDs.contains(track.recordingMBID) {
-                    matchedFilePath = candidate.filePath
-                    matchedScore = lookup.topScore
-                    if bestCandidateForUnconfirmed == nil { bestCandidateForUnconfirmed = candidate }
-                    break
-                }
-
-                if bestCandidateForUnconfirmed == nil { bestCandidateForUnconfirmed = candidate }
-            }
-
-            // Store all returned MBIDs on all candidates
-            for candidate in fileCandidates {
-                let path = candidate.filePath; let mbids = allReturnedMBIDs
-                await MainActor.run { self.setAcoustIDMBIDs(filePath: path, mbids: mbids) }
-            }
-
-            if let matchPath = matchedFilePath {
-                let score = matchedScore; let tMBID = track.trackMBID
-                await MainActor.run {
-                    self.linkFile(filePath: matchPath, toTrackMBID: tMBID, score: score)
-                    self.matchedCount += 1
-                    self.processedTracks += 1
-                }
-            } else if let best = bestCandidateForUnconfirmed {
-                let path = best.filePath; let tMBID = track.trackMBID
-                await MainActor.run {
-                    self.markUnconfirmed(filePath: path, trackMBID: tMBID)
-                    self.unconfirmedCount += 1
-                    self.processedTracks += 1
-                }
+            let top = scored.first
+            let tier: MatchTier
+            if let top, top.baseScore >= 0.85 {
+                let versionConflict   = trackVersion != nil && top.versionScore < 0.4
+                let versionAmbiguous  = top.versionScore < 0.6
+                let ambiguousChoice   = scored.count >= 2 &&
+                    (scored[0].combinedScore - scored[1].combinedScore) < 0.1
+                tier = (versionConflict || versionAmbiguous || ambiguousChoice) ? .review : .confident
             } else {
-                await MainActor.run {
-                    self.updateMatchState(trackMBID: track.trackMBID, state: "noCandidate")
-                    self.noCandidateCount += 1
-                    self.processedTracks += 1
-                }
+                tier = .noMatch
             }
 
-            saveCounter += 1
-            if saveCounter >= 10 {
-                saveCounter = 0
-                await MainActor.run { try? self.context.save() }
+            results.append(TrackResult(
+                trackMBID: track.trackMBID,
+                tier: tier,
+                topCandidate: top,
+                allCandidates: Array(scored.prefix(5))
+            ))
+
+            if (i + 1) % 20 == 0 {
+                await onProgress(i + 1, "\(track.artist) — \(track.title)")
             }
         }
+
+        return results
     }
 
     // MARK: - SwiftData helpers (all @MainActor)
 
-    private func updateMatchState(trackMBID: String, state: String) {
-        var d = FetchDescriptor<TrackEntity>(predicate: #Predicate { $0.trackMBID == trackMBID })
-        d.fetchLimit = 1
-        guard let track = try? context.fetch(d).first else { return }
-        track.fileMatchState = state
-    }
-
-    private func cacheFingerprint(filePath: String, fingerprint: String, duration: Int) {
-        var d = FetchDescriptor<LocalFileEntity>(predicate: #Predicate { $0.filePath == filePath })
-        d.fetchLimit = 1
-        guard let file = try? context.fetch(d).first else { return }
-        file.fingerprint = fingerprint
-        file.durationSeconds = duration
-        file.fingerprintedAt = .now
-    }
-
-    private func setAcoustIDMBIDs(filePath: String, mbids: [String]) {
-        var d = FetchDescriptor<LocalFileEntity>(predicate: #Predicate { $0.filePath == filePath })
-        d.fetchLimit = 1
-        guard let file = try? context.fetch(d).first else { return }
-        file.acoustIDRecordingMBIDs = Array(Set(file.acoustIDRecordingMBIDs + mbids))
-    }
-
-    private func linkFile(filePath: String, toTrackMBID trackMBID: String, score: Double) {
+    private func linkFile(filePath: String, toTrackMBID trackMBID: String, score: Double, method: String) {
         var td = FetchDescriptor<TrackEntity>(predicate: #Predicate { $0.trackMBID == trackMBID })
         td.fetchLimit = 1
         var fd = FetchDescriptor<LocalFileEntity>(predicate: #Predicate { $0.filePath == filePath })
         fd.fetchLimit = 1
         guard let track = try? context.fetch(td).first,
               let file  = try? context.fetch(fd).first else { return }
-
-        // Insert-then-assign pattern (both already in context)
         file.track = track
-        file.matchMethod = "fingerprint"
+        file.matchMethod = method
         file.matchScore = score
-        track.fileMatchState = "matched"
+        track.fileMatchState = "confident"
         track.primaryLocalFilePath = filePath
     }
 
-    private func markUnconfirmed(filePath: String, trackMBID: String) {
-        var td = FetchDescriptor<TrackEntity>(predicate: #Predicate { $0.trackMBID == trackMBID })
-        td.fetchLimit = 1
-        guard let track = try? context.fetch(td).first else { return }
-        track.fileMatchState = "candidateUnconfirmed"
-        track.primaryLocalFilePath = filePath
+    private func updateMatchState(trackMBID: String, state: String) {
+        var d = FetchDescriptor<TrackEntity>(predicate: #Predicate { $0.trackMBID == trackMBID })
+        d.fetchLimit = 1
+        guard let track = try? context.fetch(d).first else { return }
+        track.fileMatchState = state
     }
 }
