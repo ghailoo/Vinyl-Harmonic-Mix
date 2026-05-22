@@ -48,6 +48,7 @@ struct SettingsView: View {
     @Environment(SettingsViewModel.self) private var settings
     @Environment(FileMatchCoordinator.self) private var fileMatchCoordinator
     @Environment(FingerprintScanCoordinator.self) private var fingerprintCoordinator
+    @Environment(LocalAnalysisCoordinator.self) private var localAnalysisCoordinator
     @Environment(\.dismiss) private var dismiss
 
     @State private var mbSavedConfirmation = false
@@ -337,6 +338,43 @@ struct SettingsView: View {
 
                 if fileMatchCoordinator.shouldShowPanel {
                     FileMatchPanelView(coordinator: fileMatchCoordinator)
+                }
+            }
+
+            // MARK: Local Essentia Analysis
+            Section("Local Audio Analysis (Essentia)") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Extracts BPM and key from local audio files using Essentia (native arm64). Scope: confident-matched tracks with no local analysis yet.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Script: \(LocalAnalysisCoordinator.scriptPath)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .textSelection(.enabled)
+                        .lineLimit(2)
+                        .truncationMode(.head)
+                }
+
+                HStack(spacing: 8) {
+                    Button("Test Essentia") {
+                        localAnalysisCoordinator.testEssentia()
+                    }
+                    .disabled(localAnalysisCoordinator.essentiaTestStatus == .testing)
+
+                    if localAnalysisCoordinator.essentiaTestStatus == .testing {
+                        ProgressView().scaleEffect(0.7)
+                    }
+                }
+
+                switch localAnalysisCoordinator.essentiaTestStatus {
+                case .idle: EmptyView()
+                case .testing: EmptyView()
+                case .success(let ver):
+                    Label(ver, systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green).font(.caption)
+                case .failure(let msg):
+                    Label("Failed: \(msg)", systemImage: "xmark.circle.fill")
+                        .foregroundStyle(.red).font(.caption)
                 }
             }
 

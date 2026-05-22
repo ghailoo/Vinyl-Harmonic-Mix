@@ -12,6 +12,7 @@ struct VinylHarmonicMixApp: App {
     @State private var audioFeaturesCoordinator: AudioFeaturesScanCoordinator
     @State private var fileMatchCoordinator: FileMatchCoordinator
     @State private var fingerprintCoordinator: FingerprintScanCoordinator
+    @State private var localAnalysisCoordinator: LocalAnalysisCoordinator
 
     init() {
         do {
@@ -25,6 +26,7 @@ struct VinylHarmonicMixApp: App {
                 TrackEntity.self,
                 RecordingFeaturesEntity.self,
                 LocalFileEntity.self,
+                LocalAudioFeaturesEntity.self,
             ])
             // Sandbox is disabled so the default store path moves to ~/Library/Application Support/.
             // Pin to the container path so existing Discogs/MusicBrainz data is preserved
@@ -60,6 +62,7 @@ struct VinylHarmonicMixApp: App {
         _audioFeaturesCoordinator = State(initialValue: AudioFeaturesScanCoordinator(context: ctx))
         _fileMatchCoordinator = State(initialValue: FileMatchCoordinator(context: ctx))
         _fingerprintCoordinator = State(initialValue: FingerprintScanCoordinator(context: ctx))
+        _localAnalysisCoordinator = State(initialValue: LocalAnalysisCoordinator(context: ctx))
 #if DEBUG
         Task { @MainActor in
             let itemDescriptor = FetchDescriptor<CollectionItemEntity>()
@@ -91,6 +94,7 @@ struct VinylHarmonicMixApp: App {
                 .environment(audioFeaturesCoordinator)
                 .environment(fileMatchCoordinator)
                 .environment(fingerprintCoordinator)
+                .environment(localAnalysisCoordinator)
         }
         .modelContainer(container)
 #if os(macOS)
@@ -101,6 +105,7 @@ struct VinylHarmonicMixApp: App {
             .environment(settingsViewModel)
             .environment(fileMatchCoordinator)
             .environment(fingerprintCoordinator)
+            .environment(localAnalysisCoordinator)
         }
 #endif
     }

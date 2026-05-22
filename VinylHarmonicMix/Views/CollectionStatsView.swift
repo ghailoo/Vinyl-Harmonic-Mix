@@ -6,10 +6,12 @@ struct CollectionStatsView: View {
     @Environment(RecordingsScanCoordinator.self) private var recordingsCoordinator
     @Environment(AudioFeaturesScanCoordinator.self) private var audioFeaturesCoordinator
     @Environment(FileMatchCoordinator.self) private var fileMatchCoordinator
+    @Environment(LocalAnalysisCoordinator.self) private var localAnalysisCoordinator
     @Query private var entities: [CollectionItemEntity]
     @Query private var detailEntities: [ReleaseDetailEntity]
     @Query private var trackEntities: [TrackEntity]
     @Query private var featureEntities: [RecordingFeaturesEntity]
+    @Query private var localFeatureEntities: [LocalAudioFeaturesEntity]
     @Query private var localFileEntities: [LocalFileEntity]
 
     @State private var cachedDetails: [ReleaseDetail] = []
@@ -54,6 +56,7 @@ struct CollectionStatsView: View {
                             recordingsCard
                             audioFeaturesCard
                             localFilesCard
+                            localAnalysisCard
                         }
                         .padding(.horizontal, 24)
                         .padding(.vertical, 20)
@@ -578,6 +581,121 @@ struct CollectionStatsView: View {
                 .disabled(isRunning)
             }
             .padding(.top, 10)
+        }
+    }
+
+    // MARK: - Local Audio Analysis card
+
+    private var localAnalysisCard: some View {
+        let confident = localAnalysisCoordinator.confidentCount
+        let analyzed  = localFeatureEntities.count
+        let remaining = max(0, confident - analyzed)
+        let pct = confident > 0 ? min(100, analyzed * 100 / max(confident, 1)) : 0
+        let isRunning = localAnalysisCoordinator.phase == .analyzing
+                     || localAnalysisCoordinator.phase == .paused
+
+        return sectionCard {
+            sectionHeader(title: "Local Audio Analysis")
+
+            if confident == 0 {
+                Text("No confident-matched tracks yet. Run file matching first.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("\(analyzed.formatted()) of \(confident.formatted()) confident tracks analyzed locally (\(pct)%)")
+                        .font(.system(size: 14))
+
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.secondary.opacity(0.15)).frame(height: 8)
+                            Capsule()
+                                .fill(Color.purple)
+                                .frame(
+                                    width: confident > 0
+                                        ? geo.size.width * CGFloat(analyzed) / CGFloat(max(confident, 1))
+                                        : 0,
+                                    height: 8
+                                )
+                        }
+                    }
+                    .frame(height: 8)
+
+                    if analyzed > 0 {
+                        localBpmRangeRow
+                        localTopCamelotRow
+                    }
+                }
+            }
+
+            if localAnalysisCoordinator.shouldShowPanel {
+                LocalAnalysisPanelView(coordinator: localAnalysisCoordinator)
+                    .padding(.top, 8)
+            }
+
+            HStack(spacing: 8) {
+                Button(isRunning ? "Analyzing…" : (remaining > 0 ? "Analyze \(remaining) remaining" : "All analyzed")) {
+                    localAnalysisCoordinator.startAnalysis()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(isRunning || remaining == 0)
+
+                Button("Test (first 10)") {
+                    localAnalysisCoordinator.startTestBatch()
+                }
+                .controlSize(.small)
+                .disabled(isRunning || confident == 0)
+
+                // Essentia availability check
+                essentiaTestButton
+            }
+            .padding(.top, 10)
+        }
+    }
+
+    @ViewBuilder
+    private var essentiaTestButton: some View {
+        switch localAnalysisCoordinator.essentiaTestStatus {
+        case .idle:
+            Button("Test Essentia") { localAnalysisCoordinator.testEssentia() }
+                .controlSize(.small)
+        case .testing:
+            ProgressView().scaleEffect(0.7)
+        case .success(let ver):
+            Label(ver, systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green).font(.caption)
+        case .failure(let msg):
+            Label("Failed: \(msg)", systemImage: "xmark.circle.fill")
+                .foregroundStyle(.red).font(.caption)
+                .lineLimit(2)
+        }
+    }
+
+    @ViewBuilder
+    private var localBpmRangeRow: some View {
+        let bpms = localFeatureEntities.map(\.bpm).filter { $0 > 0 }.sorted()
+        if let minBPM = bpms.first, let maxBPM = bpms.last {
+            let median = bpms[bpms.count / 2]
+            Text("BPM range: \(Int(minBPM))–\(Int(maxBPM))  (median \(Int(median)))")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var localTopCamelotRow: some View {
+        let codes = localFeatureEntities.map(\.camelot).filter { !$0.isEmpty }
+        if !codes.isEmpty {
+            let counts = Dictionary(codes.map { ($0, 1) }, uniquingKeysWith: +)
+            let top3 = counts.sorted { $0.value > $1.value }.prefix(3)
+            let parts = top3.map { code, count -> String in
+                let desc = CamelotConverter.descriptions[code] ?? ""
+                return "\(code) (\(desc)): \(count)"
+            }.joined(separator: "  ·  ")
+            Text("Most common keys:  \(parts)")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
         }
     }
 
