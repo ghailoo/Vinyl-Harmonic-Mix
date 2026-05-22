@@ -272,6 +272,7 @@ final class FileMatchCoordinator {
 
     private func runPhase1() async {
         deduplicateFileIndex()
+        repairOrphanedConfidentTracks()   // reset confident tracks whose file link was stolen by a prior run
         backfillFolderNames()             // ensure parentFolder + grandparentFolder set for all rows
         backfillArtistFoldersIfNeeded()   // parse artistFolder from stored filePath
 
@@ -343,6 +344,24 @@ final class FileMatchCoordinator {
         }
         try? context.save()
         print("[BACKFILL] Set folder names on \(needs.count) rows")
+    }
+
+    /// Resets any confident track whose LocalFileEntity relationship was stolen by a subsequent
+    /// scan that didn't reset first. Without this, partial re-runs leave orphaned "confident"
+    /// tracks (primaryLocalFilePath set, but lf.track no longer points back to them).
+    private func repairOrphanedConfidentTracks() {
+        let confident = (try? context.fetch(FetchDescriptor<TrackEntity>(
+            predicate: #Predicate { $0.fileMatchState == "confident" }
+        ))) ?? []
+        var repaired = 0
+        for track in confident where track.localFiles.isEmpty {
+            track.fileMatchState = "unscanned"
+            track.primaryLocalFilePath = nil
+            repaired += 1
+        }
+        guard repaired > 0 else { return }
+        try? context.save()
+        print("[REPAIR] Reset \(repaired) orphaned confident tracks to unscanned")
     }
 
     /// Returns the first path component after "Tracks/" in filePath, or "" if not found.
@@ -561,13 +580,23 @@ final class FileMatchCoordinator {
                     guard let top = result.topCandidate else {
                         track.fileMatchState = "noMatch"; noMatchCount += 1; continue
                     }
-                    // O(1) identity lookup — fileID was snapshotted from the loaded LocalFileEntity.
-                    if let fileID = top.fileID,
-                       let file = context.model(for: fileID) as? LocalFileEntity {
-                        file.track = track
-                        file.matchMethod = "string"
-                        file.matchScore = top.combinedScore
+                    // Try O(1) identity-map lookup first; fall back to predicate fetch when the
+                    // object was evicted from the in-memory cache (rare but causes orphaned confident
+                    // tracks where primaryLocalFilePath is set but lf.ZTRACK is null).
+                    var file = top.fileID.flatMap { context.model(for: $0) as? LocalFileEntity }
+                    if file == nil {
+                        let filePath = top.filePath
+                        var fd = FetchDescriptor<LocalFileEntity>(predicate: #Predicate { $0.filePath == filePath })
+                        fd.fetchLimit = 1
+                        file = try? context.fetch(fd).first
                     }
+                    guard let file else {
+                        // File was deleted or otherwise unresolvable — don't create an orphan.
+                        track.fileMatchState = "noMatch"; noMatchCount += 1; continue
+                    }
+                    file.track = track
+                    file.matchMethod = "string"
+                    file.matchScore = top.combinedScore
                     track.fileMatchState = "confident"
                     track.primaryLocalFilePath = top.filePath
                     confidentCount += 1
