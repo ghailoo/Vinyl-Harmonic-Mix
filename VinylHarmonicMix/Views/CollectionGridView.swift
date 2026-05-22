@@ -69,7 +69,14 @@ struct CollectionGridView: View {
     @State private var activeFilter: CollectionFilter = .all
     @State private var activeSort: CollectionSort = .yearDesc
 
-    private let columns = [GridItem(.adaptive(minimum: 160, maximum: 200), spacing: 16)]
+    // 0 → 120pt minimum (many small cards), 1 → 280pt (few large cards).
+    // Default 0.25 reproduces the previous 160pt minimum.
+    @AppStorage("collectionGridCardSize") private var cardSize: Double = 0.25
+
+    private var gridColumns: [GridItem] {
+        let minWidth = 120.0 + cardSize * 160.0
+        return [GridItem(.adaptive(minimum: minWidth, maximum: minWidth + 40), spacing: 16)]
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -158,6 +165,17 @@ struct CollectionGridView: View {
                     .frame(width: 240, height: 24)
                     .background(Capsule().fill(Color.secondary.opacity(0.12)))
                     .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.2), lineWidth: 0.5))
+                HStack(spacing: 4) {
+                    Image(systemName: "square.grid.3x3")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                    Slider(value: $cardSize, in: 0...1)
+                        .frame(width: 72)
+                        .controlSize(.mini)
+                    Image(systemName: "square.grid.2x2")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.tertiary)
+                }
                 sortButton
                 fetchTracksButton
                 scanAudioButton
@@ -511,7 +529,7 @@ struct CollectionGridView: View {
 
     private var gridContent: some View {
         ScrollView {
-            LazyVGrid(columns: columns, spacing: 20) {
+            LazyVGrid(columns: gridColumns, spacing: 20) {
                 ForEach(displayedItems) { item in
                     Button { selectedItem = item } label: {
                         CollectionCardView(
