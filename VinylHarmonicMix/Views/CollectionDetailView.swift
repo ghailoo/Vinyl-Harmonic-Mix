@@ -583,10 +583,27 @@ struct CollectionDetailView: View {
     }
 
     private func recordingMBIDCaption(_ rmbid: String) -> some View {
-        let short    = rmbid.count >= 8 ? String(rmbid.prefix(8)) + "…" : rmbid
-        let features = featuresEntity(forRecordingMBID: rmbid)
-        let bpm      = features?.bpm
-        let camelot  = features?.camelotCode
+        let short        = rmbid.count >= 8 ? String(rmbid.prefix(8)) + "…" : rmbid
+        let features     = featuresEntity(forRecordingMBID: rmbid)
+        let matchedTrack = trackEntities.first(where: { $0.recordingMBID == rmbid })
+
+        // Local Essentia takes priority over AcousticBrainz
+        let bpm: Double?
+        let camelot: String?
+        let source: TrackEntity.FeatureSource
+        if let track = matchedTrack, let localBpm = track.effectiveBpm {
+            bpm    = localBpm
+            camelot = track.effectiveCamelot
+            source  = .local
+        } else if features?.bpm != nil || features?.camelotCode != nil {
+            bpm    = features?.bpm
+            camelot = features?.camelotCode
+            source  = .ab
+        } else {
+            bpm    = nil
+            camelot = nil
+            source  = .none
+        }
 
         return Button {
             #if os(macOS)
@@ -609,6 +626,25 @@ struct CollectionDetailView: View {
 
                 Spacer(minLength: 12)
 
+                // Source pill — styled like the format pill
+                if source == .local {
+                    Text("ES")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color(red: 0.15, green: 0.55, blue: 0.30)))
+                        .help("BPM & key analyzed from your local audio file")
+                } else if source == .ab {
+                    Text("AB")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color(red: 0.35, green: 0.45, blue: 0.65)))
+                        .help("BPM & key from the AcousticBrainz database")
+                }
+
                 // BPM — right side, prominent
                 if let bpm {
                     Text("\(Int(bpm)) BPM")
@@ -627,9 +663,8 @@ struct CollectionDetailView: View {
                 }
 
                 // Format pill — shown when track has a confident local file match
-                if let matchedTrack = trackEntities.first(where: { $0.recordingMBID == rmbid }),
-                   matchedTrack.fileMatchState == "confident",
-                   let filePath = matchedTrack.primaryLocalFilePath {
+                if matchedTrack?.fileMatchState == "confident",
+                   let filePath = matchedTrack?.primaryLocalFilePath {
                     let ext = URL(fileURLWithPath: filePath).pathExtension.uppercased()
                     Text(ext)
                         .font(.system(size: 9, weight: .bold))
@@ -637,8 +672,7 @@ struct CollectionDetailView: View {
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
                         .background(Capsule().fill(Color(red: 0.25, green: 0.50, blue: 0.90)))
-                } else if let matchedTrack = trackEntities.first(where: { $0.recordingMBID == rmbid }),
-                          matchedTrack.fileMatchState == "review" {
+                } else if matchedTrack?.fileMatchState == "review" {
                     Text("?")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(.secondary)

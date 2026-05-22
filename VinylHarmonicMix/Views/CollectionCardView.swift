@@ -5,10 +5,12 @@ struct CollectionCardView: View {
     var hasMBID: Bool = false
     var covered: Int = 0
     var total: Int = 0
+    var localCovered: Int = 0
 
     // Decoupled from render cycle — updated via .task after the card paints
     @State private var badgeCovered: Int = 0
     @State private var badgeTotal: Int = 0
+    @State private var badgeLocalCovered: Int = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -25,9 +27,10 @@ struct CollectionCardView: View {
                 .foregroundStyle(.secondary)
         }
         .contentShape(Rectangle())
-        .task(id: covered &+ total &* 10_000) {
-            badgeCovered = covered
-            badgeTotal   = total
+        .task(id: covered &+ total &* 10_000 &+ localCovered &* 100_000) {
+            badgeCovered      = covered
+            badgeTotal        = total
+            badgeLocalCovered = localCovered
         }
     }
 
@@ -56,6 +59,15 @@ struct CollectionCardView: View {
             .cornerRadius(8)
             .overlay(alignment: .topTrailing) {
                 HStack(spacing: 4) {
+                    if badgeLocalCovered > 0 {
+                        Text("ES")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(Color(red: 0.15, green: 0.55, blue: 0.30)))
+                            .help("\(badgeLocalCovered) of \(badgeTotal) tracks analyzed from local audio files")
+                    }
                     if badgeCovered > 0 && badgeTotal > 0 {
                         Text("\(badgeCovered)/\(badgeTotal)")
                             .font(.system(size: 9, weight: .bold, design: .rounded))

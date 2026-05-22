@@ -59,7 +59,7 @@ struct CollectionGridView: View {
     @Query private var allFeatures: [RecordingFeaturesEntity]
 
     @State private var featuresByMBID: [String: RecordingFeaturesEntity] = [:]
-    @State private var coverageByInstanceId: [Int: (covered: Int, total: Int)] = [:]
+    @State private var coverageByInstanceId: [Int: (covered: Int, total: Int, localCovered: Int)] = [:]
 
     @State private var searchQuery = ""
     @State private var selectedItem: CollectionItem?
@@ -316,16 +316,22 @@ struct CollectionGridView: View {
         guard !allTrackEntities.isEmpty else { coverageByInstanceId = [:]; return }
         var totals: [Int: Int] = [:]
         var coveredCounts: [Int: Int] = [:]
+        var localCounts: [Int: Int] = [:]
         for track in allTrackEntities {
             guard let id = track.collectionItem?.instanceId else { continue }
             totals[id, default: 0] += 1
             let f = featuresByMBID[track.recordingMBID]
-            if f?.bpm != nil && f?.camelotCode != nil {
+            let hasLocalBpm = (track.localAudioFeatures?.bpm ?? 0) > 0
+            let hasAbBpm    = f?.bpm != nil && f?.camelotCode != nil
+            if hasLocalBpm || hasAbBpm {
                 coveredCounts[id, default: 0] += 1
+            }
+            if hasLocalBpm {
+                localCounts[id, default: 0] += 1
             }
         }
         coverageByInstanceId = Dictionary(uniqueKeysWithValues: totals.keys.map { id in
-            (id, (covered: coveredCounts[id] ?? 0, total: totals[id]!))
+            (id, (covered: coveredCounts[id] ?? 0, total: totals[id]!, localCovered: localCounts[id] ?? 0))
         })
     }
 
@@ -536,7 +542,8 @@ struct CollectionGridView: View {
                                 item: item,
                                 hasMBID: matchedInstanceIds.contains(item.id),
                                 covered: coverageByInstanceId[item.id]?.covered ?? 0,
-                                total: coverageByInstanceId[item.id]?.total ?? 0
+                                total: coverageByInstanceId[item.id]?.total ?? 0,
+                                localCovered: coverageByInstanceId[item.id]?.localCovered ?? 0
                             )
                     }
                     .buttonStyle(.plain)
