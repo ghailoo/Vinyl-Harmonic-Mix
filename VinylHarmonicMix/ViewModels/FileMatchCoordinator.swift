@@ -561,6 +561,14 @@ final class FileMatchCoordinator {
         if tracks.isEmpty || files.isEmpty { return }
         totalTracks = tracks.count
 
+        // Paths already claimed by confident/skip tracks that are NOT being re-scored this run.
+        // Passed to the conflict dedup so review-state tracks can't silently steal these files.
+        let lockedPaths: Set<String> = Set(
+            allTracksFromDB
+                .filter { ["confident", "skip"].contains($0.fileMatchState) }
+                .compactMap { $0.primaryLocalFilePath }
+        )
+
         // ── Scoring (nonisolated, cooperative thread pool) ────────────────────────────
         // progressCallback hops back to MainActor via MainActor.run; it ONLY touches
         // simple stored properties, never the ModelContext.
@@ -573,6 +581,7 @@ final class FileMatchCoordinator {
         let results = await FileMatchCoordinator._scoreCandidates(
             tracks: tracks,
             files: files,
+            lockedPaths: lockedPaths,
             onProgress: progressCallback
         )
 
@@ -646,6 +655,7 @@ final class FileMatchCoordinator {
     nonisolated private static func _scoreCandidates(
         tracks: [TrackSummary],
         files: [FileSummary],
+        lockedPaths: Set<String>,
         onProgress: @Sendable (Int, String) async -> Void
     ) async -> [MatchResult] {
 
@@ -822,12 +832,20 @@ final class FileMatchCoordinator {
         // keep the higher combinedScore as confident and downgrade the other to review.
         // Without this, multi-version releases (e.g. 5 "Voo-Doo Believe?" variants) all
         // become confident on the one file that exists, producing bogus results.
+        //
+        // index = -1 is a sentinel for paths locked by already-confident tracks that were
+        // skipped this run. Nothing in `results` can beat them (score = .infinity).
         var bestConfidentByPath: [String: (index: Int, score: Double)] = [:]
+        for path in lockedPaths {
+            bestConfidentByPath[path] = (index: -1, score: .infinity)
+        }
         for (i, result) in results.enumerated() {
             guard result.tier == .confident, let top = result.topCandidate else { continue }
             let path = top.filePath
             if let existing = bestConfidentByPath[path] {
-                if top.combinedScore > existing.score {
+                // Locked paths (index == -1) can never be beaten — downgrade to review.
+                let canBeat = existing.index >= 0 && top.combinedScore > existing.score
+                if canBeat {
                     let old = results[existing.index]
                     results[existing.index] = MatchResult(trackID: old.trackID,
                                                           trackMBID: old.trackMBID,
