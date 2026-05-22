@@ -3,6 +3,7 @@ import SwiftData
 #if os(macOS)
 import AppKit
 #endif
+import AVFoundation
 
 struct FileMatchesView: View {
     @Environment(FileMatchCoordinator.self) private var coordinator
@@ -169,55 +170,169 @@ private func libraryRootURL() -> URL? {
 private struct ConfidentRowView: View {
     let track: TrackEntity
     let coordinator: FileMatchCoordinator
+    @Environment(AudioPlaybackController.self) private var playback
+
+    private var filePath: String? { track.primaryLocalFilePath }
 
     private var fileName: String {
-        guard let path = track.primaryLocalFilePath else { return "—" }
+        guard let path = filePath else { return "—" }
         return URL(fileURLWithPath: path).lastPathComponent
     }
 
     private var format: String {
-        guard let path = track.primaryLocalFilePath else { return "" }
+        guard let path = filePath else { return "" }
         return URL(fileURLWithPath: path).pathExtension.uppercased()
     }
 
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green).font(.caption)
-                .padding(.top, 3)
+    // Whether THIS row's file is the one currently loaded in the player
+    private var isThisActive: Bool {
+        guard let path = filePath else { return false }
+        return playback.currentFilePath == path
+    }
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text("\(track.artistCredit) – \(track.title)")
-                    .font(.system(size: 13, weight: .medium))
-                    .lineLimit(1)
+    private var isThisPlaying: Bool { isThisActive && playback.isPlaying }
+
+    private var progress: Double {
+        guard isThisActive, playback.duration > 0 else { return 0 }
+        return min(1, max(0, playback.currentTime / playback.duration))
+    }
+
+    private var errorForThisFile: String? {
+        guard let path = filePath else { return nil }
+        return playback.playbackErrors[path]
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Main row
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green).font(.caption)
+                    .padding(.top, 3)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("\(track.artistCredit) – \(track.title)")
+                        .font(.system(size: 13, weight: .medium))
+                        .lineLimit(1)
+
+                    HStack(spacing: 6) {
+                        Text(fileName)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+
+                        if !format.isEmpty {
+                            Text(format)
+                                .font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 5).padding(.vertical, 2)
+                                .background(Color.accentColor, in: Capsule())
+                                .foregroundStyle(.white)
+                        }
+                    }
+                }
+
+                Spacer()
 
                 HStack(spacing: 6) {
-                    Text(fileName)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-
-                    if !format.isEmpty {
-                        Text(format)
-                            .font(.caption2.weight(.semibold))
-                            .padding(.horizontal, 5).padding(.vertical, 2)
-                            .background(Color.accentColor, in: Capsule())
-                            .foregroundStyle(.white)
+                    // Play / Pause button
+                    if let path = filePath {
+                        Button {
+                            playback.play(filePath: path)
+                        } label: {
+                            Image(systemName: isThisPlaying ? "pause.circle.fill" : "play.circle.fill")
+                                .font(.system(size: 20))
+                                .foregroundStyle(isThisActive ? Color.accentColor : Color.secondary)
+                                .contentTransition(.symbolEffect(.replace))
+                        }
+                        .buttonStyle(.plain)
+                        .help(isThisPlaying ? "Pause" : "Play")
                     }
+                    Button("Change") { pickFile() }
+                        .controlSize(.small)
+                    Button("Unlink") { coordinator.unlinkMatch(trackMBID: track.trackMBID) }
+                        .controlSize(.small).foregroundStyle(.red)
                 }
             }
 
-            Spacer()
-
-            HStack(spacing: 6) {
-                Button("Change") { pickFile() }
-                    .controlSize(.small)
-                Button("Unlink") { coordinator.unlinkMatch(trackMBID: track.trackMBID) }
-                    .controlSize(.small).foregroundStyle(.red)
+            // Player area — shown only while this row's file is loaded
+            if isThisActive {
+                playerArea
+                    .padding(.top, 6)
+                    .padding(.leading, 22)  // align under the text column
             }
         }
         .padding(.vertical, 8)
+    }
+
+    // MARK: - Player area
+
+    @ViewBuilder
+    private var playerArea: some View {
+        if let err = errorForThisFile {
+            Label(err, systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(.red)
+                .lineLimit(3)
+                .textSelection(.enabled)
+        } else {
+            VStack(alignment: .leading, spacing: 4) {
+                waveformArea
+                    .frame(height: 44)
+
+                if playback.duration > 0 {
+                    Text("\(formatTime(playback.currentTime)) / \(formatTime(playback.duration))")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var waveformArea: some View {
+        let state: AudioPlaybackController.WaveformState = filePath.map {
+            playback.waveformState(for: $0)
+        } ?? .idle
+
+        switch state {
+        case .ready(let peaks):
+            WaveformView(peaks: peaks, progress: progress) { fraction in
+                playback.seek(toFraction: fraction)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+
+        case .loading:
+            ZStack {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color.secondary.opacity(0.1))
+                HStack(spacing: 6) {
+                    ProgressView().scaleEffect(0.6)
+                    Text("Loading waveform…").font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+
+        case .failed:
+            ZStack {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color.secondary.opacity(0.08))
+                Text("Waveform unavailable").font(.caption2).foregroundStyle(.tertiary)
+            }
+
+        case .idle:
+            // Waveform generation hasn't started yet — kick it off
+            Color.clear
+                .onAppear {
+                    if let path = filePath { playback.loadWaveformIfNeeded(filePath: path) }
+                }
+        }
+    }
+
+    // MARK: - Helpers
+
+    private func formatTime(_ seconds: Double) -> String {
+        let s = max(0, Int(seconds))
+        return String(format: "%d:%02d", s / 60, s % 60)
     }
 
     private func pickFile() {

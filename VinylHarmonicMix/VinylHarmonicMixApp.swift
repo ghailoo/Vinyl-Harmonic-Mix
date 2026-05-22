@@ -13,6 +13,7 @@ struct VinylHarmonicMixApp: App {
     @State private var fileMatchCoordinator: FileMatchCoordinator
     @State private var fingerprintCoordinator: FingerprintScanCoordinator
     @State private var localAnalysisCoordinator: LocalAnalysisCoordinator
+    @State private var audioPlaybackController: AudioPlaybackController
 
     init() {
         do {
@@ -63,6 +64,7 @@ struct VinylHarmonicMixApp: App {
         _fileMatchCoordinator = State(initialValue: FileMatchCoordinator(context: ctx))
         _fingerprintCoordinator = State(initialValue: FingerprintScanCoordinator(context: ctx))
         _localAnalysisCoordinator = State(initialValue: LocalAnalysisCoordinator(context: ctx))
+        _audioPlaybackController = State(initialValue: AudioPlaybackController())
 #if DEBUG
         Task { @MainActor in
             let itemDescriptor = FetchDescriptor<CollectionItemEntity>()
@@ -95,6 +97,7 @@ struct VinylHarmonicMixApp: App {
                 .environment(fileMatchCoordinator)
                 .environment(fingerprintCoordinator)
                 .environment(localAnalysisCoordinator)
+                .environment(audioPlaybackController)
         }
         .modelContainer(container)
 #if os(macOS)
