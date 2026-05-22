@@ -11,6 +11,7 @@ struct VinylHarmonicMixApp: App {
     @State private var recordingsCoordinator: RecordingsScanCoordinator
     @State private var audioFeaturesCoordinator: AudioFeaturesScanCoordinator
     @State private var fileMatchCoordinator: FileMatchCoordinator
+    @State private var fingerprintCoordinator: FingerprintScanCoordinator
 
     init() {
         do {
@@ -58,6 +59,7 @@ struct VinylHarmonicMixApp: App {
         _recordingsCoordinator = State(initialValue: RecordingsScanCoordinator(context: ctx))
         _audioFeaturesCoordinator = State(initialValue: AudioFeaturesScanCoordinator(context: ctx))
         _fileMatchCoordinator = State(initialValue: FileMatchCoordinator(context: ctx))
+        _fingerprintCoordinator = State(initialValue: FingerprintScanCoordinator(context: ctx))
 #if DEBUG
         Task { @MainActor in
             let itemDescriptor = FetchDescriptor<CollectionItemEntity>()
@@ -88,6 +90,7 @@ struct VinylHarmonicMixApp: App {
                 .environment(recordingsCoordinator)
                 .environment(audioFeaturesCoordinator)
                 .environment(fileMatchCoordinator)
+                .environment(fingerprintCoordinator)
         }
         .modelContainer(container)
 #if os(macOS)
@@ -97,6 +100,7 @@ struct VinylHarmonicMixApp: App {
             }
             .environment(settingsViewModel)
             .environment(fileMatchCoordinator)
+            .environment(fingerprintCoordinator)
         }
 #endif
     }

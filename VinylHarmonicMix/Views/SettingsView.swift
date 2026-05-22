@@ -47,6 +47,7 @@ private struct LibraryScanProgressPanel: View {
 struct SettingsView: View {
     @Environment(SettingsViewModel.self) private var settings
     @Environment(FileMatchCoordinator.self) private var fileMatchCoordinator
+    @Environment(FingerprintScanCoordinator.self) private var fingerprintCoordinator
     @Environment(\.dismiss) private var dismiss
 
     @State private var mbSavedConfirmation = false
@@ -311,8 +312,8 @@ struct SettingsView: View {
                         .foregroundStyle(.red)
                 }
             }
-            // MARK: Scan Library
-            Section("Scan Library") {
+            // MARK: Name Matching
+            Section("Name Matching") {
                 Text("Match collection tracks to local audio files by title and artist (string matching, no fingerprinting). Fast — completes in seconds.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -336,6 +337,36 @@ struct SettingsView: View {
 
                 if fileMatchCoordinator.shouldShowPanel {
                     FileMatchPanelView(coordinator: fileMatchCoordinator)
+                }
+            }
+
+            // MARK: AcoustID Fingerprint Matching
+            Section("AcoustID Fingerprint Matching") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Resolve version-ambiguous review matches by fingerprinting the audio.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Slower (~3 tracks/sec). Scope: \(fingerprintCoordinator.reviewCount) review tracks.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack(spacing: 8) {
+                    Button("Test (first 10)") {
+                        fingerprintCoordinator.startTestBatch()
+                    }
+                    .disabled(!fingerprintCoordinator.phase.isIdle)
+
+                    Button("Fingerprint review tracks") {
+                        fingerprintCoordinator.startScan()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!fingerprintCoordinator.phase.isIdle ||
+                              fingerprintCoordinator.reviewCount == 0)
+                }
+
+                if fingerprintCoordinator.shouldShowPanel {
+                    FingerprintScanPanelView(coordinator: fingerprintCoordinator)
                 }
             }
         }
