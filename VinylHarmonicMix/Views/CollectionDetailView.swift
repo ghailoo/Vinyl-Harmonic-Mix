@@ -7,6 +7,7 @@ struct CollectionDetailView: View {
     @Environment(\.openURL) private var openURL
     @Environment(\.modelContext) private var modelContext
     @Environment(CollectionViewModel.self) private var viewModel
+    @Environment(AudioPlaybackController.self) private var playback
 
     @State private var detail: ReleaseDetail?
     @State private var isLoading = false
@@ -268,6 +269,12 @@ struct CollectionDetailView: View {
 
             ForEach(Array(detail.tracklist.enumerated()), id: \.offset) { index, track in
                 let rmbid = recordingMBID(forPosition: track.position, fallbackIndex: index)
+                let matchedTrack = rmbid.flatMap { r in trackEntities.first { $0.recordingMBID == r } }
+                let filePath: String? = matchedTrack?.fileMatchState == "confident"
+                    ? matchedTrack?.primaryLocalFilePath : nil
+                let isActive  = filePath.map { playback.currentFilePath == $0 } ?? false
+                let isPlaying = isActive && playback.isPlaying
+
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(spacing: 0) {
                         Text(track.position)
@@ -278,6 +285,19 @@ struct CollectionDetailView: View {
                             .font(.system(size: 14))
                             .lineLimit(2)
                         Spacer()
+                        if let fp = filePath {
+                            Button {
+                                playback.play(filePath: fp)
+                            } label: {
+                                Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                                    .font(.system(size: 16))
+                                    .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
+                                    .contentTransition(.symbolEffect(.replace))
+                            }
+                            .buttonStyle(.plain)
+                            .help(isPlaying ? "Pause" : "Play")
+                            .padding(.trailing, 6)
+                        }
                         Text(track.duration.isEmpty ? "—" : track.duration)
                             .font(.system(size: 13).monospaced())
                             .foregroundStyle(.secondary)
@@ -289,7 +309,15 @@ struct CollectionDetailView: View {
 
                     if let rmbid {
                         recordingMBIDCaption(rmbid)
-                            .padding(.bottom, 6)
+                            .padding(.bottom, isActive ? 4 : 6)
+                            .padding(.horizontal, 20)
+                            .padding(.leading, 40)
+                    }
+
+                    if isActive, let fp = filePath {
+                        trackPlayerArea(filePath: fp)
+                            .padding(.top, 2)
+                            .padding(.bottom, 8)
                             .padding(.horizontal, 20)
                             .padding(.leading, 40)
                     }
@@ -683,6 +711,64 @@ struct CollectionDetailView: View {
             }
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: - Inline audio player
+
+    @ViewBuilder
+    private func trackPlayerArea(filePath: String) -> some View {
+        if let err = playback.playbackErrors[filePath] {
+            Label(err, systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(.red)
+                .lineLimit(2)
+                .textSelection(.enabled)
+        } else {
+            VStack(alignment: .leading, spacing: 3) {
+                trackWaveformView(filePath: filePath)
+                    .frame(height: 38)
+                if playback.duration > 0 {
+                    Text("\(formatTime(playback.currentTime)) / \(formatTime(playback.duration))")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func trackWaveformView(filePath: String) -> some View {
+        let progress = playback.duration > 0
+            ? min(1, max(0, playback.currentTime / playback.duration))
+            : 0.0
+        switch playback.waveformState(for: filePath) {
+        case .ready(let peaks):
+            WaveformView(peaks: peaks, progress: progress) { fraction in
+                playback.seek(toFraction: fraction)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+        case .loading:
+            ZStack {
+                RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.1))
+                HStack(spacing: 6) {
+                    ProgressView().scaleEffect(0.6)
+                    Text("Loading waveform…").font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+        case .failed:
+            ZStack {
+                RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.08))
+                Text("Waveform unavailable").font(.caption2).foregroundStyle(.tertiary)
+            }
+        case .idle:
+            Color.clear
+                .onAppear { playback.loadWaveformIfNeeded(filePath: filePath) }
+        }
+    }
+
+    private func formatTime(_ seconds: Double) -> String {
+        let s = max(0, Int(seconds))
+        return String(format: "%d:%02d", s / 60, s % 60)
     }
 
     // MARK: - Data loading
