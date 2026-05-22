@@ -274,7 +274,6 @@ final class FileMatchCoordinator {
         deduplicateFileIndex()
         repairOrphanedConfidentTracks()   // reset confident tracks whose file link was stolen by a prior run
         backfillFolderNames()             // ensure parentFolder + grandparentFolder set for all rows
-        backfillArtistFoldersIfNeeded()   // parse artistFolder from stored filePath
 
         guard let url = LocalLibraryService.resolveLibraryBookmark() else { return }
 
@@ -282,26 +281,28 @@ final class FileMatchCoordinator {
             let all = (try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
             return Set(all.map(\.filePath))
         }()
-        if !existing.isEmpty {
-            indexedCount = existing.count
-            await backfillDurationsIfNeeded()  // fill any durationMs == 0 rows from previous runs
-            return
-        }
+        indexedCount = existing.count
 
-        // Run the synchronous file walk off the main actor
+        // Always walk the library so newly added files are picked up.
+        // collectAudioFiles skips paths already in `existing`, so this is incremental.
         let filesToInsert = await Task.detached(priority: .userInitiated) {
             FileMatchCoordinator.collectAudioFiles(at: url, skipping: existing)
         }.value
 
-        for f in filesToInsert {
-            context.insert(LocalFileEntity(filePath: f.path, fileName: f.name,
-                                           parentFolder: f.parentFolder,
-                                           grandparentFolder: f.grandparentFolder,
-                                           format: f.format, fileSizeBytes: f.size))
+        if !filesToInsert.isEmpty {
+            for f in filesToInsert {
+                context.insert(LocalFileEntity(filePath: f.path, fileName: f.name,
+                                               parentFolder: f.parentFolder,
+                                               grandparentFolder: f.grandparentFolder,
+                                               format: f.format, fileSizeBytes: f.size))
+            }
+            indexedCount = existing.count + filesToInsert.count
+            try? context.save()
         }
-        indexedCount = filesToInsert.count
-        try? context.save()
-        await backfillDurationsIfNeeded()  // read durations for the newly indexed files
+
+        // Backfill artistFolder AFTER inserting new files so newly indexed rows are covered.
+        backfillArtistFoldersIfNeeded()
+        await backfillDurationsIfNeeded()  // fill durationMs == 0 rows
     }
 
     /// Remove duplicate LocalFileEntity rows (same filePath), keeping the matched one when possible.
