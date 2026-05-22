@@ -14,6 +14,12 @@ final class AudioPlaybackController {
     // Per-file error strings; keyed by filePath so each row shows its own error.
     private(set) var playbackErrors: [String: String] = [:]
 
+    // MARK: - Volume (0…1, persists across track changes)
+
+    var volume: Double = 1.0 {
+        didSet { player?.volume = Float(volume) }
+    }
+
     // MARK: - Waveform state
 
     private(set) var waveformCache: [String: [Float]] = [:]
@@ -60,6 +66,7 @@ final class AudioPlaybackController {
             let delegate = PlayerDelegate()
             delegate.owner = self
             p.delegate = delegate
+            p.volume = Float(volume)
             p.prepareToPlay()
             p.play()
             player = p
