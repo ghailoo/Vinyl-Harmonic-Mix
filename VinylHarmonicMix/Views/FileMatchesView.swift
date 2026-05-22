@@ -23,6 +23,65 @@ struct FileMatchesView: View {
     @State private var expandConfident = false
     @State private var expandReview    = true
     @State private var expandNoMatch   = false
+    @State private var searchQuery: String = ""
+
+    // MARK: - Filtered lists (in-memory, case-insensitive, live)
+
+    private var filteredConfident: [TrackEntity] {
+        guard !searchQuery.isEmpty else { return confidentTracks }
+        let q = searchQuery.lowercased()
+        return confidentTracks.filter { track in
+            track.artistCredit.lowercased().contains(q) ||
+            track.title.lowercased().contains(q) ||
+            track.primaryLocalFilePath.map {
+                URL(fileURLWithPath: $0).lastPathComponent.lowercased().contains(q)
+            } ?? false
+        }
+    }
+
+    private var filteredReview: [TrackEntity] {
+        guard !searchQuery.isEmpty else { return reviewTracks }
+        let q = searchQuery.lowercased()
+        return reviewTracks.filter { track in
+            track.artistCredit.lowercased().contains(q) ||
+            track.title.lowercased().contains(q) ||
+            (coordinator.reviewCandidates[track.trackMBID]?.contains(where: {
+                URL(fileURLWithPath: $0.filePath).lastPathComponent.lowercased().contains(q)
+            }) ?? false)
+        }
+    }
+
+    private var filteredNoMatch: [TrackEntity] {
+        guard !searchQuery.isEmpty else { return noMatchTracks }
+        let q = searchQuery.lowercased()
+        return noMatchTracks.filter { track in
+            track.artistCredit.lowercased().contains(q) ||
+            track.title.lowercased().contains(q)
+        }
+    }
+
+    // MARK: - Search field
+
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField("Filter by artist, title, or filename…", text: $searchQuery)
+                .textFieldStyle(.plain)
+            if !searchQuery.isEmpty {
+                Button {
+                    searchQuery = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+    }
 
     var body: some View {
         Group {
@@ -36,9 +95,11 @@ struct FileMatchesView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.bottom, 4)
 
-                        confidentSection
-                        reviewSection
-                        noMatchSection
+                        searchField
+
+                        if searchQuery.isEmpty || !filteredConfident.isEmpty { confidentSection }
+                        if searchQuery.isEmpty || !filteredReview.isEmpty    { reviewSection }
+                        if searchQuery.isEmpty || !filteredNoMatch.isEmpty   { noMatchSection }
                     }
                     .padding(.horizontal, 24)
                     .padding(.vertical, 20)
@@ -70,13 +131,13 @@ struct FileMatchesView: View {
     private var confidentSection: some View {
         sectionCard {
             DisclosureGroup(isExpanded: $expandConfident) {
-                if confidentTracks.isEmpty {
+                if filteredConfident.isEmpty {
                     Text("None yet.").font(.caption).foregroundStyle(.tertiary).padding(.top, 4)
                 } else {
                     LazyVStack(spacing: 0) {
-                        ForEach(confidentTracks, id: \.trackMBID) { track in
+                        ForEach(filteredConfident, id: \.trackMBID) { track in
                             ConfidentRowView(track: track, coordinator: coordinator)
-                            if track.trackMBID != confidentTracks.last?.trackMBID {
+                            if track.trackMBID != filteredConfident.last?.trackMBID {
                                 Divider()
                             }
                         }
@@ -86,7 +147,7 @@ struct FileMatchesView: View {
             } label: {
                 HStack {
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                    Text("Confident (\(confidentTracks.count))")
+                    Text("Confident (\(filteredConfident.count))")
                         .font(.system(size: 16, weight: .semibold))
                 }
             }
@@ -98,13 +159,13 @@ struct FileMatchesView: View {
     private var reviewSection: some View {
         sectionCard {
             DisclosureGroup(isExpanded: $expandReview) {
-                if reviewTracks.isEmpty {
+                if filteredReview.isEmpty {
                     Text("None yet.").font(.caption).foregroundStyle(.tertiary).padding(.top, 4)
                 } else {
                     LazyVStack(spacing: 0) {
-                        ForEach(reviewTracks, id: \.trackMBID) { track in
+                        ForEach(filteredReview, id: \.trackMBID) { track in
                             ReviewRowView(track: track, coordinator: coordinator)
-                            if track.trackMBID != reviewTracks.last?.trackMBID {
+                            if track.trackMBID != filteredReview.last?.trackMBID {
                                 Divider()
                             }
                         }
@@ -114,7 +175,7 @@ struct FileMatchesView: View {
             } label: {
                 HStack {
                     Image(systemName: "questionmark.circle.fill").foregroundStyle(.orange)
-                    Text("Needs Review (\(reviewTracks.count))")
+                    Text("Needs Review (\(filteredReview.count))")
                         .font(.system(size: 16, weight: .semibold))
                 }
             }
@@ -126,13 +187,13 @@ struct FileMatchesView: View {
     private var noMatchSection: some View {
         sectionCard {
             DisclosureGroup(isExpanded: $expandNoMatch) {
-                if noMatchTracks.isEmpty {
+                if filteredNoMatch.isEmpty {
                     Text("None yet.").font(.caption).foregroundStyle(.tertiary).padding(.top, 4)
                 } else {
                     LazyVStack(spacing: 0) {
-                        ForEach(noMatchTracks, id: \.trackMBID) { track in
+                        ForEach(filteredNoMatch, id: \.trackMBID) { track in
                             NoMatchRowView(track: track, coordinator: coordinator)
-                            if track.trackMBID != noMatchTracks.last?.trackMBID {
+                            if track.trackMBID != filteredNoMatch.last?.trackMBID {
                                 Divider()
                             }
                         }
@@ -142,7 +203,7 @@ struct FileMatchesView: View {
             } label: {
                 HStack {
                     Image(systemName: "circle").foregroundStyle(.secondary)
-                    Text("No Match (\(noMatchTracks.count))")
+                    Text("No Match (\(filteredNoMatch.count))")
                         .font(.system(size: 16, weight: .semibold))
                 }
             }
