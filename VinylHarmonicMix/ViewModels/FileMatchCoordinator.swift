@@ -346,18 +346,38 @@ final class FileMatchCoordinator {
         print("[BACKFILL] Set folder names on \(needs.count) rows")
     }
 
-    /// Resets any confident track whose LocalFileEntity relationship was stolen by a subsequent
-    /// scan that didn't reset first. Without this, partial re-runs leave orphaned "confident"
-    /// tracks (primaryLocalFilePath set, but lf.track no longer points back to them).
+    /// Resets any confident track whose file link is stale — either because the file no longer
+    /// exists in LocalFileEntity, or because a subsequent scan re-linked it to a different track.
+    /// Uses an explicit path-ownership map rather than SwiftData's `localFiles` inverse
+    /// (which can return a stale cached view when the FK was changed without clearing the cache).
     private func repairOrphanedConfidentTracks() {
         let confident = (try? context.fetch(FetchDescriptor<TrackEntity>(
             predicate: #Predicate { $0.fileMatchState == "confident" }
         ))) ?? []
+        guard !confident.isEmpty else { return }
+
+        // Build filePath → actual owning track PK from the FK column (lf.ZTRACK / lf.track).
+        // This is authoritative — it's what the DB actually stores, not what the object cache thinks.
+        let allFiles = (try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
+        var actualOwner: [String: PersistentIdentifier] = [:]
+        for f in allFiles {
+            if let t = f.track { actualOwner[f.filePath] = t.persistentModelID }
+        }
+
         var repaired = 0
-        for track in confident where track.localFiles.isEmpty {
-            track.fileMatchState = "unscanned"
-            track.primaryLocalFilePath = nil
-            repaired += 1
+        for track in confident {
+            let isOrphan: Bool
+            if let path = track.primaryLocalFilePath {
+                // Orphaned if the file row doesn't exist, or if its .track FK points elsewhere.
+                isOrphan = actualOwner[path] != track.persistentModelID
+            } else {
+                isOrphan = true   // confident with no path at all
+            }
+            if isOrphan {
+                track.fileMatchState = "unscanned"
+                track.primaryLocalFilePath = nil
+                repaired += 1
+            }
         }
         guard repaired > 0 else { return }
         try? context.save()
