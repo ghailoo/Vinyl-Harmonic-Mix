@@ -153,8 +153,14 @@ final class RecordingsScanCoordinator {
 
         print("🎵 Recordings scan: \(mbidQueue.count) items with MBID to process")
 
+        await processItems(mbidQueue)
+        phase = .completed
+    }
+
+    // Core fetch-and-insert loop shared by batch scan and startForSingle.
+    private func processItems(_ items: [CollectionItemEntity]) async {
         var saveCounter = 0
-        for entity in mbidQueue {
+        for entity in items {
             if Task.isCancelled {
                 currentItem = nil
                 try? context.save()
@@ -210,6 +216,22 @@ final class RecordingsScanCoordinator {
 
         do { try context.save() } catch { print("❌ Final save: \(error)") }
         currentItem = nil
+    }
+
+    // Fetch recordings for a single release and create its TrackEntity rows.
+    // Refuses to run if a batch scan is already in progress.
+    func startForSingle(_ entity: CollectionItemEntity) async {
+        switch phase {
+        case .scanning, .paused: return
+        default: break
+        }
+        guard entity.mbid != nil else { return }
+        processedCount = 0
+        passProcessed = 0
+        passTotal = 1
+        phase = .scanning
+        showBanner = true
+        await processItems([entity])
         phase = .completed
     }
 

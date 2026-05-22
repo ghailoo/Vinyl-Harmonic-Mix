@@ -8,6 +8,9 @@ struct CollectionDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(CollectionViewModel.self) private var viewModel
     @Environment(AudioPlaybackController.self) private var playback
+    @Environment(MBIDScanCoordinator.self) private var scanCoordinator
+    @Environment(RecordingsScanCoordinator.self) private var recordingsCoordinator
+    @Environment(AudioFeaturesScanCoordinator.self) private var audioFeaturesCoordinator
 
     @State private var detail: ReleaseDetail?
     @State private var isLoading = false
@@ -17,6 +20,15 @@ struct CollectionDetailView: View {
     @State private var featureEntities: [RecordingFeaturesEntity] = []
     @State private var mbidCopied = false
     @State private var copiedRecordingMBID: String? = nil
+    // Release-level manual MBID entry (notFound path)
+    @State private var manualReleaseMBID: String = ""
+    @State private var manualReleaseMBIDError: String? = nil
+    // Per-track recording MBID editing
+    @State private var editingTrackMBID: String? = nil
+    @State private var recordingMBIDInput: String = ""
+    @State private var recordingMBIDInputError: String? = nil
+    // Status for view-initiated single-item enrichment (fetch-recordings button, per-track)
+    @State private var singleEnrichStatus: String? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -30,6 +42,12 @@ struct CollectionDetailView: View {
             loadEntity()
             loadTrackEntities()
             loadFeatureEntities()
+        }
+        .onChange(of: scanCoordinator.enrichmentStatus) { _, newStatus in
+            if newStatus == nil {
+                loadTrackEntities()
+                loadFeatureEntities()
+            }
         }
     }
 
@@ -274,6 +292,8 @@ struct CollectionDetailView: View {
                     ? matchedTrack?.primaryLocalFilePath : nil
                 let isActive  = filePath.map { playback.currentFilePath == $0 } ?? false
                 let isPlaying = isActive && playback.isPlaying
+                let normPos = normalizePosition(track.position)
+                let trackEntityByPos = trackEntities.first { normalizePosition($0.position) == normPos }
 
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(spacing: 0) {
@@ -285,6 +305,20 @@ struct CollectionDetailView: View {
                             .font(.system(size: 14))
                             .lineLimit(2)
                         Spacer()
+                        if let te = trackEntityByPos {
+                            Button {
+                                editingTrackMBID = te.trackMBID
+                                recordingMBIDInput = te.recordingMBID
+                                recordingMBIDInputError = nil
+                            } label: {
+                                Image(systemName: "waveform.badge.magnifyingglass")
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(.quaternary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Set or correct the recording MBID for this track")
+                            .padding(.trailing, 4)
+                        }
                         if let fp = filePath {
                             Button {
                                 playback.play(filePath: fp)
@@ -321,7 +355,22 @@ struct CollectionDetailView: View {
                             .padding(.horizontal, 20)
                             .padding(.leading, 40)
                     }
+
+                    if let te = trackEntityByPos, editingTrackMBID == te.trackMBID {
+                        perTrackMBIDEditField(trackEntity: te)
+                            .padding(.bottom, 6)
+                            .padding(.horizontal, 20)
+                            .padding(.leading, 40)
+                    }
                 }
+            }
+
+            if let status = singleEnrichStatus {
+                Label(status, systemImage: "arrow.clockwise")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 4)
             }
         }
     }
@@ -479,6 +528,35 @@ struct CollectionDetailView: View {
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                     }
+
+                    if trackEntities.isEmpty {
+                        Divider()
+                        HStack(spacing: 8) {
+                            Text("No tracks fetched yet")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Button("Fetch recordings & audio features") {
+                                guard let e = itemEntity, e.mbid != nil else { return }
+                                singleEnrichStatus = "Fetching tracks…"
+                                Task {
+                                    await recordingsCoordinator.startForSingle(e)
+                                    loadTrackEntities()
+                                    singleEnrichStatus = "Fetching audio features…"
+                                    await audioFeaturesCoordinator.startForSingle(e)
+                                    loadFeatureEntities()
+                                    singleEnrichStatus = nil
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                    }
+
+                    if let status = scanCoordinator.enrichmentStatus ?? singleEnrichStatus {
+                        Label(status, systemImage: "arrow.clockwise")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 12)
@@ -503,6 +581,37 @@ struct CollectionDetailView: View {
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
+
+                    Divider()
+                    Text("Paste a release MBID to import tracks & audio features:")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        TextField("e.g. 550e8400-e29b-41d4-a716-446655440000", text: $manualReleaseMBID)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(.caption, design: .monospaced))
+                        Button("Fetch") {
+                            let trimmed = manualReleaseMBID.trimmingCharacters(in: .whitespaces)
+                            guard isValidMBID(trimmed) else {
+                                manualReleaseMBIDError = "Not a valid MBID (8-4-4-4-12 hex characters)"
+                                return
+                            }
+                            manualReleaseMBIDError = nil
+                            manualReleaseMBID = ""
+                            scanCoordinator.setMBIDManuallyAndEnrich(
+                                instanceId: item.id,
+                                mbid: trimmed,
+                                recordingsCoordinator: recordingsCoordinator,
+                                audioFeaturesCoordinator: audioFeaturesCoordinator
+                            )
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(!isValidMBID(manualReleaseMBID.trimmingCharacters(in: .whitespaces)))
+                    }
+                    if let err = manualReleaseMBIDError {
+                        Text(err).font(.caption2).foregroundStyle(.red)
+                    }
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 12)
@@ -551,6 +660,57 @@ struct CollectionDetailView: View {
             try? await Task.sleep(for: .seconds(2))
             mbidCopied = false
         }
+    }
+
+    // MARK: - Per-track recording MBID edit
+
+    @ViewBuilder
+    private func perTrackMBIDEditField(trackEntity: TrackEntity) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                TextField("Recording MBID (UUID format)", text: $recordingMBIDInput)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.caption, design: .monospaced))
+                    .frame(maxWidth: 260)
+                Button("Set") {
+                    let trimmed = recordingMBIDInput.trimmingCharacters(in: .whitespaces)
+                    guard isValidMBID(trimmed) else {
+                        recordingMBIDInputError = "Not a valid MBID (8-4-4-4-12 hex)"
+                        return
+                    }
+                    recordingMBIDInputError = nil
+                    trackEntity.recordingMBID = trimmed
+                    try? modelContext.save()
+                    editingTrackMBID = nil
+                    recordingMBIDInput = ""
+                    guard let entity = itemEntity else { return }
+                    singleEnrichStatus = "Fetching audio features…"
+                    Task {
+                        await audioFeaturesCoordinator.startForSingle(entity)
+                        loadFeatureEntities()
+                        singleEnrichStatus = nil
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(recordingMBIDInput.trimmingCharacters(in: .whitespaces).isEmpty)
+                Button("Cancel") {
+                    editingTrackMBID = nil
+                    recordingMBIDInput = ""
+                    recordingMBIDInputError = nil
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+            if let err = recordingMBIDInputError {
+                Text(err).font(.caption2).foregroundStyle(.red)
+            }
+        }
+    }
+
+    private func isValidMBID(_ s: String) -> Bool {
+        let pattern = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        return s.range(of: pattern, options: .regularExpression) != nil
     }
 
     private func loadEntity() {

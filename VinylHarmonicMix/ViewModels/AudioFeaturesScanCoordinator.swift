@@ -102,6 +102,38 @@ final class AudioFeaturesScanCoordinator {
         startEnrichInternal()
     }
 
+    // Fetch AcousticBrainz features for a single release's tracks.
+    // Scopes the queue to recording MBIDs from that entity only, skipping already-queried ones.
+    // Refuses to run if a batch scan is already in progress.
+    func startForSingle(_ entity: CollectionItemEntity) async {
+        switch phase {
+        case .scanning, .paused: return
+        default: break
+        }
+        let entityTracks = entity.tracks
+        let uniqueMBIDs = Array(Set(entityTracks.compactMap {
+            $0.recordingMBID.isEmpty ? nil : $0.recordingMBID
+        }))
+        guard !uniqueMBIDs.isEmpty else { return }
+        let allFeatures = (try? context.fetch(FetchDescriptor<RecordingFeaturesEntity>())) ?? []
+        let queriedSet = Set(allFeatures.map(\.recordingMBID))
+        let queue = uniqueMBIDs.filter { !queriedSet.contains($0) }
+        let batches = stride(from: 0, to: queue.count, by: 25).map {
+            Array(queue[$0..<min($0 + 25, queue.count)])
+        }
+        guard !batches.isEmpty else { return }
+        isEnrichPass = false
+        processedBatches = 0
+        batchesProcessed = 0
+        batchesTotal = batches.count
+        tracksFound = 0
+        tracksMissing = 0
+        tracksFailed = 0
+        phase = .scanning
+        showBanner = true
+        await performScan(batches: batches)
+    }
+
     func refetchMissing() {
         switch phase {
         case .idle, .completed, .cancelled: break

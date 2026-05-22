@@ -43,6 +43,7 @@ final class MBIDScanCoordinator {
     var total: Int = 0
     var showBanner: Bool = false
     var currentItem: ScanningItemInfo? = nil
+    var enrichmentStatus: String? = nil
 
     // Per-pass progress (aliases for scanned/total — updated each iteration)
     var passProcessed: Int { scanned }
@@ -101,6 +102,30 @@ final class MBIDScanCoordinator {
     }
 
     // MARK: - Manual fix actions
+
+    // Store MBID then chain recordings fetch → AcousticBrainz fetch sequentially.
+    // Progress is surfaced via enrichmentStatus so the detail popup can observe it.
+    func setMBIDManuallyAndEnrich(
+        instanceId: Int,
+        mbid: String,
+        recordingsCoordinator: RecordingsScanCoordinator,
+        audioFeaturesCoordinator: AudioFeaturesScanCoordinator
+    ) {
+        setMBIDManually(instanceId: instanceId, mbid: mbid)
+        let id = instanceId
+        var descriptor = FetchDescriptor<CollectionItemEntity>(
+            predicate: #Predicate { $0.instanceId == id }
+        )
+        descriptor.fetchLimit = 1
+        guard let entity = try? context.fetch(descriptor).first else { return }
+        enrichmentStatus = "Fetching tracks…"
+        Task {
+            await recordingsCoordinator.startForSingle(entity)
+            enrichmentStatus = "Fetching audio features…"
+            await audioFeaturesCoordinator.startForSingle(entity)
+            enrichmentStatus = nil
+        }
+    }
 
     func resetToNotFound(instanceId: Int) {
         let id = instanceId
