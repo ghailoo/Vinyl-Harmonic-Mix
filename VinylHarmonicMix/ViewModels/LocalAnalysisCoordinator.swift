@@ -5,30 +5,39 @@ import SwiftData
 @Observable
 final class LocalAnalysisCoordinator {
 
-    // MARK: - Script location
-
-    // Absolute path to essentia_analyze.py — update if the project moves.
-    static let scriptPath: String = {
-        // Resolve relative to the app bundle's parent directory at runtime.
-        // During dev the bundle lives inside DerivedData; the script lives in
-        // <project_root>/Scripts/. Fall back to a hardcoded dev path if needed.
-        let bundleDir = Bundle.main.bundleURL
-            .deletingLastPathComponent()  // .app
-            .deletingLastPathComponent()  // Debug/
-            .deletingLastPathComponent()  // Products/
-            .deletingLastPathComponent()  // Build/
-            .deletingLastPathComponent()  // DerivedData/<…>/Build/
-        let derived = bundleDir
-            .appendingPathComponent("SourcePackages") // doesn't exist — just a probe
-        _ = derived
-        // Best-effort: try known dev path first, then relative to bundle
-        let devPath = "/Users/ghailen/Desktop/MacOS Project/VinylHarmonicMix/Scripts/essentia_analyze.py"
-        return devPath
+    // MARK: - Single source of truth: python3 path
+    //
+    // Both the analysis subprocess and the pip installer use this exact path.
+    // Preference order: Homebrew arm64 → Homebrew Intel → which python3 → system fallback.
+    // Evaluated once at first access; FileManager.fileExists is safe from any thread.
+    nonisolated static let python3Path: String = {
+        let candidates = [
+            "/opt/homebrew/bin/python3",   // Homebrew on Apple Silicon
+            "/usr/local/bin/python3",       // Homebrew on Intel
+        ]
+        for p in candidates where FileManager.default.fileExists(atPath: p) {
+            return p
+        }
+        // which python3 as last resort
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/which")
+        proc.arguments = ["python3"]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = Pipe()
+        try? proc.run()
+        proc.waitUntilExit()
+        let found = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return found.isEmpty ? "/usr/bin/python3" : found
     }()
 
-    private static let python3Path = "/opt/homebrew/bin/python3"
+    // MARK: - Script location
 
-    // MARK: - Phase
+    static let scriptPath: String =
+        "/Users/ghailen/Desktop/MacOS Project/VinylHarmonicMix/Scripts/essentia_analyze.py"
+
+    // MARK: - Analysis phase
 
     enum Phase: Equatable {
         case idle, analyzing, paused, completed, cancelled
@@ -37,9 +46,18 @@ final class LocalAnalysisCoordinator {
         var isIdle: Bool {
             switch self { case .idle, .completed, .cancelled: return true; default: return false }
         }
-        var isActive: Bool {
-            switch self { case .analyzing, .paused: return true; default: return false }
-        }
+    }
+
+    // MARK: - Essentia provisioning state
+
+    enum EssentiaStatus: Equatable {
+        case unknown                  // not yet probed
+        case testing                  // import test running
+        case installed(String)        // version string, e.g. "essentia 2.1-beta6-dev"
+        case notInstalled             // import failed → show Install button
+        case installing               // pip install running
+        case installFailed(String)    // pip failed → show reason
+        case testFailed(String)       // python3 not found or other non-import error
     }
 
     // MARK: - Observable state
@@ -63,15 +81,7 @@ final class LocalAnalysisCoordinator {
         ))) ?? 0
     }
 
-    // MARK: - Essentia test state (for Settings)
-
-    enum EssentiaTestStatus: Equatable {
-        case idle, testing
-        case success(String)  // e.g. "essentia 2.1-beta6-dev"
-        case failure(String)
-    }
-
-    var essentiaTestStatus: EssentiaTestStatus = .idle
+    var essentiaStatus: EssentiaStatus = .unknown
 
     // MARK: - Private
 
@@ -81,7 +91,7 @@ final class LocalAnalysisCoordinator {
 
     init(context: ModelContext) { self.context = context }
 
-    // MARK: - Controls
+    // MARK: - Analysis controls
 
     func startAnalysis(limit: Int? = nil) {
         guard phase.isIdle else { return }
@@ -121,50 +131,126 @@ final class LocalAnalysisCoordinator {
         currentTrackLabel = ""; lastError = nil
     }
 
-    // MARK: - Essentia availability test
+    // MARK: - Essentia provisioning
 
     func testEssentia() {
-        essentiaTestStatus = .testing
+        essentiaStatus = .testing
         Task {
-            let result = await Self.runEssentiaTest()
-            essentiaTestStatus = result
+            essentiaStatus = await Self.probeEssentia()
         }
     }
 
-    private static func runEssentiaTest() async -> EssentiaTestStatus {
-        await Task.detached(priority: .utility) {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: python3Path)
-            process.arguments = ["-c", "import essentia; print('essentia', essentia.__version__)"]
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = pipe
-            do {
-                try process.run()
-                process.waitUntilExit()
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                let output = String(data: data, encoding: .utf8)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                if process.terminationStatus == 0, !output.isEmpty {
-                    return EssentiaTestStatus.success(output)
-                } else {
-                    return EssentiaTestStatus.failure(output.isEmpty ? "No output" : output)
-                }
-            } catch {
-                return EssentiaTestStatus.failure(error.localizedDescription)
+    func installEssentia() {
+        essentiaStatus = .installing
+        Task {
+            let errorMsg = await Self.runPipInstall()
+            if let msg = errorMsg {
+                essentiaStatus = .installFailed(msg)
+            } else {
+                // Install reported success — confirm with an import test
+                essentiaStatus = await Self.probeEssentia()
             }
+        }
+    }
+
+    // MARK: - Probe (import test)
+    //
+    // Uses python3Path — same binary as the analysis subprocess.
+    // Returns .installed / .notInstalled / .testFailed.
+    nonisolated private static func probeEssentia() async -> EssentiaStatus {
+        await Task.detached(priority: .utility) { () -> EssentiaStatus in
+            let python = python3Path
+
+            guard FileManager.default.fileExists(atPath: python) else {
+                return .testFailed(
+                    "Python 3 not found at \(python). Install Python 3 (e.g. brew install python) then retry."
+                )
+            }
+
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: python)
+            proc.arguments = ["-c", "import essentia; print('essentia', essentia.__version__)"]
+            let pipe = Pipe()
+            proc.standardOutput = pipe
+            proc.standardError = pipe
+            do {
+                try proc.run()
+                proc.waitUntilExit()
+            } catch {
+                return .testFailed("Cannot run \(python): \(error.localizedDescription)")
+            }
+
+            let output = String(
+                data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8
+            )?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+            if proc.terminationStatus == 0, !output.isEmpty {
+                return .installed(output)
+            }
+            // ModuleNotFoundError → notInstalled; anything else → testFailed
+            if output.contains("ModuleNotFoundError") || output.contains("No module named") {
+                return .notInstalled
+            }
+            return output.isEmpty ? .notInstalled : .testFailed(output)
+        }.value
+    }
+
+    // MARK: - pip install
+    //
+    // Returns nil on success, or an error string on failure.
+    nonisolated private static func runPipInstall() async -> String? {
+        await Task.detached(priority: .utility) { () -> String? in
+            let python = python3Path
+
+            guard FileManager.default.fileExists(atPath: python) else {
+                return "Python 3 not found at \(python). Install Python 3 via Homebrew first."
+            }
+
+            let proc = Process()
+            proc.executableURL = URL(fileURLWithPath: python)
+            proc.arguments = ["-m", "pip", "install", "--break-system-packages", "essentia"]
+            let outPipe = Pipe()
+            let errPipe = Pipe()
+            proc.standardOutput = outPipe
+            proc.standardError  = errPipe
+
+            do {
+                try proc.run()
+            } catch {
+                return "Cannot run \(python): \(error.localizedDescription)"
+            }
+
+            proc.waitUntilExit()
+
+            if proc.terminationStatus == 0 { return nil }
+
+            // Gather stderr for the failure message; fall back to stdout
+            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+            let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+            let stderr = String(data: errData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let stdout = String(data: outData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+            // Surface the most useful tail of the error output
+            let combined = stderr.isEmpty ? stdout : stderr
+            let lines = combined.components(separatedBy: "\n")
+            let tail = lines.suffix(6).joined(separator: "\n")
+
+            if combined.contains("No module named pip") || combined.contains("pip: command not found") {
+                return "pip not found for \(python). The Python installation may be incomplete."
+            }
+            return tail.isEmpty ? "pip exited with code \(proc.terminationStatus)" : tail
         }.value
     }
 
     // MARK: - Analysis loop
 
     private func runAnalysis(limit: Int?) async {
-        // Snapshot confident tracks that haven't been analyzed yet, as Sendable summaries.
         let allConfident = (try? context.fetch(FetchDescriptor<TrackEntity>(
             predicate: #Predicate { $0.fileMatchState == "confident" }
         ))) ?? []
 
-        // Exclude already-analyzed
         let unanalyzed = allConfident.filter {
             $0.localAudioFeatures == nil && ($0.primaryLocalFilePath ?? "").isEmpty == false
         }
@@ -185,11 +271,9 @@ final class LocalAnalysisCoordinator {
         totalCount = summaries.count
         if totalCount == 0 { phase = .completed; return }
 
-        // Process with concurrency cap of 2 to avoid hammering SMB
         let chunkSize = 25
         var saveBuffer: [(PersistentIdentifier, AnalysisResult)] = []
 
-        // Serial processing — SMB + CPU-bound decoding; no benefit to racing reads
         for (i, summary) in summaries.enumerated() {
             if Task.isCancelled { break }
             currentTrackLabel = summary.label
@@ -206,7 +290,6 @@ final class LocalAnalysisCoordinator {
 
             analyzedCount = i + 1
 
-            // Flush every 25
             if saveBuffer.count >= chunkSize || i == summaries.count - 1 {
                 flushResults(saveBuffer)
                 saveBuffer.removeAll()
@@ -236,7 +319,7 @@ final class LocalAnalysisCoordinator {
 
     private func runScript(filePath: String) async -> ScriptOutcome {
         let scriptPath = Self.scriptPath
-        let python3 = Self.python3Path
+        let python3 = Self.python3Path   // same binary as install + test
 
         return await Task.detached(priority: .utility) { () -> ScriptOutcome in
             let process = Process()
@@ -244,7 +327,7 @@ final class LocalAnalysisCoordinator {
             process.arguments = [scriptPath, filePath]
             let pipe = Pipe()
             process.standardOutput = pipe
-            process.standardError = Pipe()  // suppress essentia's stderr noise
+            process.standardError = Pipe()
 
             do {
                 try process.run()
@@ -266,28 +349,22 @@ final class LocalAnalysisCoordinator {
                 return .failure("JSON parse failed: \(raw.prefix(120))")
             }
 
-            if let err = dict["error"] as? String {
-                return .failure(err)
-            }
+            if let err = dict["error"] as? String { return .failure(err) }
 
             guard let rawBpm = dict["bpm"] as? Double,
                   let key    = dict["key"] as? String,
                   let scale  = dict["scale"] as? String,
                   let str    = dict["key_strength"] as? Double
             else {
-                return .failure("Missing fields in JSON: \(raw.prefix(120))")
+                return .failure("Missing fields: \(raw.prefix(120))")
             }
 
             let normalizedBpm = Self.normalizeBpm(rawBpm)
             let camelot = CamelotConverter.camelotCode(forNote: key, scale: scale) ?? ""
 
             return .success(AnalysisResult(
-                rawBpm: rawBpm,
-                bpm: normalizedBpm,
-                key: key,
-                scale: scale,
-                keyStrength: str,
-                camelot: camelot
+                rawBpm: rawBpm, bpm: normalizedBpm,
+                key: key, scale: scale, keyStrength: str, camelot: camelot
             ))
         }.value
     }
@@ -307,7 +384,6 @@ final class LocalAnalysisCoordinator {
         for (trackID, result) in buffer {
             guard let track = context.model(for: trackID) as? TrackEntity else { continue }
 
-            // Upsert: reuse existing entity if present
             let features = track.localAudioFeatures ?? {
                 let f = LocalAudioFeaturesEntity()
                 context.insert(f)
@@ -316,16 +392,14 @@ final class LocalAnalysisCoordinator {
                 return f
             }()
 
-            features.rawBpm         = result.rawBpm
-            features.bpm            = result.bpm
-            features.key            = result.key
-            features.scale          = result.scale
-            features.keyStrength    = result.keyStrength
-            features.camelot        = result.camelot
-            features.analyzedAt     = .now
+            features.rawBpm          = result.rawBpm
+            features.bpm             = result.bpm
+            features.key             = result.key
+            features.scale           = result.scale
+            features.keyStrength     = result.keyStrength
+            features.camelot         = result.camelot
+            features.analyzedAt      = .now
             features.analyzerVersion = "essentia-2.1b6 degara"
-
-            analyzedCount += 0  // already incremented in loop; just trigger a save batch
         }
         try? context.save()
     }

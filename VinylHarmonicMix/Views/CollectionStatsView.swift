@@ -656,19 +656,29 @@ struct CollectionStatsView: View {
 
     @ViewBuilder
     private var essentiaTestButton: some View {
-        switch localAnalysisCoordinator.essentiaTestStatus {
-        case .idle:
+        switch localAnalysisCoordinator.essentiaStatus {
+        case .unknown:
             Button("Test Essentia") { localAnalysisCoordinator.testEssentia() }
                 .controlSize(.small)
         case .testing:
             ProgressView().scaleEffect(0.7)
-        case .success(let ver):
+        case .installed(let ver):
             Label(ver, systemImage: "checkmark.circle.fill")
                 .foregroundStyle(.green).font(.caption)
-        case .failure(let msg):
-            Label("Failed: \(msg)", systemImage: "xmark.circle.fill")
-                .foregroundStyle(.red).font(.caption)
-                .lineLimit(2)
+        case .notInstalled:
+            Label("Essentia not installed — see Settings", systemImage: "xmark.circle.fill")
+                .foregroundStyle(.orange).font(.caption)
+        case .installing:
+            HStack(spacing: 4) {
+                ProgressView().scaleEffect(0.7)
+                Text("Installing…").font(.caption).foregroundStyle(.secondary)
+            }
+        case .installFailed(let msg):
+            Label("Install failed: \(msg)", systemImage: "xmark.circle.fill")
+                .foregroundStyle(.red).font(.caption).lineLimit(2)
+        case .testFailed(let msg):
+            Label("Test failed: \(msg)", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red).font(.caption).lineLimit(2)
         }
     }
 

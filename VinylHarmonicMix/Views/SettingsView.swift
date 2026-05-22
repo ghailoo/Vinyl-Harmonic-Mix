@@ -347,6 +347,10 @@ struct SettingsView: View {
                     Text("Extracts BPM and key from local audio files using Essentia (native arm64). Scope: confident-matched tracks with no local analysis yet.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    Text("python3: \(LocalAnalysisCoordinator.python3Path)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .textSelection(.enabled)
                     Text("Script: \(LocalAnalysisCoordinator.scriptPath)")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
@@ -355,27 +359,7 @@ struct SettingsView: View {
                         .truncationMode(.head)
                 }
 
-                HStack(spacing: 8) {
-                    Button("Test Essentia") {
-                        localAnalysisCoordinator.testEssentia()
-                    }
-                    .disabled(localAnalysisCoordinator.essentiaTestStatus == .testing)
-
-                    if localAnalysisCoordinator.essentiaTestStatus == .testing {
-                        ProgressView().scaleEffect(0.7)
-                    }
-                }
-
-                switch localAnalysisCoordinator.essentiaTestStatus {
-                case .idle: EmptyView()
-                case .testing: EmptyView()
-                case .success(let ver):
-                    Label(ver, systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green).font(.caption)
-                case .failure(let msg):
-                    Label("Failed: \(msg)", systemImage: "xmark.circle.fill")
-                        .foregroundStyle(.red).font(.caption)
-                }
+                essentiaProvisioningView
             }
 
             // MARK: AcoustID Fingerprint Matching
@@ -426,5 +410,75 @@ struct SettingsView: View {
                 .allowsHitTesting(false)
         }
 #endif
+    }
+
+    // MARK: - Essentia provisioning UI
+
+    @ViewBuilder
+    private var essentiaProvisioningView: some View {
+        let status = localAnalysisCoordinator.essentiaStatus
+
+        switch status {
+
+        case .unknown:
+            Button("Test Essentia") { localAnalysisCoordinator.testEssentia() }
+
+        case .testing:
+            HStack(spacing: 8) {
+                ProgressView().scaleEffect(0.7)
+                Text("Testing…").font(.caption).foregroundStyle(.secondary)
+            }
+
+        case .installed(let ver):
+            Label(ver, systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green).font(.caption)
+
+        case .notInstalled:
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Essentia not installed for \(LocalAnalysisCoordinator.python3Path)",
+                      systemImage: "xmark.circle.fill")
+                    .foregroundStyle(.orange).font(.caption)
+                Button("Install Essentia") { localAnalysisCoordinator.installEssentia() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                Text("Runs: \(LocalAnalysisCoordinator.python3Path) -m pip install --break-system-packages essentia")
+                    .font(.caption2).foregroundStyle(.tertiary).textSelection(.enabled)
+            }
+
+        case .installing:
+            HStack(spacing: 8) {
+                ProgressView().scaleEffect(0.7)
+                Text("Installing Essentia… (this can take a minute)")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+        case .installFailed(let reason):
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Install failed", systemImage: "xmark.circle.fill")
+                    .foregroundStyle(.red).font(.caption)
+                Text(reason)
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .lineLimit(6)
+                HStack(spacing: 8) {
+                    Button("Retry install") { localAnalysisCoordinator.installEssentia() }
+                        .controlSize(.small)
+                    Button("Re-test") { localAnalysisCoordinator.testEssentia() }
+                        .controlSize(.small)
+                }
+            }
+
+        case .testFailed(let reason):
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Test failed", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red).font(.caption)
+                Text(reason)
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .lineLimit(4)
+                Button("Retry test") { localAnalysisCoordinator.testEssentia() }
+                    .controlSize(.small)
+            }
+        }
     }
 }
