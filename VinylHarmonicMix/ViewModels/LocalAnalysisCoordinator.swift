@@ -60,14 +60,21 @@ final class LocalAnalysisCoordinator {
         case testFailed(String)       // python3 not found or other non-import error
     }
 
+    // MARK: - Analysis mode
+
+    enum AnalysisMode { case tracks, files }
+
     // MARK: - Observable state
 
     var phase: Phase = .idle
+    var currentMode: AnalysisMode = .tracks
     var currentTrackLabel: String = ""
     var totalCount: Int = 0
     var analyzedCount: Int = 0
     var failedCount: Int = 0
     var lastError: String? = nil
+    var inScopeFileCount: Int = 0
+    var unanalyzedFileCount: Int = 0
 
     var shouldShowPanel: Bool { phase != .idle }
 
@@ -96,6 +103,7 @@ final class LocalAnalysisCoordinator {
     func startAnalysis(limit: Int? = nil) {
         guard phase.isIdle else { return }
         pendingLimit = limit
+        currentMode = .tracks
         phase = .analyzing
         analyzedCount = 0; failedCount = 0; totalCount = 0
         currentTrackLabel = ""; lastError = nil
@@ -103,6 +111,22 @@ final class LocalAnalysisCoordinator {
         scanTask = Task { [weak self] in
             guard let self else { return }
             await self.runAnalysis(limit: limit)
+            guard !Task.isCancelled else { return }
+            if self.phase == .analyzing { self.phase = .completed }
+        }
+    }
+
+    func startFileAnalysis(limit: Int? = nil) {
+        guard phase.isIdle else { return }
+        pendingLimit = limit
+        currentMode = .files
+        phase = .analyzing
+        analyzedCount = 0; failedCount = 0; totalCount = 0
+        currentTrackLabel = ""; lastError = nil
+
+        scanTask = Task { [weak self] in
+            guard let self else { return }
+            await self.runFileAnalysis(limit: limit)
             guard !Task.isCancelled else { return }
             if self.phase == .analyzing { self.phase = .completed }
         }
@@ -117,7 +141,10 @@ final class LocalAnalysisCoordinator {
 
     func resume() {
         guard phase == .paused else { return }
-        startAnalysis(limit: pendingLimit)
+        switch currentMode {
+        case .tracks: startAnalysis(limit: pendingLimit)
+        case .files:  startFileAnalysis(limit: pendingLimit)
+        }
     }
 
     func cancel() {
@@ -378,7 +405,138 @@ final class LocalAnalysisCoordinator {
         return (b * 100).rounded() / 100
     }
 
-    // MARK: - Write-back
+    // MARK: - File analysis
+
+    private struct LocalFileSummary: Sendable {
+        let id: PersistentIdentifier
+        let filePath: String
+        let artistFolder: String
+        let analyzed: Bool
+    }
+
+    private func runFileAnalysis(limit: Int?) async {
+        let artistNames = ((try? context.fetch(FetchDescriptor<ArtistCreditEntity>())) ?? []).map(\.name)
+        let artistTokenSets: [Set<String>] = artistNames.map { name in
+            Set(FuzzyMatch.normalize(name).split(separator: " ").map(String.init)).filter { $0.count >= 2 }
+        }
+
+        let allFiles = (try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
+        let summaries: [LocalFileSummary] = allFiles.compactMap { file in
+            guard !file.artistFolder.isEmpty else { return nil }
+            return LocalFileSummary(
+                id: file.persistentModelID,
+                filePath: file.filePath,
+                artistFolder: file.artistFolder,
+                analyzed: file.bpm > 0 || file.analyzedAt != nil
+            )
+        }
+
+        let inScope: [LocalFileSummary] = await Task.detached(priority: .utility) {
+            summaries.filter { s in
+                guard !s.analyzed else { return false }
+                let folderTokens = Set(
+                    FuzzyMatch.normalizeFolderName(s.artistFolder).split(separator: " ").map(String.init)
+                ).filter { $0.count >= 2 }
+                return artistTokenSets.contains { artistTokens in
+                    let isect = folderTokens.intersection(artistTokens).count
+                    let maxN = max(folderTokens.count, artistTokens.count)
+                    return maxN > 0 && Double(isect) / Double(maxN) >= 0.7
+                }
+            }
+        }.value
+
+        let scoped = limit.map { Array(inScope.prefix($0)) } ?? inScope
+        totalCount = scoped.count
+        if totalCount == 0 { phase = .completed; return }
+
+        let chunkSize = 25
+        var saveBuffer: [(PersistentIdentifier, AnalysisResult)] = []
+
+        for (i, summary) in scoped.enumerated() {
+            if Task.isCancelled { break }
+            let filename = URL(fileURLWithPath: summary.filePath).lastPathComponent
+            currentTrackLabel = "\(summary.artistFolder) — \(filename)"
+
+            let result = await runScript(filePath: summary.filePath)
+            switch result {
+            case .success(let parsed):
+                saveBuffer.append((summary.id, parsed))
+            case .failure(let msg):
+                failedCount += 1
+                print("[FileAnalysis] ✗ \(summary.filePath): \(msg)")
+            }
+
+            analyzedCount = i + 1
+
+            if saveBuffer.count >= chunkSize || i == scoped.count - 1 {
+                flushFileResults(saveBuffer)
+                saveBuffer.removeAll()
+                await Task.yield()
+            }
+        }
+
+        try? context.save()
+        currentTrackLabel = ""
+        recomputeFileScope()
+    }
+
+    private func flushFileResults(_ buffer: [(PersistentIdentifier, AnalysisResult)]) {
+        for (fileID, result) in buffer {
+            guard let file = context.model(for: fileID) as? LocalFileEntity else { continue }
+            file.rawBpm          = result.rawBpm
+            file.bpm             = result.bpm
+            file.key             = result.key
+            file.scale           = result.scale
+            file.keyStrength     = result.keyStrength
+            file.camelot         = result.camelot
+            file.analyzedAt      = .now
+            file.analyzerVersion = "essentia-2.1b6 degara"
+        }
+        try? context.save()
+    }
+
+    func recomputeFileScope() {
+        let artistNames = ((try? context.fetch(FetchDescriptor<ArtistCreditEntity>())) ?? []).map(\.name)
+        let artistTokenSets: [Set<String>] = artistNames.map { name in
+            Set(FuzzyMatch.normalize(name).split(separator: " ").map(String.init)).filter { $0.count >= 2 }
+        }
+
+        let allFiles = (try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
+        let summaries: [LocalFileSummary] = allFiles.compactMap { file in
+            guard !file.artistFolder.isEmpty else { return nil }
+            return LocalFileSummary(
+                id: file.persistentModelID,
+                filePath: file.filePath,
+                artistFolder: file.artistFolder,
+                analyzed: file.bpm > 0 || file.analyzedAt != nil
+            )
+        }
+
+        Task.detached(priority: .utility) { [weak self] in
+            var inScopeCount = 0
+            var unanalyzedCount = 0
+            for s in summaries {
+                let folderTokens = Set(
+                    FuzzyMatch.normalizeFolderName(s.artistFolder).split(separator: " ").map(String.init)
+                ).filter { $0.count >= 2 }
+                let matches = artistTokenSets.contains { artistTokens in
+                    let isect = folderTokens.intersection(artistTokens).count
+                    let maxN = max(folderTokens.count, artistTokens.count)
+                    return maxN > 0 && Double(isect) / Double(maxN) >= 0.7
+                }
+                if matches {
+                    inScopeCount += 1
+                    if !s.analyzed { unanalyzedCount += 1 }
+                }
+            }
+            await MainActor.run { [weak self] in
+                self?.inScopeFileCount = inScopeCount
+                self?.unanalyzedFileCount = unanalyzedCount
+            }
+        }
+    }
+
+    // MARK: - Write-back (tracks)
 
     private func flushResults(_ buffer: [(PersistentIdentifier, AnalysisResult)]) {
         for (trackID, result) in buffer {

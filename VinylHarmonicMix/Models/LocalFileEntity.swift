@@ -19,6 +19,16 @@ final class LocalFileEntity {
     var indexedAt: Date
     var fingerprintedAt: Date?
 
+    // File-level harmonic analysis (populated independently of track matching)
+    var rawBpm: Double = 0
+    var bpm: Double = 0
+    var key: String = ""
+    var scale: String = ""
+    var keyStrength: Double = 0
+    var camelot: String = ""
+    var analyzedAt: Date? = nil
+    var analyzerVersion: String = ""
+
     var track: TrackEntity?
 
     init(filePath: String, fileName: String,

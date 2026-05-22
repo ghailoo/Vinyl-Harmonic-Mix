@@ -71,6 +71,9 @@ struct CollectionStatsView: View {
                 try? JSONDecoder().decode(ReleaseDetail.self, from: $0.jsonData)
             }
         }
+        .task(id: localFileEntities.count) {
+            localAnalysisCoordinator.recomputeFileScope()
+        }
         .alert("Refresh all cached details?", isPresented: $showRefreshAlert) {
             Button("Refresh (~15 min)", role: .destructive) { cacheCoordinator.startRefresh() }
             Button("Cancel", role: .cancel) {}
@@ -593,6 +596,10 @@ struct CollectionStatsView: View {
         let pct = confident > 0 ? min(100, analyzed * 100 / max(confident, 1)) : 0
         let isRunning = localAnalysisCoordinator.phase == .analyzing
                      || localAnalysisCoordinator.phase == .paused
+        let fileTotal      = localAnalysisCoordinator.inScopeFileCount
+        let fileUnanalyzed = localAnalysisCoordinator.unanalyzedFileCount
+        let fileAnalyzed   = max(0, fileTotal - fileUnanalyzed)
+        let filePct        = fileTotal > 0 ? min(100, fileAnalyzed * 100 / max(fileTotal, 1)) : 0
 
         return sectionCard {
             sectionHeader(title: "Local Audio Analysis")
@@ -651,6 +658,53 @@ struct CollectionStatsView: View {
                 essentiaTestButton
             }
             .padding(.top, 10)
+
+            Divider().padding(.vertical, 8)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("File-level analysis")
+                    .font(.system(size: 15, weight: .semibold))
+
+                if fileTotal > 0 {
+                    Text("\(fileAnalyzed.formatted()) of \(fileTotal.formatted()) in-scope files analyzed (\(filePct)%)")
+                        .font(.system(size: 14))
+
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.secondary.opacity(0.15)).frame(height: 8)
+                            Capsule()
+                                .fill(Color(red: 0.15, green: 0.55, blue: 0.30))
+                                .frame(
+                                    width: fileTotal > 0
+                                        ? geo.size.width * CGFloat(fileAnalyzed) / CGFloat(max(fileTotal, 1))
+                                        : 0,
+                                    height: 8
+                                )
+                        }
+                    }
+                    .frame(height: 8)
+                } else {
+                    Text("Run file matching first — scope is computed from collection artist folders.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            HStack(spacing: 8) {
+                Button(isRunning ? "Analyzing…" : (fileUnanalyzed > 0 ? "Analyze collection files (\(fileUnanalyzed))" : "Files up to date")) {
+                    localAnalysisCoordinator.startFileAnalysis()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(isRunning || fileUnanalyzed == 0)
+
+                Button("Test (first 10)") {
+                    localAnalysisCoordinator.startFileAnalysis(limit: 10)
+                }
+                .controlSize(.small)
+                .disabled(isRunning || fileTotal == 0)
+            }
+            .padding(.top, 6)
         }
     }
 
