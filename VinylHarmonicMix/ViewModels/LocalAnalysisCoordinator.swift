@@ -132,6 +132,55 @@ final class LocalAnalysisCoordinator {
         }
     }
 
+    /// Count of in-scope unanalyzed local files without starting analysis.
+    /// Uses the same artist-folder token similarity filter as runFileAnalysis.
+    /// Called by SyncOrchestrator to surface the pending count before running.
+    func pendingFileAnalysisCount() async -> Int {
+        let artistNames = ((try? context.fetch(FetchDescriptor<ArtistCreditEntity>())) ?? []).map(\.name)
+        let artistTokenSets: [Set<String>] = artistNames.map { name in
+            Set(FuzzyMatch.normalize(name).split(separator: " ").map(String.init)).filter { $0.count >= 2 }
+        }
+        let allFiles = (try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
+        let summaries: [LocalFileSummary] = allFiles.compactMap { file in
+            guard !file.artistFolder.isEmpty else { return nil }
+            return LocalFileSummary(
+                id: file.persistentModelID,
+                filePath: file.filePath,
+                artistFolder: file.artistFolder,
+                analyzed: file.bpm > 0 || file.analyzedAt != nil
+            )
+        }
+        return await Task.detached(priority: .utility) {
+            summaries.filter { s in
+                guard !s.analyzed else { return false }
+                let folderTokens = Set(
+                    FuzzyMatch.normalizeFolderName(s.artistFolder).split(separator: " ").map(String.init)
+                ).filter { $0.count >= 2 }
+                return artistTokenSets.contains { artistTokens in
+                    let isect = folderTokens.intersection(artistTokens).count
+                    let maxN = max(folderTokens.count, artistTokens.count)
+                    return maxN > 0 && Double(isect) / Double(maxN) >= 0.7
+                }
+            }.count
+        }.value
+    }
+
+    /// Awaitable file analysis for use by SyncOrchestrator.
+    /// Runs runFileAnalysis() inline (same filter: unanalyzed in-scope files only) and returns when done.
+    /// NEVER re-analyzes already-analyzed files (runFileAnalysis filters bpm > 0 || analyzedAt != nil).
+    func startAndAwaitFileAnalysis() async {
+        guard phase.isIdle else { return }
+        pendingLimit = nil
+        currentMode = .files
+        phase = .analyzing
+        analyzedCount = 0; failedCount = 0; totalCount = 0
+        currentTrackLabel = ""; lastError = nil
+
+        await runFileAnalysis(limit: nil)
+        guard !Task.isCancelled else { return }
+        if phase == .analyzing { phase = .completed }
+    }
+
     func startTestBatch() { startAnalysis(limit: 10) }
 
     func pause() {

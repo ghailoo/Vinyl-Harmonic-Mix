@@ -105,6 +105,26 @@ final class FileMatchCoordinator {
         beginScan(limit: nil)
     }
 
+    /// Awaitable full scan for use by SyncOrchestrator.
+    /// Runs Phase 1 (incremental file index) then Phase 2 (re-match) and returns when both complete.
+    func startAndAwaitFullScan() async {
+        guard phase == .idle || phase == .completed || phase == .cancelled else { return }
+        pendingLimit = nil
+        showPanel = true
+        phase = .indexing
+        indexedCount = 0; processedTracks = 0; totalTracks = 0
+        confidentCount = 0; reviewCount = 0; noMatchCount = 0
+        currentTrackLabel = ""; lastError = nil
+
+        await runPhase1()
+        if Task.isCancelled { return }
+        phase = .matching
+        await runPhase2(limit: nil)
+        if Task.isCancelled { return }
+        try? context.save()
+        phase = .completed
+    }
+
     func pause() {
         scanTask?.cancel(); scanTask = nil
         phase = .paused

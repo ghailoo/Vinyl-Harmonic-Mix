@@ -53,6 +53,7 @@ struct CollectionGridView: View {
     @Environment(RecordingsScanCoordinator.self) private var recordingsCoordinator
     @Environment(AudioFeaturesScanCoordinator.self) private var audioFeaturesCoordinator
     @Environment(AudioPlaybackController.self) private var playback
+    @Environment(SyncOrchestrator.self) private var syncOrchestrator
     @Environment(\.modelContext) private var modelContext
 
     @Query private var allEntities: [CollectionItemEntity]
@@ -194,14 +195,16 @@ struct CollectionGridView: View {
                 filterButton
                 scanButton
                 Button {
+                    syncOrchestrator.startSync()
                     showSyncSheet = true
                 } label: {
-                    Label("Check for new releases", systemImage: "arrow.triangle.2.circlepath")
+                    Label("Sync", systemImage: "arrow.triangle.2.circlepath")
                 }
-                .help("Check Discogs for new releases and import only additions")
+                .disabled(syncOrchestrator.isSyncing)
+                .help("Sync with Discogs and run full enrichment pipeline for new releases")
                 .sheet(isPresented: $showSyncSheet) {
-                    SyncCheckView()
-                        .environment(viewModel)
+                    SyncProgressView()
+                        .environment(syncOrchestrator)
                 }
                 Button {
                     Task { await viewModel.importCollection() }

@@ -101,6 +101,61 @@ final class MBIDScanCoordinator {
         }
     }
 
+    // MARK: - Subset scan (used by SyncOrchestrator for new-release-only MBID pass)
+
+    /// Awaitable MBID scan scoped to a specific set of entities.
+    /// Runs the same URL-lookup logic as performScan() but only over the passed entities.
+    /// Skips entities already matched/notFound; only processes unscanned and failed.
+    /// Does NOT modify phase/scanned/total (orchestrator owns progress display).
+    func startForItems(_ entities: [CollectionItemEntity]) async {
+        var saveCounter = 0
+        for entity in entities {
+            if Task.isCancelled {
+                currentItem = nil
+                do { try context.save() } catch { print("❌ Save on cancel: \(error)") }
+                return
+            }
+
+            let state = MBIDScanState(rawValue: entity.mbidScanState) ?? .unscanned
+            guard state == .unscanned || state == .failed else { continue }
+
+            currentItem = ScanningItemInfo(
+                title: entity.basicInformation?.title ?? "—",
+                artist: entity.basicInformation?.artists.first?.name ?? "Unknown artist"
+            )
+            let releaseId = entity.releaseId
+            do {
+                let match = try await client.findMBID(forDiscogsReleaseId: releaseId)
+                if let match {
+                    entity.mbid = match.mbid
+                    entity.mbidMatchedTitle = match.title
+                    entity.mbidMatchedArtist = match.artist
+                    entity.mbidScanState = MBIDScanState.matched.rawValue
+                } else {
+                    entity.mbidScanState = MBIDScanState.notFound.rawValue
+                }
+            } catch is CancellationError {
+                print("⏸️ startForItems cancelled mid-request for releaseId=\(releaseId), state unchanged")
+                try? context.save()
+                currentItem = nil
+                return
+            } catch {
+                entity.mbidScanState = MBIDScanState.failed.rawValue
+                print("⚠️ startForItems failed item \(releaseId): \(error)")
+            }
+            entity.mbidScannedAt = Date()
+
+            saveCounter += 1
+            if saveCounter >= 10 {
+                do { try context.save() } catch { print("❌ Batch save failed: \(error)") }
+                saveCounter = 0
+            }
+        }
+
+        do { try context.save() } catch { print("❌ Final save failed: \(error)") }
+        currentItem = nil
+    }
+
     // MARK: - Manual fix actions
 
     // Store MBID then chain recordings fetch → AcousticBrainz fetch sequentially.

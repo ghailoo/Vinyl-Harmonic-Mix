@@ -14,6 +14,7 @@ struct VinylHarmonicMixApp: App {
     @State private var fingerprintCoordinator: FingerprintScanCoordinator
     @State private var localAnalysisCoordinator: LocalAnalysisCoordinator
     @State private var audioPlaybackController: AudioPlaybackController
+    @State private var syncOrchestrator: SyncOrchestrator
 
     init() {
         do {
@@ -56,15 +57,31 @@ struct VinylHarmonicMixApp: App {
             UserDefaults.standard.set(true, forKey: wipeKey)
         }
 
-        _collectionViewModel = State(initialValue: CollectionViewModel(context: ctx))
-        _scanCoordinator = State(initialValue: MBIDScanCoordinator(context: ctx))
-        _cacheCoordinator = State(initialValue: DetailCacheCoordinator(context: ctx))
-        _recordingsCoordinator = State(initialValue: RecordingsScanCoordinator(context: ctx))
-        _audioFeaturesCoordinator = State(initialValue: AudioFeaturesScanCoordinator(context: ctx))
-        _fileMatchCoordinator = State(initialValue: FileMatchCoordinator(context: ctx))
-        _fingerprintCoordinator = State(initialValue: FingerprintScanCoordinator(context: ctx))
-        _localAnalysisCoordinator = State(initialValue: LocalAnalysisCoordinator(context: ctx))
-        _audioPlaybackController = State(initialValue: AudioPlaybackController())
+        let cv    = CollectionViewModel(context: ctx)
+        let scan  = MBIDScanCoordinator(context: ctx)
+        let recs  = RecordingsScanCoordinator(context: ctx)
+        let audio = AudioFeaturesScanCoordinator(context: ctx)
+        let files = FileMatchCoordinator(context: ctx)
+        let local = LocalAnalysisCoordinator(context: ctx)
+
+        _collectionViewModel        = State(initialValue: cv)
+        _scanCoordinator            = State(initialValue: scan)
+        _cacheCoordinator           = State(initialValue: DetailCacheCoordinator(context: ctx))
+        _recordingsCoordinator      = State(initialValue: recs)
+        _audioFeaturesCoordinator   = State(initialValue: audio)
+        _fileMatchCoordinator       = State(initialValue: files)
+        _fingerprintCoordinator     = State(initialValue: FingerprintScanCoordinator(context: ctx))
+        _localAnalysisCoordinator   = State(initialValue: local)
+        _audioPlaybackController    = State(initialValue: AudioPlaybackController())
+        _syncOrchestrator           = State(initialValue: SyncOrchestrator(
+            collectionViewModel:       cv,
+            mbidCoordinator:           scan,
+            recordingsCoordinator:     recs,
+            audioFeaturesCoordinator:  audio,
+            fileMatchCoordinator:      files,
+            localAnalysisCoordinator:  local,
+            context:                   ctx
+        ))
 #if DEBUG
         Task { @MainActor in
             let itemDescriptor = FetchDescriptor<CollectionItemEntity>()
@@ -98,6 +115,7 @@ struct VinylHarmonicMixApp: App {
                 .environment(fingerprintCoordinator)
                 .environment(localAnalysisCoordinator)
                 .environment(audioPlaybackController)
+                .environment(syncOrchestrator)
         }
         .modelContainer(container)
 #if os(macOS)
