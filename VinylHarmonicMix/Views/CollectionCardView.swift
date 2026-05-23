@@ -6,6 +6,9 @@ struct CollectionCardView: View {
     var covered: Int = 0
     var total: Int = 0
     var localCovered: Int = 0
+    var isActive: Bool = false
+
+    @Environment(AudioPlaybackController.self) private var playback
 
     // Decoupled from render cycle — updated via .task after the card paints
     @State private var badgeCovered: Int = 0
@@ -81,6 +84,17 @@ struct CollectionCardView: View {
                     if hasMBID { mbidBadge }
                 }
                 .padding(6)
+            }
+            .overlay(alignment: .bottomLeading) {
+                if isActive {
+                    SpinningRecordView(
+                        isPlaying: playback.isPlaying,
+                        coverArtURL: URL(string: item.basicInformation.thumb),
+                        diameter: 24
+                    )
+                    .padding(6)
+                    .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 1)
+                }
             }
         }
         .aspectRatio(1, contentMode: .fit)

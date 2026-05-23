@@ -52,6 +52,7 @@ struct CollectionGridView: View {
     @Environment(MBIDScanCoordinator.self) private var scanCoordinator
     @Environment(RecordingsScanCoordinator.self) private var recordingsCoordinator
     @Environment(AudioFeaturesScanCoordinator.self) private var audioFeaturesCoordinator
+    @Environment(AudioPlaybackController.self) private var playback
     @Environment(\.modelContext) private var modelContext
 
     @Query private var allEntities: [CollectionItemEntity]
@@ -62,6 +63,8 @@ struct CollectionGridView: View {
 
     @State private var featuresByMBID: [String: RecordingFeaturesEntity] = [:]
     @State private var coverageByInstanceId: [Int: (covered: Int, total: Int, localCovered: Int)] = [:]
+    @State private var filePathToInstanceId: [String: Int] = [:]
+    @State private var playingInstanceId: Int? = nil
 
     @State private var searchQuery = ""
     @State private var selectedItem: CollectionItem?
@@ -155,6 +158,9 @@ struct CollectionGridView: View {
         }
         .onChange(of: analyzedLocalFiles.count) { _, _ in
             rebuildCoverageLookup()
+        }
+        .onChange(of: playback.currentFilePath) { _, newPath in
+            playingInstanceId = newPath.flatMap { filePathToInstanceId[$0] }
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -333,6 +339,8 @@ struct CollectionGridView: View {
         var totals: [Int: Int] = [:]
         var coveredCounts: [Int: Int] = [:]
         var localCounts: [Int: Int] = [:]
+        var fpToId: [String: Int] = [:]
+        fpToId.reserveCapacity(allTrackEntities.count)
         for track in allTrackEntities {
             guard let id = track.collectionItem?.instanceId else { continue }
             totals[id, default: 0] += 1
@@ -348,10 +356,15 @@ struct CollectionGridView: View {
             if hasLocalSource {
                 localCounts[id, default: 0] += 1
             }
+            if let fp = track.primaryLocalFilePath, !fp.isEmpty {
+                fpToId[fp] = id
+            }
         }
         coverageByInstanceId = Dictionary(uniqueKeysWithValues: totals.keys.map { id in
             (id, (covered: coveredCounts[id] ?? 0, total: totals[id]!, localCovered: localCounts[id] ?? 0))
         })
+        filePathToInstanceId = fpToId
+        playingInstanceId = playback.currentFilePath.flatMap { fpToId[$0] }
     }
 
     private var matchedInstanceIds: Set<Int> {
@@ -558,12 +571,13 @@ struct CollectionGridView: View {
                 ForEach(displayedItems) { item in
                     Button { selectedItem = item } label: {
                         CollectionCardView(
-                                item: item,
-                                hasMBID: matchedInstanceIds.contains(item.id),
-                                covered: coverageByInstanceId[item.id]?.covered ?? 0,
-                                total: coverageByInstanceId[item.id]?.total ?? 0,
-                                localCovered: coverageByInstanceId[item.id]?.localCovered ?? 0
-                            )
+                            item: item,
+                            hasMBID: matchedInstanceIds.contains(item.id),
+                            covered: coverageByInstanceId[item.id]?.covered ?? 0,
+                            total: coverageByInstanceId[item.id]?.total ?? 0,
+                            localCovered: coverageByInstanceId[item.id]?.localCovered ?? 0,
+                            isActive: playingInstanceId == item.id
+                        )
                     }
                     .buttonStyle(.plain)
                 }
