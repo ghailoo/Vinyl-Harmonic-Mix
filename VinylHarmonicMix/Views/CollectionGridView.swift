@@ -68,6 +68,7 @@ struct CollectionGridView: View {
     @State private var showRescanAlert = false
     @State private var showRefetchAlert = false
     @State private var showRescanAudioAlert = false
+    @State private var showSyncSheet = false
     @State private var activeFilter: CollectionFilter = .all
     @State private var activeSort: CollectionSort = .yearDesc
 
@@ -187,11 +188,21 @@ struct CollectionGridView: View {
                 filterButton
                 scanButton
                 Button {
+                    showSyncSheet = true
+                } label: {
+                    Label("Check for new releases", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .help("Check Discogs for new releases and import only additions")
+                .sheet(isPresented: $showSyncSheet) {
+                    SyncCheckView()
+                        .environment(viewModel)
+                }
+                Button {
                     Task { await viewModel.importCollection() }
                 } label: {
                     Label("Re-import from Discogs", systemImage: "arrow.down.circle")
                 }
-                .help("Re-import from Discogs")
+                .help("Re-import from Discogs (full wipe + reinsert)")
             }
         }
         .alert("Rescan All Releases?", isPresented: $showRescanAlert) {

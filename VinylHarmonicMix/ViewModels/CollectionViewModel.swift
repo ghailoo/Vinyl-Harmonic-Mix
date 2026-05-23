@@ -34,7 +34,7 @@ final class CollectionViewModel {
 
     // MARK: - Store bootstrap
 
-    private func loadFromStore() {
+    func loadFromStore() {
         guard let entities = try? context.fetch(FetchDescriptor<CollectionItemEntity>()),
               !entities.isEmpty else { return }
         let loaded = entities.compactMap { makeItem(from: $0) }
@@ -168,6 +168,78 @@ final class CollectionViewModel {
         entity.basicInformation = basic
         return entity
     }
+
+    // MARK: - Sync Stage 1: delta detection + additive import
+
+    struct SyncDelta {
+        let newIDs: Set<Int>
+        let removedIDs: Set<Int>   // informational only — never acted on
+        let remoteCount: Int
+        let localCount: Int
+        var isUpToDate: Bool { newIDs.isEmpty }
+    }
+
+    enum SyncPhase {
+        case idle
+        case checking
+        case deltaReady(SyncDelta)
+        case importing
+        case done(added: Int)
+        case failed(String)
+    }
+
+    var syncPhase: SyncPhase = .idle
+
+    func checkForNewReleases() async {
+        guard let token    = keychain.load(for: .token),    !token.isEmpty,
+              let username = keychain.load(for: .username), !username.isEmpty else {
+            syncPhase = .failed("No credentials. Configure token and username in Settings.")
+            return
+        }
+        syncPhase = .checking
+        do {
+            let remote   = try await client.fetchCollectionInstanceIDs(username: username, token: token)
+            let localIDs = Set((try? context.fetch(FetchDescriptor<CollectionItemEntity>()))?.map(\.instanceId) ?? [])
+            syncPhase = .deltaReady(SyncDelta(
+                newIDs:      remote.subtracting(localIDs),
+                removedIDs:  localIDs.subtracting(remote),
+                remoteCount: remote.count,
+                localCount:  localIDs.count
+            ))
+        } catch {
+            syncPhase = .failed(error.localizedDescription)
+        }
+    }
+
+    /// ADDITIVE import: inserts only the releases whose instanceId is in `newIDs`.
+    /// Never deletes any existing entity. Never calls persist(). Existing rows,
+    /// their TrackEntity children, file matches, MBID state and harmonic data are untouched.
+    func importNewReleases(newIDs: Set<Int>) async -> Int {
+        guard !newIDs.isEmpty else { syncPhase = .done(added: 0); return 0 }
+        guard let token    = keychain.load(for: .token),    !token.isEmpty,
+              let username = keychain.load(for: .username), !username.isEmpty else {
+            syncPhase = .failed("No credentials.")
+            return 0
+        }
+        syncPhase = .importing
+        do {
+            let allItems = try await client.fetchCollection(username: username, token: token)
+            let newItems = allItems.filter { newIDs.contains($0.id) }
+            // ADDITIVE ONLY — context.insert only, never context.delete
+            for item in newItems {
+                context.insert(makeEntity(from: item))
+            }
+            try? context.save()
+            loadFromStore()   // rebuild in-memory items from DB
+            syncPhase = .done(added: newItems.count)
+            return newItems.count
+        } catch {
+            syncPhase = .failed(error.localizedDescription)
+            return 0
+        }
+    }
+
+    func resetSyncPhase() { syncPhase = .idle }
 
     private func makeItem(from entity: CollectionItemEntity) -> CollectionItem? {
         guard let basic = entity.basicInformation else { return nil }

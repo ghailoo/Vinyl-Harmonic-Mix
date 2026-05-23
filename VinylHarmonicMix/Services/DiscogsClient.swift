@@ -132,6 +132,35 @@ final class DiscogsClient {
         JSONDecoder()
     }
 
+    /// Lightweight fetch: pages the collection endpoint but decodes ONLY instance_id from each item.
+    /// Returns the set of all instanceIds currently in the Discogs collection.
+    /// Uses the same rate limiter and auth as fetchCollection — never builds entities.
+    func fetchCollectionInstanceIDs(
+        username: String,
+        token: String,
+        onProgress: ((Int, Int) -> Void)? = nil
+    ) async throws -> Set<Int> {
+        var all: Set<Int> = []
+        var page = 1
+        var totalPages = 1
+
+        repeat {
+            guard let url = collectionURL(username: username, page: page) else {
+                throw DiscogsError.invalidResponse
+            }
+            let (data, http) = try await execute(authorizedRequest(url: url, token: token))
+            guard http.statusCode == 200 else { throw DiscogsError.httpError(http.statusCode) }
+
+            let response = try Self.makeDecoder().decode(SlimCollectionResponse.self, from: data)
+            totalPages = response.pagination.pages
+            all.formUnion(response.releases.map(\.instanceId))
+            onProgress?(page, totalPages)
+            page += 1
+        } while page <= totalPages
+
+        return all
+    }
+
     private func collectionURL(username: String, page: Int) -> URL? {
         var components = URLComponents(string: "https://api.discogs.com/users/\(username)/collection/folders/0/releases")
         components?.queryItems = [
@@ -142,7 +171,7 @@ final class DiscogsClient {
     }
 }
 
-// MARK: - Private response envelope
+// MARK: - Private response envelopes
 
 private struct CollectionResponse: Decodable {
     let pagination: Pagination
@@ -152,4 +181,15 @@ private struct CollectionResponse: Decodable {
         let page: Int
         let pages: Int
     }
+}
+
+/// Slim response — decodes only instance_id per item for delta detection.
+private struct SlimCollectionItem: Decodable {
+    let instanceId: Int
+    enum CodingKeys: String, CodingKey { case instanceId = "instance_id" }
+}
+
+private struct SlimCollectionResponse: Decodable {
+    let pagination: CollectionResponse.Pagination
+    let releases: [SlimCollectionItem]
 }

@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 enum SidebarItem: String, Hashable {
     case collection  = "Collection"
@@ -58,9 +59,19 @@ struct ContentView: View {
 #if os(macOS)
 private struct NowPlayingBar: View {
     @Environment(AudioPlaybackController.self) private var playback
+    @Environment(\.modelContext) private var modelContext
+    @State private var coverArtURL: URL? = nil
 
     var body: some View {
         HStack(spacing: 10) {
+            // Spinning record — shown whenever a file is loaded
+            SpinningRecordView(
+                isPlaying: playback.isPlaying,
+                coverArtURL: coverArtURL,
+                diameter: 28
+            )
+            .opacity(playback.currentFilePath != nil ? 1 : 0)
+
             if let path = playback.currentFilePath {
                 // Play / Pause
                 Button {
@@ -125,6 +136,21 @@ private struct NowPlayingBar: View {
         }
         .padding(.horizontal, 14)
         .frame(height: 36)
+        .task(id: playback.currentFilePath) {
+            coverArtURL = resolveCoverArt(for: playback.currentFilePath)
+        }
+    }
+
+    private func resolveCoverArt(for filePath: String?) -> URL? {
+        guard let filePath else { return nil }
+        var descriptor = FetchDescriptor<TrackEntity>(
+            predicate: #Predicate { $0.primaryLocalFilePath == filePath }
+        )
+        descriptor.fetchLimit = 1
+        guard let track = try? modelContext.fetch(descriptor).first,
+              let thumb = track.collectionItem?.basicInformation?.thumb,
+              !thumb.isEmpty else { return nil }
+        return URL(string: thumb)
     }
 
     private func formatTime(_ seconds: Double) -> String {
