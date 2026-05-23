@@ -52,7 +52,6 @@ struct CollectionGridView: View {
     @Environment(MBIDScanCoordinator.self) private var scanCoordinator
     @Environment(RecordingsScanCoordinator.self) private var recordingsCoordinator
     @Environment(AudioFeaturesScanCoordinator.self) private var audioFeaturesCoordinator
-    @Environment(AudioPlaybackController.self) private var playback
     @Environment(\.modelContext) private var modelContext
 
     @Query private var allEntities: [CollectionItemEntity]
@@ -153,10 +152,6 @@ struct CollectionGridView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                if playback.currentFilePath != nil {
-                    nowPlayingTransport
-                }
-                volumeSlider
                 HStack(spacing: 8) {
                         Image(systemName: "magnifyingglass")
                             .foregroundStyle(.secondary)
@@ -534,77 +529,6 @@ struct CollectionGridView: View {
             }
         }
         .help("Scan MusicBrainz IDs")
-    }
-
-    // MARK: - Now-playing transport
-
-    private var nowPlayingTransport: some View {
-        HStack(spacing: 6) {
-            Button {
-                guard let path = playback.currentFilePath else { return }
-                playback.play(filePath: path)
-            } label: {
-                Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .frame(width: 12)
-                    .contentTransition(.symbolEffect(.replace))
-            }
-            .buttonStyle(.plain)
-            .help(playback.isPlaying ? "Pause" : "Resume")
-
-            Button {
-                playback.stop()
-            } label: {
-                Image(systemName: "stop.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Stop")
-
-            Divider().frame(height: 14)
-
-            if let path = playback.currentFilePath {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(URL(fileURLWithPath: path).lastPathComponent)
-                        .font(.system(size: 11))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .frame(maxWidth: 160, alignment: .leading)
-                    if playback.duration > 0 {
-                        Text("\(transportFormatTime(playback.currentTime)) / \(transportFormatTime(playback.duration))")
-                            .font(.system(size: 10).monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(Capsule().fill(Color.secondary.opacity(0.12)))
-        .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.2), lineWidth: 0.5))
-    }
-
-    private var volumeSlider: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "speaker.fill")
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
-            Slider(
-                value: Binding(get: { playback.volume }, set: { playback.volume = $0 }),
-                in: 0...1
-            )
-            .frame(width: 80)
-            .controlSize(.mini)
-            Image(systemName: "speaker.wave.3.fill")
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
-        }
-    }
-
-    private func transportFormatTime(_ seconds: Double) -> String {
-        let s = max(0, Int(seconds))
-        return String(format: "%d:%02d", s / 60, s % 60)
     }
 
     // MARK: - Grid
