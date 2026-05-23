@@ -15,6 +15,7 @@ struct CollectionDetailView: View {
     @Environment(RecordingsScanCoordinator.self) private var recordingsCoordinator
     @Environment(AudioFeaturesScanCoordinator.self) private var audioFeaturesCoordinator
     @Environment(FileMatchCoordinator.self) private var fileMatchCoordinator
+    @Environment(LocalAnalysisCoordinator.self) private var localAnalysisCoordinator
 
     @State private var detail: ReleaseDetail?
     @State private var isLoading = false
@@ -33,6 +34,8 @@ struct CollectionDetailView: View {
     @State private var recordingMBIDInputError: String? = nil
     // Status for view-initiated single-item enrichment (fetch-recordings button, per-track)
     @State private var singleEnrichStatus: String? = nil
+    // Path of the file currently being Essentia-analyzed after manual assignment; nil = none
+    @State private var analyzingTrackPath: String? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -742,18 +745,27 @@ struct CollectionDetailView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .frame(maxWidth: 200, alignment: .leading)
-                Button("Change") {
-                    pickFileForTrack(trackEntity: trackEntity)
+                if analyzingTrackPath == linkedPath {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .scaleEffect(0.7)
+                    Text("Analyzing…")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Button("Change") {
+                        pickFileForTrack(trackEntity: trackEntity)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                    Button("Unlink") {
+                        fileMatchCoordinator.unlinkMatch(trackMBID: trackEntity.trackMBID)
+                        loadTrackEntities()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                    .foregroundStyle(.red)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.mini)
-                Button("Unlink") {
-                    fileMatchCoordinator.unlinkMatch(trackMBID: trackEntity.trackMBID)
-                    loadTrackEntities()
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.mini)
-                .foregroundStyle(.red)
             }
         } else {
             Button("Set file") {
@@ -774,8 +786,22 @@ struct CollectionDetailView: View {
         panel.message = "Choose an audio file for this track"
         panel.prompt = "Select"
         if panel.runModal() == .OK, let url = panel.url {
+            let path = url.path
             fileMatchCoordinator.assignFile(trackMBID: trackEntity.trackMBID, url: url)
             loadTrackEntities()
+            // Skip analysis if file was already analyzed (e.g. re-assigning a known file)
+            var fd = FetchDescriptor<LocalFileEntity>(predicate: #Predicate { $0.filePath == path })
+            fd.fetchLimit = 1
+            let alreadyAnalyzed = (try? modelContext.fetch(fd).first)
+                .map { $0.bpm > 0 || $0.analyzedAt != nil } ?? false
+            guard !alreadyAnalyzed else { return }
+            analyzingTrackPath = path
+            Task {
+                _ = await localAnalysisCoordinator.analyzeSingleFile(path: path)
+                loadTrackEntities()
+                loadFeatureEntities()
+                analyzingTrackPath = nil
+            }
         }
 #endif
     }

@@ -536,6 +536,31 @@ final class LocalAnalysisCoordinator {
         }
     }
 
+    // MARK: - Single-file analysis (triggered from detail popup on manual file assignment)
+
+    func analyzeSingleFile(path: String) async -> Bool {
+        let outcome = await runScript(filePath: path)
+        guard case .success(let result) = outcome else {
+            if case .failure(let msg) = outcome {
+                print("[LocalAnalysis] Single-file ✗ \(path): \(msg)")
+            }
+            return false
+        }
+        var fd = FetchDescriptor<LocalFileEntity>(predicate: #Predicate { $0.filePath == path })
+        fd.fetchLimit = 1
+        guard let file = try? context.fetch(fd).first else { return false }
+        file.rawBpm          = result.rawBpm
+        file.bpm             = result.bpm
+        file.key             = result.key
+        file.scale           = result.scale
+        file.keyStrength     = result.keyStrength
+        file.camelot         = result.camelot
+        file.analyzedAt      = .now
+        file.analyzerVersion = "essentia-2.1b6 degara"
+        try? context.save()
+        return true
+    }
+
     // MARK: - Write-back (tracks)
 
     private func flushResults(_ buffer: [(PersistentIdentifier, AnalysisResult)]) {
