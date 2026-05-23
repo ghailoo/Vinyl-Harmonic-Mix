@@ -1,5 +1,8 @@
 import SwiftUI
 import SwiftData
+#if os(macOS)
+import AppKit
+#endif
 
 struct CollectionDetailView: View {
     let item: CollectionItem
@@ -11,6 +14,7 @@ struct CollectionDetailView: View {
     @Environment(MBIDScanCoordinator.self) private var scanCoordinator
     @Environment(RecordingsScanCoordinator.self) private var recordingsCoordinator
     @Environment(AudioFeaturesScanCoordinator.self) private var audioFeaturesCoordinator
+    @Environment(FileMatchCoordinator.self) private var fileMatchCoordinator
 
     @State private var detail: ReleaseDetail?
     @State private var isLoading = false
@@ -293,7 +297,9 @@ struct CollectionDetailView: View {
                 let isActive  = filePath.map { playback.currentFilePath == $0 } ?? false
                 let isPlaying = isActive && playback.isPlaying
                 let normPos = normalizePosition(track.position)
-                let trackEntityByPos = trackEntities.first { normalizePosition($0.position) == normPos }
+                let trackEntityByPos: TrackEntity? =
+                    trackEntities.first { normalizePosition($0.position) == normPos }
+                    ?? matchedTrack
 
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(spacing: 0) {
@@ -358,6 +364,13 @@ struct CollectionDetailView: View {
 
                     if let te = trackEntityByPos, editingTrackMBID == te.trackMBID {
                         perTrackMBIDEditField(trackEntity: te)
+                            .padding(.bottom, 6)
+                            .padding(.horizontal, 20)
+                            .padding(.leading, 40)
+                    }
+
+                    if let te = trackEntityByPos {
+                        perTrackFileLinkRow(trackEntity: te)
                             .padding(.bottom, 6)
                             .padding(.horizontal, 20)
                             .padding(.leading, 40)
@@ -711,6 +724,65 @@ struct CollectionDetailView: View {
     private func isValidMBID(_ s: String) -> Bool {
         let pattern = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
         return s.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    // MARK: - Per-track file link
+
+    @ViewBuilder
+    private func perTrackFileLinkRow(trackEntity: TrackEntity) -> some View {
+        if trackEntity.fileMatchState == "confident",
+           let linkedPath = trackEntity.primaryLocalFilePath {
+            HStack(spacing: 6) {
+                Image(systemName: "link")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                Text(URL(fileURLWithPath: linkedPath).lastPathComponent)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: 200, alignment: .leading)
+                Button("Change") {
+                    pickFileForTrack(trackEntity: trackEntity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+                Button("Unlink") {
+                    fileMatchCoordinator.unlinkMatch(trackMBID: trackEntity.trackMBID)
+                    loadTrackEntities()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+                .foregroundStyle(.red)
+            }
+        } else {
+            Button("Set file") {
+                pickFileForTrack(trackEntity: trackEntity)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.mini)
+        }
+    }
+
+    private func pickFileForTrack(trackEntity: TrackEntity) {
+#if os(macOS)
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = libraryRootURL()
+        panel.message = "Choose an audio file for this track"
+        panel.prompt = "Select"
+        if panel.runModal() == .OK, let url = panel.url {
+            fileMatchCoordinator.assignFile(trackMBID: trackEntity.trackMBID, url: url)
+            loadTrackEntities()
+        }
+#endif
+    }
+
+    private func libraryRootURL() -> URL? {
+        guard let path = UserDefaults.standard.string(forKey: LocalLibraryService.displayPathKey) else { return nil }
+        return URL(fileURLWithPath: path)
     }
 
     private func loadEntity() {
