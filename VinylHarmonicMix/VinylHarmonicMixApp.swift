@@ -29,6 +29,8 @@ struct VinylHarmonicMixApp: App {
                 RecordingFeaturesEntity.self,
                 LocalFileEntity.self,
                 LocalAudioFeaturesEntity.self,
+                SetlistEntity.self,
+                SetlistItemEntity.self,
             ])
             // Sandbox is disabled so the default store path moves to ~/Library/Application Support/.
             // Pin to the container path so existing Discogs/MusicBrainz data is preserved
