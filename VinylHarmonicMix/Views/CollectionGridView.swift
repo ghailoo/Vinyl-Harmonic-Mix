@@ -57,6 +57,8 @@ struct CollectionGridView: View {
     @Query private var allEntities: [CollectionItemEntity]
     @Query private var allTrackEntities: [TrackEntity]
     @Query private var allFeatures: [RecordingFeaturesEntity]
+    @Query(filter: #Predicate<LocalFileEntity> { $0.bpm > 0 })
+    private var analyzedLocalFiles: [LocalFileEntity]
 
     @State private var featuresByMBID: [String: RecordingFeaturesEntity] = [:]
     @State private var coverageByInstanceId: [Int: (covered: Int, total: Int, localCovered: Int)] = [:]
@@ -148,6 +150,9 @@ struct CollectionGridView: View {
             rebuildCoverageLookup()
         }
         .onChange(of: allTrackEntities.count) { _, _ in
+            rebuildCoverageLookup()
+        }
+        .onChange(of: analyzedLocalFiles.count) { _, _ in
             rebuildCoverageLookup()
         }
         .toolbar {
@@ -320,13 +325,16 @@ struct CollectionGridView: View {
         for track in allTrackEntities {
             guard let id = track.collectionItem?.instanceId else { continue }
             totals[id, default: 0] += 1
+            // effectiveBpm covers both track-level LocalAudioFeaturesEntity and
+            // file-level LocalFileEntity.bpm (via the linked localFiles relationship)
+            let hasEffectiveBpm = track.effectiveBpm != nil
+            let hasLocalSource  = track.featureSource == .local
             let f = featuresByMBID[track.recordingMBID]
-            let hasLocalBpm = (track.localAudioFeatures?.bpm ?? 0) > 0
-            let hasAbBpm    = f?.bpm != nil && f?.camelotCode != nil
-            if hasLocalBpm || hasAbBpm {
+            let hasAbBpm = f?.bpm != nil && f?.camelotCode != nil
+            if hasEffectiveBpm || hasAbBpm {
                 coveredCounts[id, default: 0] += 1
             }
-            if hasLocalBpm {
+            if hasLocalSource {
                 localCounts[id, default: 0] += 1
             }
         }

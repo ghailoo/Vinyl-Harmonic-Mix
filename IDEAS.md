@@ -23,3 +23,28 @@ Keep a separate "Rebuild index from scratch" button in Settings as an escape hat
 Goal: adding 50 new files takes seconds (index 50), not minutes (re-read 41,385).
 
 Note: the first run with durations still needs a full pass (no file has durations yet) — incremental kicks in afterward.
+
+## FUTURE: Switch-point / cue detection (Zehren, Alunno, Bientinesi 2022, Computer Music Journal)
+Paper: "Automatic Detection of Cue Points for the Emulation of DJ Mixing". ~90% usable switch points.
+DATASET MATCH: their 150 tracks are 1987-2016 EDM, ~60% vinyl-digitized, 99-148 BPM — basically OUR collection. Method validated on exactly this music.
+
+The buildable approach (EXPERT — the simpler of their two, rule-based, no ML training needed):
+4 rules:
+  R1 Beat gridding: switch points sit on a STRONG beat (beats 1 & 3 of 4/4).
+  R2 Period alignment: switch points sit on the downbeat starting a 4-bar period.
+  R3 Novelty: switch point = high novelty in rhythmic density / loudness / instrument / harmony.
+  R4 Salience: only look in the INTRO (before the first sustained high-energy "salient" point).
+
+Pipeline (5 stages):
+  1. Feature extraction, aggregated to STRONG-BEAT windows (half-bar granularity):
+     - bass-drum onset density (drum transcription)
+     - raw signal RMS energy
+     - (STAT variant adds: hi-hat density, CQT, PCP/chroma — more features, more candidates, same precision)
+  2. Novelty: build self-similarity matrix per feature, convolve with Foote checkerboard kernel (8-bar kernel = 4-bar segments) -> novelty curve.
+  3. Offset detection: find phase offset so candidates land on 4-bar period downbeats; maximize summed weighted novelty across strong beats 4 bars apart (weight = RMS average).
+  4. DJ search space: from track start until first "salience" point (bass drum >= 2 onsets/bar AND raw energy >= median-delta, sustained). Only search here.
+  5. Classification (EXPERT): peak-pick novelty within search space; return global max of bass-drum-novelty and raw-energy-novelty -> ~2 candidate switch points/track.
+
+Essentia fit: we already have beat tracking (RhythmExtractor2013 gives beat positions for the grid) + onset/energy. Need: strong-beat/downbeat estimation (paper uses Böck et al. 2016 RNN beat+downbeat tracker — madmom), bass-drum transcription (paper uses Vogl et al. drum transcription), Foote checkerboard novelty (small numpy). Could do a simpler v1: RMS-energy novelty + beat grid only (drop drum transcription) — lower precision but far fewer dependencies.
+Storage: switch points (sec, snapped to beat) on LocalFileEntity; show as markers on the Mix waveform; click to seek/set mix-in.
+Build AFTER core mixing tool is in real use. v1 could be energy-novelty-only to avoid madmom/drum-transcription deps.

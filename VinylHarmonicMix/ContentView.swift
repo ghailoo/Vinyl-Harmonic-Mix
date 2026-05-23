@@ -2,6 +2,7 @@ import SwiftUI
 
 enum SidebarItem: String, Hashable {
     case collection  = "Collection"
+    case mix         = "Mix"
     case stats       = "Stats"
     case fileMatches = "File Matches"
 }
@@ -22,6 +23,8 @@ struct ContentView: View {
                 Divider()
                 Group {
                     switch sidebarSelection {
+                    case .mix:
+                        MixView()
                     case .stats:
                         CollectionStatsView()
                     case .fileMatches:
@@ -136,6 +139,8 @@ private struct NowPlayingBar: View {
         List(selection: $sidebarSelection) {
             Label("Collection", systemImage: "record.circle")
                 .tag(SidebarItem.collection)
+            Label("Mix", systemImage: "slider.horizontal.3")
+                .tag(SidebarItem.mix)
             Label("Stats", systemImage: "chart.bar.xaxis")
                 .tag(SidebarItem.stats)
             Label("File Matches", systemImage: "waveform.and.magnifyingglass")
