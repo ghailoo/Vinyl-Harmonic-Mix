@@ -11,6 +11,7 @@ On any error:
 """
 
 import json
+import os
 import sys
 
 
@@ -40,15 +41,19 @@ def analyze(path: str) -> dict:
 def main():
     if len(sys.argv) < 2:
         print(json.dumps({"error": "usage: essentia_analyze.py <audio_file>"}))
-        sys.exit(1)
+        sys.stdout.flush()
+        os._exit(1)
 
     path = sys.argv[1]
     try:
         result = analyze(path)
         print(json.dumps(result))
+        sys.stdout.flush()
+        os._exit(0)
     except Exception as exc:
         print(json.dumps({"error": str(exc)}))
-        sys.exit(1)
+        sys.stdout.flush()
+        os._exit(1)
 
 
 if __name__ == "__main__":
