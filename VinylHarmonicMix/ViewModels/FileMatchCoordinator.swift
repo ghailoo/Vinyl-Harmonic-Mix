@@ -71,6 +71,7 @@ final class FileMatchCoordinator {
     var noMatchCount: Int = 0
     var currentTrackLabel: String = ""
     var lastError: String? = nil
+    var orphanSweepSummary: String? = nil
 
     // In-memory candidates for review rows (transient — repopulated each scan run)
     var reviewCandidates: [String: [ScoredCandidate]] = [:]
@@ -79,6 +80,25 @@ final class FileMatchCoordinator {
     private let context: ModelContext
     private var scanTask: Task<Void, Never>?
     private var pendingLimit: Int? = nil
+
+    // Phase 0 orphan sweep: info about confident tracks whose file was deleted from disk.
+    // Populated by runPhase0(), read by reportOrphanSweepOutcome() after Phase 2.
+    private struct OrphanCheckItem: Sendable {
+        let fileID: PersistentIdentifier
+        let filePath: String
+        let linkedConfidentTrackID: PersistentIdentifier?
+        let linkedTrackArtist: String
+        let linkedTrackTitle: String
+    }
+
+    private struct StaleConfidentRecord: Sendable {
+        let trackID: PersistentIdentifier
+        let artist: String
+        let title: String
+        let deadPath: String
+    }
+
+    private var staleConfidentRecords: [StaleConfidentRecord] = []
 
     nonisolated static let formatPriority: [String: Int] = [
         "flac": 0, "aiff": 1, "wav": 2, "m4a": 3,
@@ -106,7 +126,8 @@ final class FileMatchCoordinator {
     }
 
     /// Awaitable full scan for use by SyncOrchestrator.
-    /// Runs Phase 1 (incremental file index) then Phase 2 (re-match) and returns when both complete.
+    /// Runs Phase 0 (orphan sweep), Phase 1 (incremental file index), Phase 2 (re-match),
+    /// then the orphan outcome report. Returns when all three complete.
     func startAndAwaitFullScan() async {
         guard phase == .idle || phase == .completed || phase == .cancelled else { return }
         pendingLimit = nil
@@ -116,11 +137,14 @@ final class FileMatchCoordinator {
         confidentCount = 0; reviewCount = 0; noMatchCount = 0
         currentTrackLabel = ""; lastError = nil
 
+        await runPhase0()
+        if Task.isCancelled { return }
         await runPhase1()
         if Task.isCancelled { return }
         phase = .matching
         await runPhase2(limit: nil)
         if Task.isCancelled { return }
+        reportOrphanSweepOutcome()
         try? context.save()
         phase = .completed
     }
@@ -269,14 +293,131 @@ final class FileMatchCoordinator {
         // Task inherits @MainActor from call site — all self accesses below are safe.
         scanTask = Task { [weak self] in
             guard let self else { return }
+            // Phase 0 only on full (unlimited) scans — skip for startTestBatch.
+            if limit == nil { await self.runPhase0() }
+            if Task.isCancelled { return }
             await self.runPhase1()
             if Task.isCancelled { return }
             self.phase = .matching
             await self.runPhase2(limit: limit)
             if Task.isCancelled { return }
+            if limit == nil { self.reportOrphanSweepOutcome() }
             try? self.context.save()
             self.phase = .completed
         }
+    }
+
+    // MARK: - Phase 0: Orphan sweep
+
+    /// Removes LocalFileEntity rows whose file no longer exists on disk.
+    /// Case A — no confident link: delete row silently (index bloat).
+    /// Case B — row IS the backing file for a confident track: reset track to noMatch so
+    ///          Phase 2 can re-score it against the current file layout, and record it in
+    ///          staleConfidentRecords for the post-Phase-2 outcome report.
+    /// SAFETY: never touches files that DO exist; never clears a confident track whose file is present.
+    private func runPhase0() async {
+        orphanSweepSummary = nil
+        staleConfidentRecords = []
+        currentTrackLabel = "Checking for moved/deleted files…"
+
+        // ── Snapshot (MainActor) ───────────────────────────────────────────────
+        let allFiles = (try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
+        let confidentTracks = (try? context.fetch(FetchDescriptor<TrackEntity>(
+            predicate: #Predicate { $0.fileMatchState == "confident" }
+        ))) ?? []
+
+        var confidentByPath: [String: TrackEntity] = [:]
+        for track in confidentTracks {
+            if let path = track.primaryLocalFilePath, !path.isEmpty {
+                confidentByPath[path] = track
+            }
+        }
+
+        let checkItems: [OrphanCheckItem] = allFiles.map { file in
+            let ct = confidentByPath[file.filePath]
+            return OrphanCheckItem(
+                fileID: file.persistentModelID,
+                filePath: file.filePath,
+                linkedConfidentTrackID: ct?.persistentModelID,
+                linkedTrackArtist: ct.map { $0.artistCredit.isEmpty ? "unknown" : $0.artistCredit } ?? "",
+                linkedTrackTitle: ct?.title ?? ""
+            )
+        }
+        guard !checkItems.isEmpty else { currentTrackLabel = ""; return }
+
+        // ── fileExists off-MainActor (SMB walk — ~2 min for 41k files) ─────────
+        let deadItems: [OrphanCheckItem] = await Task.detached(priority: .userInitiated) {
+            checkItems.filter { !FileManager.default.fileExists(atPath: $0.filePath) }
+        }.value
+
+        guard !deadItems.isEmpty else {
+            print("[ORPHAN SWEEP] All \(checkItems.count) indexed files verified on disk.")
+            currentTrackLabel = ""
+            return
+        }
+
+        // ── Process dead items (MainActor) ─────────────────────────────────────
+        var caseACount = 0
+        var caseBRecords: [StaleConfidentRecord] = []
+
+        for item in deadItems {
+            if let trackID = item.linkedConfidentTrackID {
+                // Case B: dead file was the backing file of a confident track — reset first
+                if let track = context.model(for: trackID) as? TrackEntity {
+                    track.primaryLocalFilePath = nil
+                    track.fileMatchState = "noMatch"
+                }
+                caseBRecords.append(StaleConfidentRecord(
+                    trackID: trackID,
+                    artist: item.linkedTrackArtist,
+                    title: item.linkedTrackTitle,
+                    deadPath: item.filePath
+                ))
+            } else {
+                caseACount += 1   // Case A: unlinked bloat
+            }
+            // Delete the orphan row — file is genuinely gone from disk
+            if let fileEntity = context.model(for: item.fileID) as? LocalFileEntity {
+                context.delete(fileEntity)
+            }
+        }
+
+        try? context.save()
+        staleConfidentRecords = caseBRecords
+
+        print("[ORPHAN SWEEP] Removed \(caseACount) dead index rows (Case A) + \(caseBRecords.count) with stale confident links reset to noMatch (Case B).")
+        currentTrackLabel = ""
+    }
+
+    /// Called after Phase 2 completes. Checks which stale-confident tracks were re-matched
+    /// and prints/stores the outcome so the user knows if any need manual re-linking.
+    private func reportOrphanSweepOutcome() {
+        guard !staleConfidentRecords.isEmpty else { return }
+
+        var rematchedCount = 0
+        var needsRelink: [StaleConfidentRecord] = []
+
+        for record in staleConfidentRecords {
+            if let track = context.model(for: record.trackID) as? TrackEntity,
+               track.fileMatchState == "confident" {
+                rematchedCount += 1
+            } else {
+                needsRelink.append(record)
+            }
+        }
+
+        let total = staleConfidentRecords.count
+        var msg = "[ORPHAN SWEEP] \(total) confident track\(total == 1 ? "" : "s") had missing files: \(rematchedCount) re-matched by Phase 2"
+        if needsRelink.isEmpty {
+            msg += " — all recovered ✓"
+        } else {
+            let names = needsRelink.map { "\($0.artist) – \($0.title)" }.joined(separator: ", ")
+            msg += ", \(needsRelink.count) need manual re-link: [\(names)]"
+        }
+
+        print(msg)
+        orphanSweepSummary = msg
+        staleConfidentRecords = []
     }
 
     // MARK: - Phase 1: Index local audio files
