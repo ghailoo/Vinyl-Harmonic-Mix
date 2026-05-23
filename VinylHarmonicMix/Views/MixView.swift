@@ -424,38 +424,44 @@ struct MixView: View {
 
     @ViewBuilder
     private func compatibleRow(_ item: CompatibleItem) -> some View {
-        HStack(spacing: 8) {
-            if let fp = item.track.filePath {
-                playButton(fp, fontSize: 14)
-            } else {
-                Image(systemName: "slash.circle")
-                    .font(.system(size: 14))
-                    .foregroundStyle(.quaternary)
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                if let fp = item.track.filePath {
+                    playButton(fp, fontSize: 14)
+                } else {
+                    Image(systemName: "slash.circle")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.quaternary)
+                }
+                camelotPill(item.track.camelot, fontSize: 9)
+                HStack(spacing: 2) {
+                    Text("\(Int(item.track.bpm.rounded()))")
+                        .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                    let deltaInt = Int(item.bpmDelta.rounded())
+                    let sign = deltaInt >= 0 ? "+" : ""
+                    Text("\(sign)\(deltaInt)")
+                        .font(.system(size: 10).monospacedDigit())
+                        .foregroundStyle(abs(item.bpmDelta) < 0.5 ? .green : .secondary)
+                }
+                .frame(width: 52, alignment: .leading)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(item.track.displayTitle)
+                        .font(.system(size: 13))
+                        .lineLimit(1)
+                    Text(item.track.displayArtist)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                sourceLabel(item.track.source)
             }
-            camelotPill(item.track.camelot, fontSize: 9)
-            HStack(spacing: 2) {
-                Text("\(Int(item.track.bpm.rounded()))")
-                    .font(.system(size: 12, weight: .semibold).monospacedDigit())
-                let deltaInt = Int(item.bpmDelta.rounded())
-                let sign = deltaInt >= 0 ? "+" : ""
-                Text("\(sign)\(deltaInt)")
-                    .font(.system(size: 10).monospacedDigit())
-                    .foregroundStyle(abs(item.bpmDelta) < 0.5 ? .green : .secondary)
+            .padding(.vertical, 2)
+
+            if let fp = item.track.filePath, playback.currentFilePath == fp {
+                SelectedTrackWaveformView(filePath: fp)
             }
-            .frame(width: 52, alignment: .leading)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(item.track.displayTitle)
-                    .font(.system(size: 13))
-                    .lineLimit(1)
-                Text(item.track.displayArtist)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 4)
-            sourceLabel(item.track.source)
         }
-        .padding(.vertical, 2)
     }
 
     // MARK: - Shared sub-components
