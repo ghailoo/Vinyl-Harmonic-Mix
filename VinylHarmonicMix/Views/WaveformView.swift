@@ -1,11 +1,17 @@
 import SwiftUI
 
+struct CueMarker {
+    let timeSec: Double
+    let type: String            // "switch_in" | "structural"
+    let energyDirection: String // "rise" | "fall" | "neutral" | ""
+}
+
 struct WaveformView: View {
     let peaks: [Float]
-    let progress: Double        // 0…1, current playhead position
-    var cuePoints: [Double] = []   // cue times in seconds
-    var duration: Double = 0       // track duration in seconds (for time→x mapping)
-    let onSeek: (Double) -> Void   // last so trailing-closure callers without cue data still compile
+    let progress: Double          // 0…1, current playhead position
+    var cueMarkers: [CueMarker] = []
+    var duration: Double = 0      // track duration in seconds (for time→x mapping)
+    let onSeek: (Double) -> Void  // last so trailing-closure callers without cue data still compile
 
     var body: some View {
         GeometryReader { geo in
@@ -61,23 +67,43 @@ struct WaveformView: View {
         }
 
         // Cue markers — drawn on top of bars + playhead
-        guard duration > 0, !cuePoints.isEmpty else { return }
-        let cueColor = Color(red: 1.0, green: 0.75, blue: 0.05)
-        for t in cuePoints {
-            guard t >= 0, t <= duration else { continue }
-            let x = size.width * CGFloat(t / duration)
+        guard duration > 0, !cueMarkers.isEmpty else { return }
 
-            // 1.5px vertical line full height
+        let switchInTimes = cueMarkers.filter { $0.type == "switch_in" }.map(\.timeSec)
+
+        // Structural ticks — drawn first (bottom layer), colored by energy direction
+        for marker in cueMarkers where marker.type == "structural" {
+            guard marker.timeSec >= 0, marker.timeSec <= duration else { continue }
+            // Suppress if within 2s of a switch_in — amber flag wins at that position
+            if switchInTimes.contains(where: { abs($0 - marker.timeSec) < 2.0 }) { continue }
+
+            let color: Color
+            switch marker.energyDirection {
+            case "rise":  color = Color(red: 0.2,  green: 0.8,  blue: 0.65)
+            case "fall":  color = Color(red: 0.45, green: 0.4,  blue: 0.9)
+            default:      color = Color(red: 0.55, green: 0.6,  blue: 0.7)
+            }
+
+            let x = size.width * CGFloat(marker.timeSec / duration)
+            let stemRect = CGRect(x: max(0, x - 0.5), y: 0, width: 1, height: size.height)
+            ctx.fill(Path(stemRect), with: .color(color.opacity(0.85)))
+        }
+
+        // Switch-in markers — drawn last (top layer), always visually dominant
+        let amber = Color(red: 1.0, green: 0.75, blue: 0.05)
+        for marker in cueMarkers where marker.type == "switch_in" {
+            guard marker.timeSec >= 0, marker.timeSec <= duration else { continue }
+            let x = size.width * CGFloat(marker.timeSec / duration)
+
             let stemRect = CGRect(x: max(0, x - 0.75), y: 0, width: 1.5, height: size.height)
-            ctx.fill(Path(stemRect), with: .color(cueColor.opacity(0.9)))
+            ctx.fill(Path(stemRect), with: .color(amber.opacity(0.9)))
 
-            // Small downward-pointing flag at the top edge
             var flag = Path()
             flag.move(to: CGPoint(x: x - 5, y: 0))
             flag.addLine(to: CGPoint(x: x + 5, y: 0))
             flag.addLine(to: CGPoint(x: x, y: 8))
             flag.closeSubpath()
-            ctx.fill(flag, with: .color(cueColor))
+            ctx.fill(flag, with: .color(amber))
         }
     }
 }

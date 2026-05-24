@@ -6,7 +6,7 @@ struct TrackWaveformView: View {
     @Environment(\.modelContext) private var modelContext
     let filePath: String
 
-    @State private var cueTimes: [Double] = []
+    @State private var cueMarkers: [CueMarker] = []
     @State private var fileDuration: Double = 0
 
     var body: some View {
@@ -24,7 +24,7 @@ struct TrackWaveformView: View {
                 WaveformView(
                     peaks: peaks,
                     progress: progress,
-                    cuePoints: cueTimes,
+                    cueMarkers: cueMarkers,
                     duration: duration
                 ) { fraction in
                     guard playback.currentFilePath == filePath else { return }
@@ -68,7 +68,9 @@ struct TrackWaveformView: View {
         )
         fd.fetchLimit = 1
         guard let file = try? modelContext.fetch(fd).first else { return }
-        cueTimes     = file.cuePoints.map(\.timeSec).sorted()
+        cueMarkers   = file.cuePoints
+            .map { CueMarker(timeSec: $0.timeSec, type: $0.type, energyDirection: $0.energyDirection) }
+            .sorted { $0.timeSec < $1.timeSec }
         fileDuration = file.durationMs > 0 ? Double(file.durationMs) / 1000.0 : 0
     }
 
