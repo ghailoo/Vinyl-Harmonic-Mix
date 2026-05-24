@@ -584,6 +584,7 @@ struct SetBuilderDetailView: View {
                     .lineLimit(1)
                 if let fp = t.filePath {
                     TrackWaveformView(filePath: fp)
+                        .id(fp)
                         .padding(.horizontal, -16)
                 }
             } else {

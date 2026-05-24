@@ -14,6 +14,7 @@ struct TrackWaveformView: View {
             switch playback.waveformState(for: filePath) {
             case .ready(let peaks):
                 WaveformView(peaks: peaks, progress: progress) { fraction in
+                    guard playback.currentFilePath == filePath else { return }
                     playback.seek(toFraction: fraction)
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 4))
