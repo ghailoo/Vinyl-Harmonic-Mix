@@ -22,6 +22,7 @@ struct MixModeView: View {
     @Query private var allCollectionEntities: [CollectionItemEntity]
 
     // Set & scope
+    @AppStorage("mixActiveSetID") private var activeSetID: String = ""
     @State private var activeSet: SetlistEntity?
     @State private var scope: MixScope = .confident
 
@@ -120,12 +121,24 @@ struct MixModeView: View {
 
             coverGrid
         }
-        .onAppear { rebuildPool() }
+        .onAppear {
+            rebuildPool()
+            if activeSet == nil, !activeSetID.isEmpty {
+                activeSet = allSets.first { $0.id == activeSetID }
+                if activeSet == nil { activeSetID = "" }  // stored set was deleted
+            }
+        }
         .onChange(of: scope)                    { _, _ in rebuildPool() }
         .onChange(of: allTrackEntities.count)   { _, _ in rebuildPool() }
         .onChange(of: analyzedFiles.count)      { _, _ in rebuildPool() }
+        .onChange(of: activeSet) { _, newSet in
+            activeSetID = newSet?.id ?? ""
+        }
         .onChange(of: allSets) { _, newSets in
-            if let active = activeSet, !newSets.contains(active) { activeSet = nil }
+            if let active = activeSet, !newSets.contains(active) {
+                activeSet = nil
+                activeSetID = ""
+            }
         }
         .onChange(of: candidateTrack) { _, val in
             if let fp = val?.filePath { playback.loadWaveformIfNeeded(filePath: fp) }
