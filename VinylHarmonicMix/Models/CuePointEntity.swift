@@ -7,6 +7,8 @@ final class CuePointEntity {
     var feature: String = ""
     var novelty: Double = 0.0
     var beatIndex: Int = 0
+    var type: String = "switch_in"     // "switch_in" | "structural"
+    var energyDirection: String = ""   // "rise" | "fall" | "neutral" | ""
     var createdAt: Date = Date()
 
     var localFile: LocalFileEntity?

@@ -5,9 +5,13 @@ import SwiftData
 @Observable
 final class CueDetectionCoordinator {
 
-    // MARK: - Script location
+    // MARK: - Script location + version
     static let scriptPath: String =
         "/Users/ghailen/Desktop/MacOS Project/VinylHarmonicMix/Scripts/essentia_cue.py"
+
+    // Bump this string whenever the detection algorithm changes.
+    // Files whose cueAnalyzerVersion != currentCueVersion re-qualify for detection.
+    static let currentCueVersion = "v2-structural"
 
     // MARK: - Phase
     enum Phase: Equatable {
@@ -85,7 +89,11 @@ final class CueDetectionCoordinator {
 
     private func runDetection(limit: Int?) async {
         let allFiles = (try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
-        let candidates = allFiles.filter { $0.bpm > 0 && $0.cueAnalyzedAt == nil && !$0.filePath.isEmpty }
+        let candidates = allFiles.filter {
+            $0.bpm > 0
+            && !$0.filePath.isEmpty
+            && ($0.cueAnalyzedAt == nil || $0.cueAnalyzerVersion != Self.currentCueVersion)
+        }
         let scoped = limit.map { Array(candidates.prefix($0)) } ?? candidates
 
         let summaries: [FileSummary] = scoped.map {
@@ -110,7 +118,11 @@ final class CueDetectionCoordinator {
             switch outcome {
             case .success(let result):
                 saveBuffer.append((summary.id, result))
-                if result.switchPoints.isEmpty { skippedCount += 1 } else { detectedCount += 1 }
+                if result.switchPoints.isEmpty && result.structuralPoints.isEmpty {
+                    skippedCount += 1
+                } else {
+                    detectedCount += 1
+                }
             case .failure(let msg):
                 failedCount += 1
                 print("[CueDetection] ✗ \(summary.filePath): \(msg)")
@@ -138,7 +150,14 @@ final class CueDetectionCoordinator {
             let novelty: Double
             let beatIndex: Int
         }
+        struct StructuralPoint: Sendable {
+            let timeSec: Double
+            let novelty: Double
+            let beatIndex: Int
+            let energyDirection: String
+        }
         let switchPoints: [SwitchPoint]
+        let structuralPoints: [StructuralPoint]
     }
 
     enum ScriptOutcome: Sendable {
@@ -180,8 +199,8 @@ final class CueDetectionCoordinator {
 
             if let err = dict["error"] as? String { return .failure(err) }
 
-            let rawPoints = dict["switch_points"] as? [[String: Any]] ?? []
-            let switchPoints: [CueScriptResult.SwitchPoint] = rawPoints.compactMap { sp in
+            let rawSwitch = dict["switch_points"] as? [[String: Any]] ?? []
+            let switchPoints: [CueScriptResult.SwitchPoint] = rawSwitch.compactMap { sp in
                 guard let t = sp["time_sec"] as? Double,
                       let f = sp["feature"] as? String,
                       let n = sp["novelty"] as? Double,
@@ -189,7 +208,18 @@ final class CueDetectionCoordinator {
                 return CueScriptResult.SwitchPoint(timeSec: t, feature: f, novelty: n, beatIndex: b)
             }
 
-            return .success(CueScriptResult(switchPoints: switchPoints))
+            let rawStruct = dict["structural_points"] as? [[String: Any]] ?? []
+            let structuralPoints: [CueScriptResult.StructuralPoint] = rawStruct.compactMap { sp in
+                guard let t = sp["time_sec"] as? Double,
+                      let n = sp["novelty"] as? Double,
+                      let b = sp["beat_index"] as? Int else { return nil }
+                let dir = sp["energy_direction"] as? String ?? ""
+                return CueScriptResult.StructuralPoint(timeSec: t, novelty: n, beatIndex: b,
+                                                       energyDirection: dir)
+            }
+
+            return .success(CueScriptResult(switchPoints: switchPoints,
+                                            structuralPoints: structuralPoints))
         }.value
     }
 
@@ -199,21 +229,39 @@ final class CueDetectionCoordinator {
         for (fileID, result) in buffer {
             guard let file = context.model(for: fileID) as? LocalFileEntity else { continue }
 
+            // Clear all previous cue rows before writing the new v2 set
             for existing in file.cuePoints { context.delete(existing) }
 
             for sp in result.switchPoints {
                 let cue = CuePointEntity()
-                cue.timeSec   = sp.timeSec
-                cue.feature   = sp.feature
-                cue.novelty   = sp.novelty
-                cue.beatIndex = sp.beatIndex
-                cue.createdAt = .now
-                cue.localFile = file
+                cue.timeSec         = sp.timeSec
+                cue.feature         = sp.feature
+                cue.novelty         = sp.novelty
+                cue.beatIndex       = sp.beatIndex
+                cue.type            = "switch_in"
+                cue.energyDirection = ""
+                cue.createdAt       = .now
+                cue.localFile       = file
                 context.insert(cue)
                 file.cuePoints.append(cue)
             }
 
-            file.cueAnalyzedAt = .now
+            for sp in result.structuralPoints {
+                let cue = CuePointEntity()
+                cue.timeSec         = sp.timeSec
+                cue.feature         = "energy"
+                cue.novelty         = sp.novelty
+                cue.beatIndex       = sp.beatIndex
+                cue.type            = "structural"
+                cue.energyDirection = sp.energyDirection
+                cue.createdAt       = .now
+                cue.localFile       = file
+                context.insert(cue)
+                file.cuePoints.append(cue)
+            }
+
+            file.cueAnalyzedAt      = .now
+            file.cueAnalyzerVersion = Self.currentCueVersion
         }
         try? context.save()
     }
