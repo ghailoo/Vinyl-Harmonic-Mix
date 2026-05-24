@@ -54,3 +54,16 @@ Add a filter control (All / Perfect match / Energy boost / Energy drop / Mood sw
 compatible-tracks list in the set builder (and Mix tab — they share HarmonicCompatibility).
 "All" = current continuous grouped scroll-through (default, keep as-is). Selecting a group narrows
 to just that group. Best of both: browse-everything OR focus-one group.
+
+## Stage 2.6 (REVISED) — Transition bubble between Deck A and Deck B
+A dedicated info bubble BETWEEN the two decks in the builder, evaluating ONLY the current A→B
+transition the user is auditioning (before "Add to Set"):
+- BPM difference (e.g. "+2 BPM", and/or % difference)
+- Camelot relationship (e.g. "8A → 8B")
+- Move type (perfect match / energy boost / energy drop / mood switch / hard cut)
+- BLEND GRADE — quality score for the specific transition:
+  * Perfect (green): same/adjacent Camelot AND BPM within ~3%
+  * Good (blue): harmonic relationship AND BPM within ~6%
+  * Workable (orange): harmonic but larger BPM gap, OR close BPM but off-key
+  * Hard cut (grey): neither — a deliberate break (not "bad", ties to 2.7)
+Reuses transitionInfo() from Stage 3; adds a grading function. Sits visually between Deck A & Deck B.

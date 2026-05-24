@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import AppKit
 
 struct SetBuilderDetailView: View {
     let setlist: SetlistEntity
@@ -15,6 +16,15 @@ struct SetBuilderDetailView: View {
     @State private var candidateTrack: MixTrack? = nil
     @State private var startSearchQuery: String = ""
     @State private var filteredPool: [MixTrack] = []
+
+    // Play-through
+    @State private var isPlayingThrough: Bool = false
+    @State private var playThroughIndex: Int = 0
+
+    // Export feedback
+    @State private var showCopiedFeedback: Bool = false
+
+    // MARK: - Computed
 
     private var sortedItems: [SetlistItemEntity] {
         setlist.items.sorted { $0.position < $1.position }
@@ -33,10 +43,23 @@ struct SetBuilderDetailView: View {
         )
     }
 
+    private var journeySummary: String {
+        let items = sortedItems
+        guard !items.isEmpty else { return "" }
+        let bpms = items.map { $0.bpm }
+        let lo = Int((bpms.min() ?? 0).rounded())
+        let hi = Int((bpms.max() ?? 0).rounded())
+        let bpmStr = lo == hi ? "\(lo) BPM" : "\(lo)–\(hi) BPM"
+        let camelotPath = items.map { $0.camelot }.joined(separator: " → ")
+        return "\(bpmStr) · \(camelotPath)"
+    }
+
+    // MARK: - Body
+
     var body: some View {
         VStack(spacing: 0) {
             if !sortedItems.isEmpty {
-                setTracklistHeader
+                journeyPanel
                 Divider()
             }
             if sortedItems.isEmpty {
@@ -52,6 +75,12 @@ struct SetBuilderDetailView: View {
             if let fp = newVal?.filePath {
                 playback.loadWaveformIfNeeded(filePath: fp)
             }
+        }
+        // Track-end detection: playbackFinishedCount increments only on natural end,
+        // not on user pause/stop. Advance the play-through queue when this fires.
+        .onChange(of: playback.playbackFinishedCount) { _, _ in
+            guard isPlayingThrough else { return }
+            advancePlayThrough()
         }
     }
 
@@ -89,52 +118,170 @@ struct SetBuilderDetailView: View {
         }
     }
 
-    // MARK: - Set tracklist header
+    // MARK: - Journey panel (tracklist + transitions + play controls)
 
-    private var setTracklistHeader: some View {
-        ScrollView(.vertical) {
-            VStack(spacing: 0) {
-                ForEach(Array(sortedItems.enumerated()), id: \.offset) { idx, item in
-                    HStack(spacing: 8) {
-                        Text("\(idx + 1)")
-                            .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .frame(width: 20, alignment: .trailing)
-                        camelotPill(item.camelot, fontSize: 9)
-                        Text("\(Int(item.bpm.rounded()))")
-                            .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .frame(width: 28, alignment: .trailing)
-                        Text(item.displayTitle)
-                            .font(.system(size: 12))
-                            .lineLimit(1)
-                        Text("–")
-                            .foregroundStyle(.tertiary)
-                            .font(.system(size: 11))
-                        Text(item.displayArtist)
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                        Spacer()
-                        if idx == sortedItems.count - 1 {
-                            Text("anchor")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 2)
-                                .background(Capsule().fill(Color.accentColor))
-                        }
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 5)
-                    .background(idx == sortedItems.count - 1 ? Color.accentColor.opacity(0.06) : Color.clear)
-                    if idx < sortedItems.count - 1 {
-                        Divider().padding(.leading, 14)
-                    }
+    private var journeyPanel: some View {
+        VStack(spacing: 0) {
+            // Summary header + action buttons
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    let count = sortedItems.count
+                    Text("\(count) track\(count == 1 ? "" : "s")")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(journeySummary)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
                 }
+                Spacer()
+                Button(action: isPlayingThrough ? stopPlayThrough : startPlayThrough) {
+                    Label(isPlayingThrough ? "Stop" : "Play Set",
+                          systemImage: isPlayingThrough ? "stop.fill" : "play.fill")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Button(action: copyTracklist) {
+                    Label(showCopiedFeedback ? "Copied!" : "Copy Tracklist",
+                          systemImage: showCopiedFeedback ? "checkmark" : "doc.on.clipboard")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(showCopiedFeedback)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(Color.secondary.opacity(0.04))
+
+            Divider()
+
+            // Track list with drag-to-reorder and delete
+            List {
+                ForEach(Array(sortedItems.enumerated()), id: \.element.persistentModelID) { idx, item in
+                    trackRow(item: item, idx: idx)
+                        .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 10))
+                }
+                .onMove { from, to in reorderItems(from: from, to: to) }
+            }
+            .listStyle(.plain)
+            .frame(maxHeight: 280)
+        }
+    }
+
+    // MARK: - Track row (with transition connector)
+
+    @ViewBuilder
+    private func trackRow(item: SetlistItemEntity, idx: Int) -> some View {
+        let items = sortedItems
+        let total = items.count
+        let isNowPlaying = isPlayingThrough
+            && !item.filePath.isEmpty
+            && playback.currentFilePath == item.filePath
+
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text("\(idx + 1)")
+                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20, alignment: .trailing)
+                camelotPill(item.camelot, fontSize: 9)
+                Text("\(Int(item.bpm.rounded()))")
+                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, alignment: .trailing)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(item.displayTitle)
+                        .font(.system(size: 12))
+                        .lineLimit(1)
+                    Text(item.displayArtist)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                if isNowPlaying {
+                    Image(systemName: playback.isPlaying ? "speaker.wave.2.fill" : "speaker.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.accentColor)
+                        .symbolEffect(.variableColor, isActive: playback.isPlaying)
+                }
+                if idx == total - 1 {
+                    Text("anchor")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.accentColor))
+                }
+                Button(role: .destructive) { removeItem(item) } label: {
+                    Image(systemName: "minus.circle.fill")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color.red.opacity(0.65))
+                }
+                .buttonStyle(.plain)
+                .help("Remove from set")
+            }
+            .padding(.vertical, 4)
+
+            // Transition connector to next track
+            if idx < total - 1 {
+                let next = items[idx + 1]
+                let info = transitionInfo(from: item, to: next)
+                HStack(spacing: 6) {
+                    Rectangle()
+                        .fill(Color.secondary.opacity(0.25))
+                        .frame(width: 1, height: 10)
+                        .padding(.leading, 23)
+                    Text("\(info.bpmDelta) · \(info.label)")
+                        .font(.system(size: 10))
+                        .foregroundStyle(info.group?.color ?? Color.secondary.opacity(0.7))
+                }
+                .padding(.bottom, 2)
             }
         }
-        .frame(maxHeight: 180)
+        .listRowBackground(isNowPlaying ? Color.accentColor.opacity(0.07) : Color.clear)
+    }
+
+    // MARK: - Transition classification
+
+    private struct TransitionInfo {
+        let bpmDelta: String
+        let label: String
+        let group: HarmonicGroup?
+    }
+
+    private func transitionInfo(from: SetlistItemEntity, to: SetlistItemEntity) -> TransitionInfo {
+        let delta = to.bpm - from.bpm
+        let rounded = Int(delta.rounded())
+        let bpmDelta: String
+        if abs(delta) < 0.5 {
+            bpmDelta = "±0 BPM"
+        } else {
+            bpmDelta = "\(rounded >= 0 ? "+" : "")\(rounded) BPM"
+        }
+
+        let fromCode = from.camelot
+        let toCode   = to.camelot
+
+        guard !fromCode.isEmpty, !toCode.isEmpty else {
+            return TransitionInfo(bpmDelta: bpmDelta, label: "—", group: nil)
+        }
+
+        if fromCode == toCode {
+            return TransitionInfo(bpmDelta: bpmDelta, label: "\(fromCode)→\(toCode): perfect match", group: .perfectMatch)
+        }
+
+        let compat = CamelotConverter.compatibleCodes(for: fromCode)
+        // compat[0]=mood switch, compat[1]=energy boost, compat[2]=energy drop
+        if compat.count >= 3 && toCode == compat[1] {
+            return TransitionInfo(bpmDelta: bpmDelta, label: "\(fromCode)→\(toCode): energy boost", group: .energyBoost)
+        } else if compat.count >= 3 && toCode == compat[2] {
+            return TransitionInfo(bpmDelta: bpmDelta, label: "\(fromCode)→\(toCode): energy drop", group: .energyDrop)
+        } else if !compat.isEmpty && toCode == compat[0] {
+            return TransitionInfo(bpmDelta: bpmDelta, label: "\(fromCode)→\(toCode): mood switch", group: .moodSwitch)
+        } else {
+            return TransitionInfo(bpmDelta: bpmDelta, label: "\(fromCode)→\(toCode): —", group: nil)
+        }
     }
 
     // MARK: - Pick-start view
@@ -365,6 +512,81 @@ struct SetBuilderDetailView: View {
         .listRowBackground(isSelected ? Color.accentColor.opacity(0.08) : Color.clear)
         .contentShape(Rectangle())
         .onTapGesture { candidateTrack = item.track }
+    }
+
+    // MARK: - Play-through
+
+    private func startPlayThrough() {
+        guard !sortedItems.isEmpty else { return }
+        playThroughIndex = 0
+        isPlayingThrough = true
+        playItemAt(0)
+    }
+
+    private func stopPlayThrough() {
+        isPlayingThrough = false
+        playback.pause()
+    }
+
+    private func advancePlayThrough() {
+        let items = sortedItems
+        var next = playThroughIndex + 1
+        while next < items.count && items[next].filePath.isEmpty {
+            next += 1
+        }
+        if next < items.count {
+            playThroughIndex = next
+            playItemAt(next)
+        } else {
+            isPlayingThrough = false
+            playThroughIndex = 0
+        }
+    }
+
+    private func playItemAt(_ idx: Int) {
+        let items = sortedItems
+        guard idx < items.count, !items[idx].filePath.isEmpty else { return }
+        playback.play(filePath: items[idx].filePath)
+    }
+
+    // MARK: - Reorder + Remove
+
+    private func reorderItems(from source: IndexSet, to destination: Int) {
+        var items = sortedItems
+        items.move(fromOffsets: source, toOffset: destination)
+        for (newPos, item) in items.enumerated() {
+            item.position = newPos
+        }
+        try? modelContext.save()
+        if isPlayingThrough { stopPlayThrough() }
+    }
+
+    private func removeItem(_ item: SetlistItemEntity) {
+        let remaining = sortedItems.filter { $0.persistentModelID != item.persistentModelID }
+        if candidateTrack?.filePath == item.filePath { candidateTrack = nil }
+        modelContext.delete(item)
+        for (newPos, track) in remaining.enumerated() {
+            track.position = newPos
+        }
+        try? modelContext.save()
+        if isPlayingThrough && remaining.isEmpty { stopPlayThrough() }
+    }
+
+    // MARK: - Text export
+
+    private func copyTracklist() {
+        let items = sortedItems
+        var lines = [setlist.name]
+        for (i, item) in items.enumerated() {
+            lines.append("\(i + 1). \(item.displayArtist) – \(item.displayTitle) (\(Int(item.bpm.rounded())) BPM, \(item.camelot))")
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
+        showCopiedFeedback = true
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            showCopiedFeedback = false
+        }
     }
 
     // MARK: - Actions

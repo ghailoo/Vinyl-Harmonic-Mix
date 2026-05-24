@@ -134,10 +134,16 @@ final class AudioPlaybackController {
 
     // MARK: - Internal callbacks (called by PlayerDelegate on MainActor)
 
+    /// Incremented each time a track ends naturally (AVAudioPlayerDelegate).
+    /// Observers can watch this to auto-advance a play-queue; it is NOT incremented
+    /// when the user pauses or stops, so pause-vs-finish is unambiguous.
+    private(set) var playbackFinishedCount: Int = 0
+
     func handlePlaybackFinished() {
         isPlaying = false
         currentTime = duration
         stopTimer()
+        playbackFinishedCount += 1
     }
 
     func handleDecodeError(_ message: String) {
