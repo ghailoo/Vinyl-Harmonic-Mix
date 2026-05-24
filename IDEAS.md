@@ -48,3 +48,9 @@ Pipeline (5 stages):
 Essentia fit: we already have beat tracking (RhythmExtractor2013 gives beat positions for the grid) + onset/energy. Need: strong-beat/downbeat estimation (paper uses Böck et al. 2016 RNN beat+downbeat tracker — madmom), bass-drum transcription (paper uses Vogl et al. drum transcription), Foote checkerboard novelty (small numpy). Could do a simpler v1: RMS-energy novelty + beat grid only (drop drum transcription) — lower precision but far fewer dependencies.
 Storage: switch points (sec, snapped to beat) on LocalFileEntity; show as markers on the Mix waveform; click to seek/set mix-in.
 Build AFTER core mixing tool is in real use. v1 could be energy-novelty-only to avoid madmom/drum-transcription deps.
+
+## Stage 2.5 — Compatibility group filter (parked)
+Add a filter control (All / Perfect match / Energy boost / Energy drop / Mood switch) above the
+compatible-tracks list in the set builder (and Mix tab — they share HarmonicCompatibility).
+"All" = current continuous grouped scroll-through (default, keep as-is). Selecting a group narrows
+to just that group. Best of both: browse-everything OR focus-one group.
