@@ -8,6 +8,15 @@ enum HarmonicGroup: String, CaseIterable {
     case energyDrop   = "Energy drop"
     case moodSwitch   = "Mood switch"
 
+    var shortName: String {
+        switch self {
+        case .perfectMatch: return "Perfect"
+        case .energyBoost:  return "Energy+"
+        case .energyDrop:   return "Energy−"
+        case .moodSwitch:   return "Mood"
+        }
+    }
+
     var systemImage: String {
         switch self {
         case .perfectMatch: return "checkmark.circle.fill"

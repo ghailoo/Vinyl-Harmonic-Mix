@@ -24,6 +24,49 @@ struct SetBuilderDetailView: View {
     // Export feedback
     @State private var showCopiedFeedback: Bool = false
 
+    // Compatibility group filter (nil = All)
+    @State private var groupFilter: HarmonicGroup? = nil
+
+    // "Pick any track" hard-cut picker
+    @State private var showAnyTrackPicker: Bool = false
+    @State private var anyTrackQuery: String = ""
+    @State private var filteredAnyTrackPool: [MixTrack] = []
+
+    // MARK: - Blend grade
+
+    private enum BlendGrade {
+        case perfect   // harmonic + BPM ≤ 3%
+        case good      // harmonic + BPM ≤ 6%
+        case workable  // harmonic but BPM > 6%, OR BPM ≤ 6% but not harmonic
+        case hardCut   // neither harmonic nor close BPM
+
+        var label: String {
+            switch self {
+            case .perfect:  return "Perfect"
+            case .good:     return "Good"
+            case .workable: return "Workable"
+            case .hardCut:  return "Hard cut"
+            }
+        }
+
+        var color: Color {
+            switch self {
+            case .perfect:  return Color(red: 0.15, green: 0.55, blue: 0.30)
+            case .good:     return .blue
+            case .workable: return .orange
+            case .hardCut:  return Color.secondary
+            }
+        }
+    }
+
+    // MARK: - Transition info model
+
+    private struct TransitionInfo {
+        let bpmDelta: String
+        let label: String
+        let group: HarmonicGroup?
+    }
+
     // MARK: - Computed
 
     private var sortedItems: [SetlistItemEntity] {
@@ -54,6 +97,10 @@ struct SetBuilderDetailView: View {
         return "\(bpmStr) · \(camelotPath)"
     }
 
+    private var displayGroups: [HarmonicGroup] {
+        if let f = groupFilter { return [f] } else { return HarmonicGroup.allCases }
+    }
+
     // MARK: - Body
 
     var body: some View {
@@ -71,13 +118,12 @@ struct SetBuilderDetailView: View {
         .onAppear { buildPool() }
         .onChange(of: analyzedFiles.count) { _, _ in buildPool() }
         .onChange(of: startSearchQuery) { _, _ in filterStartPool() }
+        .onChange(of: anyTrackQuery) { _, _ in filterAnyTrackPool() }
         .onChange(of: candidateTrack) { _, newVal in
             if let fp = newVal?.filePath {
                 playback.loadWaveformIfNeeded(filePath: fp)
             }
         }
-        // Track-end detection: playbackFinishedCount increments only on natural end,
-        // not on user pause/stop. Advance the play-through queue when this fires.
         .onChange(of: playback.playbackFinishedCount) { _, _ in
             guard isPlayingThrough else { return }
             advancePlayThrough()
@@ -118,11 +164,88 @@ struct SetBuilderDetailView: View {
         }
     }
 
-    // MARK: - Journey panel (tracklist + transitions + play controls)
+    private func filterAnyTrackPool() {
+        let q = anyTrackQuery.lowercased()
+        let snap = pool
+        Task {
+            let result = await Task.detached(priority: .userInitiated) { () -> [MixTrack] in
+                guard !q.isEmpty else { return snap }
+                return snap.filter {
+                    $0.displayArtist.lowercased().contains(q) ||
+                    $0.displayTitle.lowercased().contains(q)
+                }
+            }.value
+            filteredAnyTrackPool = result
+        }
+    }
+
+    // MARK: - Blend grade + transition classification
+
+    private func blendGrade(anchor: MixTrack, candidate: MixTrack) -> BlendGrade {
+        let bpmPct = anchor.bpm > 0
+            ? abs(candidate.bpm - anchor.bpm) / anchor.bpm * 100.0
+            : 100.0
+
+        let isHarmonic: Bool
+        if anchor.camelot.isEmpty || candidate.camelot.isEmpty {
+            isHarmonic = false
+        } else if anchor.camelot == candidate.camelot {
+            isHarmonic = true
+        } else {
+            let compat = CamelotConverter.compatibleCodes(for: anchor.camelot)
+            isHarmonic = compat.contains(candidate.camelot)
+        }
+
+        switch (isHarmonic, bpmPct) {
+        case (true,  let p) where p <= 3: return .perfect
+        case (true,  let p) where p <= 6: return .good
+        case (true,  _):                  return .workable
+        case (false, let p) where p <= 6: return .workable
+        default:                          return .hardCut
+        }
+    }
+
+    // Base implementation — takes raw values so it can serve both entity and track call sites
+    private func transitionInfo(fromCamelot: String, fromBPM: Double,
+                                toCamelot: String,   toBPM: Double) -> TransitionInfo {
+        let delta   = toBPM - fromBPM
+        let rounded = Int(delta.rounded())
+        let bpmDelta: String
+        if abs(delta) < 0.5 {
+            bpmDelta = "±0 BPM"
+        } else {
+            bpmDelta = "\(rounded >= 0 ? "+" : "")\(rounded) BPM"
+        }
+        guard !fromCamelot.isEmpty, !toCamelot.isEmpty else {
+            return TransitionInfo(bpmDelta: bpmDelta, label: "—", group: nil)
+        }
+        if fromCamelot == toCamelot {
+            return TransitionInfo(bpmDelta: bpmDelta, label: "\(fromCamelot)→\(toCamelot): perfect match", group: .perfectMatch)
+        }
+        let compat = CamelotConverter.compatibleCodes(for: fromCamelot)
+        if compat.count >= 3 && toCamelot == compat[1] {
+            return TransitionInfo(bpmDelta: bpmDelta, label: "\(fromCamelot)→\(toCamelot): energy boost",  group: .energyBoost)
+        } else if compat.count >= 3 && toCamelot == compat[2] {
+            return TransitionInfo(bpmDelta: bpmDelta, label: "\(fromCamelot)→\(toCamelot): energy drop",   group: .energyDrop)
+        } else if !compat.isEmpty && toCamelot == compat[0] {
+            return TransitionInfo(bpmDelta: bpmDelta, label: "\(fromCamelot)→\(toCamelot): mood switch",   group: .moodSwitch)
+        } else {
+            return TransitionInfo(bpmDelta: bpmDelta, label: "\(fromCamelot)→\(toCamelot): —",             group: nil)
+        }
+    }
+
+    private func transitionInfo(from: SetlistItemEntity, to: SetlistItemEntity) -> TransitionInfo {
+        transitionInfo(fromCamelot: from.camelot, fromBPM: from.bpm, toCamelot: to.camelot, toBPM: to.bpm)
+    }
+
+    private func transitionInfo(from: MixTrack, to: MixTrack) -> TransitionInfo {
+        transitionInfo(fromCamelot: from.camelot, fromBPM: from.bpm, toCamelot: to.camelot, toBPM: to.bpm)
+    }
+
+    // MARK: - Journey panel
 
     private var journeyPanel: some View {
         VStack(spacing: 0) {
-            // Summary header + action buttons
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
                     let count = sortedItems.count
@@ -155,7 +278,6 @@ struct SetBuilderDetailView: View {
 
             Divider()
 
-            // Track list with drag-to-reorder and delete
             List {
                 ForEach(Array(sortedItems.enumerated()), id: \.element.persistentModelID) { idx, item in
                     trackRow(item: item, idx: idx)
@@ -168,7 +290,7 @@ struct SetBuilderDetailView: View {
         }
     }
 
-    // MARK: - Track row (with transition connector)
+    // MARK: - Track row
 
     @ViewBuilder
     private func trackRow(item: SetlistItemEntity, idx: Int) -> some View {
@@ -223,7 +345,6 @@ struct SetBuilderDetailView: View {
             }
             .padding(.vertical, 4)
 
-            // Transition connector to next track
             if idx < total - 1 {
                 let next = items[idx + 1]
                 let info = transitionInfo(from: item, to: next)
@@ -242,49 +363,56 @@ struct SetBuilderDetailView: View {
         .listRowBackground(isNowPlaying ? Color.accentColor.opacity(0.07) : Color.clear)
     }
 
-    // MARK: - Transition classification
+    // MARK: - Transition bubble (between Deck A and Deck B)
 
-    private struct TransitionInfo {
-        let bpmDelta: String
-        let label: String
-        let group: HarmonicGroup?
+    @ViewBuilder
+    private func transitionBubble(anchor: MixTrack, candidate: MixTrack) -> some View {
+        let grade = blendGrade(anchor: anchor, candidate: candidate)
+        let info  = transitionInfo(from: anchor, to: candidate)
+        let bpmPct = anchor.bpm > 0
+            ? abs(candidate.bpm - anchor.bpm) / anchor.bpm * 100.0
+            : 0.0
+
+        VStack(spacing: 3) {
+            Circle()
+                .fill(grade.color)
+                .frame(width: 10, height: 10)
+            Text(grade.label)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(grade.color)
+                .multilineTextAlignment(.center)
+
+            Rectangle()
+                .fill(Color.secondary.opacity(0.2))
+                .frame(height: 1)
+                .padding(.vertical, 2)
+
+            if !anchor.camelot.isEmpty, !candidate.camelot.isEmpty {
+                Text("\(anchor.camelot)→\(candidate.camelot)")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(info.group?.color ?? Color.secondary)
+            }
+            Text(info.bpmDelta)
+                .font(.system(size: 9, weight: .medium).monospacedDigit())
+                .foregroundStyle(.secondary)
+            Text(String(format: "%.1f%%", bpmPct))
+                .font(.system(size: 8).monospacedDigit())
+                .foregroundStyle(.tertiary)
+        }
+        .frame(width: 62)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(grade.color.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(grade.color.opacity(0.3), lineWidth: 1)
+                )
+        )
     }
 
-    private func transitionInfo(from: SetlistItemEntity, to: SetlistItemEntity) -> TransitionInfo {
-        let delta = to.bpm - from.bpm
-        let rounded = Int(delta.rounded())
-        let bpmDelta: String
-        if abs(delta) < 0.5 {
-            bpmDelta = "±0 BPM"
-        } else {
-            bpmDelta = "\(rounded >= 0 ? "+" : "")\(rounded) BPM"
-        }
-
-        let fromCode = from.camelot
-        let toCode   = to.camelot
-
-        guard !fromCode.isEmpty, !toCode.isEmpty else {
-            return TransitionInfo(bpmDelta: bpmDelta, label: "—", group: nil)
-        }
-
-        if fromCode == toCode {
-            return TransitionInfo(bpmDelta: bpmDelta, label: "\(fromCode)→\(toCode): perfect match", group: .perfectMatch)
-        }
-
-        let compat = CamelotConverter.compatibleCodes(for: fromCode)
-        // compat[0]=mood switch, compat[1]=energy boost, compat[2]=energy drop
-        if compat.count >= 3 && toCode == compat[1] {
-            return TransitionInfo(bpmDelta: bpmDelta, label: "\(fromCode)→\(toCode): energy boost", group: .energyBoost)
-        } else if compat.count >= 3 && toCode == compat[2] {
-            return TransitionInfo(bpmDelta: bpmDelta, label: "\(fromCode)→\(toCode): energy drop", group: .energyDrop)
-        } else if !compat.isEmpty && toCode == compat[0] {
-            return TransitionInfo(bpmDelta: bpmDelta, label: "\(fromCode)→\(toCode): mood switch", group: .moodSwitch)
-        } else {
-            return TransitionInfo(bpmDelta: bpmDelta, label: "\(fromCode)→\(toCode): —", group: nil)
-        }
-    }
-
-    // MARK: - Pick-start view
+    // MARK: - Pick-start view (empty set)
 
     private var pickStartView: some View {
         VStack(spacing: 0) {
@@ -347,18 +475,25 @@ struct SetBuilderDetailView: View {
         }
     }
 
-    // MARK: - Builder view
+    // MARK: - Builder view (non-empty set)
 
     private var builderView: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 12) {
+            // Two-deck panel + transition bubble between them
+            HStack(alignment: .center, spacing: 6) {
                 deckPanel(label: "DECK A — ANCHOR", track: anchorTrack)
+                if let anchor = anchorTrack, let candidate = candidateTrack {
+                    transitionBubble(anchor: anchor, candidate: candidate)
+                } else {
+                    Color.clear.frame(width: 62)
+                }
                 deckPanel(label: "DECK B — NEXT", track: candidateTrack)
             }
             .padding(12)
 
             Divider()
 
+            // BPM window + Add to Set
             HStack(spacing: 10) {
                 Text("BPM window")
                     .font(.system(size: 12))
@@ -378,7 +513,43 @@ struct SetBuilderDetailView: View {
 
             Divider()
 
-            suggestionsPanel
+            // Group filter + "Pick any track" toggle
+            HStack(spacing: 8) {
+                Picker("Filter", selection: $groupFilter) {
+                    Text("All").tag(HarmonicGroup?.none)
+                    ForEach(HarmonicGroup.allCases, id: \.self) { group in
+                        Text(group.shortName).tag(HarmonicGroup?.some(group))
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .opacity(showAnyTrackPicker ? 0.4 : 1.0)
+                .disabled(showAnyTrackPicker)
+
+                if showAnyTrackPicker {
+                    Button(action: { showAnyTrackPicker = false; anyTrackQuery = "" }) {
+                        Label("Harmonic", systemImage: "slider.horizontal.3")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                } else {
+                    Button(action: { showAnyTrackPicker = true }) {
+                        Label("Any track", systemImage: "scissors")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+
+            Divider()
+
+            if showAnyTrackPicker {
+                anyTrackPickerPanel
+            } else {
+                suggestionsPanel
+            }
         }
     }
 
@@ -428,11 +599,69 @@ struct SetBuilderDetailView: View {
         .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.06)))
     }
 
+    // MARK: - Any-track picker (hard-cut option)
+
+    private var anyTrackPickerPanel: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                    .font(.system(size: 12))
+                TextField("Search all \(pool.count) analyzed tracks…", text: $anyTrackQuery)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                if !anyTrackQuery.isEmpty {
+                    Button { anyTrackQuery = "" } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.secondary.opacity(0.06))
+
+            Divider()
+
+            let displayPool = anyTrackQuery.isEmpty ? pool : filteredAnyTrackPool
+            List(displayPool, id: \.id) { track in
+                Button(action: {
+                    candidateTrack = track
+                    showAnyTrackPicker = false
+                    anyTrackQuery = ""
+                }) {
+                    HStack(spacing: 8) {
+                        camelotPill(track.camelot, fontSize: 9)
+                        Text("\(Int(track.bpm.rounded()))")
+                            .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                            .frame(width: 30, alignment: .trailing)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(track.displayTitle)
+                                .font(.system(size: 13))
+                                .lineLimit(1)
+                            Text(track.displayArtist)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .listStyle(.plain)
+        }
+    }
+
+    // MARK: - Suggestions panel (harmonic, respects groupFilter)
+
     @ViewBuilder
     private var suggestionsPanel: some View {
         if let anchor = anchorTrack {
-            let grouped = HarmonicCompatibility.compatibleGroups(for: anchor, in: pool, bpmTolerance: bpmTolerance)
-            let totalCount = grouped.values.reduce(0) { $0 + $1.count }
+            let allGrouped = HarmonicCompatibility.compatibleGroups(for: anchor, in: pool, bpmTolerance: bpmTolerance)
+            let groups = displayGroups
+            let totalCount = groups.reduce(0) { $0 + (allGrouped[$1]?.count ?? 0) }
 
             if totalCount == 0 {
                 VStack(spacing: 12) {
@@ -440,9 +669,14 @@ struct SetBuilderDetailView: View {
                     Image(systemName: "waveform.slash")
                         .font(.system(size: 32))
                         .foregroundStyle(.tertiary)
-                    Text("No compatible tracks within ±\(Int(bpmTolerance)) BPM")
-                        .foregroundStyle(.secondary)
-                    Text("Widen the BPM window or re-check analysis")
+                    if let f = groupFilter {
+                        Text("No \(f.rawValue.lowercased()) tracks within ±\(Int(bpmTolerance)) BPM")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("No compatible tracks within ±\(Int(bpmTolerance)) BPM")
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("Widen the BPM window or use Any track")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                     Spacer()
@@ -450,8 +684,8 @@ struct SetBuilderDetailView: View {
                 .frame(maxWidth: .infinity)
             } else {
                 List {
-                    ForEach(HarmonicGroup.allCases, id: \.self) { group in
-                        if let items = grouped[group], !items.isEmpty {
+                    ForEach(groups, id: \.self) { group in
+                        if let items = allGrouped[group], !items.isEmpty {
                             Section {
                                 ForEach(items) { item in
                                     suggestionRow(item)
