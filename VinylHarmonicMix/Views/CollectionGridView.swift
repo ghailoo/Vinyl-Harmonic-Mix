@@ -1,6 +1,8 @@
 import SwiftUI
 import SwiftData
 
+enum CollectionMode { case browse, mix }
+
 enum CollectionSort: String, CaseIterable, Identifiable {
     case artistAsc  = "Artist (A → Z)"
     case artistDesc = "Artist (Z → A)"
@@ -76,6 +78,8 @@ struct CollectionGridView: View {
     @State private var activeFilter: CollectionFilter = .all
     @State private var activeSort: CollectionSort = .yearDesc
 
+    @State private var collectionMode: CollectionMode = .browse
+
     // 0 → 120pt minimum (many small cards), 1 → 280pt (few large cards).
     // Default 0.25 reproduces the previous 160pt minimum.
     @AppStorage("collectionGridCardSize") private var cardSize: Double = 0.25
@@ -86,6 +90,120 @@ struct CollectionGridView: View {
     }
 
     var body: some View {
+        Group {
+            if collectionMode == .mix {
+                MixModeView()
+            } else {
+                browseBody
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: collectionMode)
+        .animation(.easeInOut(duration: 0.25), value: audioFeaturesCoordinator.shouldShowPanel)
+        .animation(.easeInOut(duration: 0.25), value: recordingsCoordinator.shouldShowPanel)
+        .animation(.easeInOut(duration: 0.25), value: scanCoordinator.shouldShowPanel)
+        .animation(.easeInOut(duration: 0.2), value: activeFilter)
+        .animation(.easeInOut(duration: 0.2), value: activeSort)
+        .onAppear {
+            rebuildFeaturesLookup()
+            rebuildCoverageLookup()
+        }
+        .onChange(of: allFeatures.count) { _, _ in
+            rebuildFeaturesLookup()
+            rebuildCoverageLookup()
+        }
+        .onChange(of: allTrackEntities.count) { _, _ in
+            rebuildCoverageLookup()
+        }
+        .onChange(of: analyzedLocalFiles.count) { _, _ in
+            rebuildCoverageLookup()
+        }
+        .onChange(of: playback.currentFilePath) { _, newPath in
+            playingInstanceId = newPath.flatMap { filePathToInstanceId[$0] }
+        }
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Picker("Mode", selection: $collectionMode) {
+                    Label("Browse", systemImage: "square.grid.2x2").tag(CollectionMode.browse)
+                    Label("Mix", systemImage: "slider.horizontal.3").tag(CollectionMode.mix)
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 140)
+                .labelsHidden()
+                .help(collectionMode == .browse ? "Switch to Mix mode" : "Switch to Browse mode")
+            }
+            ToolbarItemGroup(placement: .primaryAction) {
+                if collectionMode == .browse {
+                    HStack(spacing: 8) {
+                            Image(systemName: "magnifyingglass")
+                                .foregroundStyle(.secondary)
+                                .font(.system(size: 13))
+                            TextField("Search artist, title, year…", text: $searchQuery)
+                                .textFieldStyle(.plain)
+                                .font(.system(size: 13))
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .frame(width: 240, height: 24)
+                        .background(Capsule().fill(Color.secondary.opacity(0.12)))
+                        .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.2), lineWidth: 0.5))
+                    HStack(spacing: 4) {
+                        Image(systemName: "square.grid.3x3")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                        Slider(value: $cardSize, in: 0...1)
+                            .frame(width: 72)
+                            .controlSize(.mini)
+                        Image(systemName: "square.grid.2x2")
+                            .font(.system(size: 13))
+                            .foregroundStyle(.tertiary)
+                    }
+                    sortButton
+                    fetchTracksButton
+                    scanAudioButton
+                    filterButton
+                    scanButton
+                    Button {
+                        syncOrchestrator.startSync()
+                        showSyncSheet = true
+                    } label: {
+                        Label("Sync", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .disabled(syncOrchestrator.isSyncing)
+                    .help("Sync with Discogs and run full enrichment pipeline for new releases")
+                    .sheet(isPresented: $showSyncSheet) {
+                        SyncProgressView()
+                            .environment(syncOrchestrator)
+                    }
+                    Button {
+                        Task { await viewModel.importCollection() }
+                    } label: {
+                        Label("Re-import from Discogs", systemImage: "arrow.down.circle")
+                    }
+                    .help("Re-import from Discogs (full wipe + reinsert)")
+                }
+            }
+        }
+        .alert("Rescan All Releases?", isPresented: $showRescanAlert) {
+            Button("Rescan", role: .destructive) { scanCoordinator.startRescan() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will clear all existing MusicBrainz matches and re-scan every release.")
+        }
+        .alert("Refetch all track recordings?", isPresented: $showRefetchAlert) {
+            Button("Refetch", role: .destructive) { recordingsCoordinator.startRefetch() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will delete all stored recording MBIDs and re-fetch every matched release. Takes ~7–8 minutes.")
+        }
+        .alert("Rescan all audio features?", isPresented: $showRescanAudioAlert) {
+            Button("Rescan", role: .destructive) { audioFeaturesCoordinator.rescanAll() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will delete all stored BPM/key data and re-query AcousticBrainz for every recording MBID. Takes ~3 minutes.")
+        }
+    }
+
+    private var browseBody: some View {
         VStack(spacing: 0) {
             if audioFeaturesCoordinator.shouldShowPanel {
                 AudioFeaturesScanResultsView(
@@ -140,97 +258,6 @@ struct CollectionGridView: View {
                         CollectionDetailView(item: item)
                     }
             }
-        }
-        .animation(.easeInOut(duration: 0.25), value: audioFeaturesCoordinator.shouldShowPanel)
-        .animation(.easeInOut(duration: 0.25), value: recordingsCoordinator.shouldShowPanel)
-        .animation(.easeInOut(duration: 0.25), value: scanCoordinator.shouldShowPanel)
-        .animation(.easeInOut(duration: 0.2), value: activeFilter)
-        .animation(.easeInOut(duration: 0.2), value: activeSort)
-        .onAppear {
-            rebuildFeaturesLookup()
-            rebuildCoverageLookup()
-        }
-        .onChange(of: allFeatures.count) { _, _ in
-            rebuildFeaturesLookup()
-            rebuildCoverageLookup()
-        }
-        .onChange(of: allTrackEntities.count) { _, _ in
-            rebuildCoverageLookup()
-        }
-        .onChange(of: analyzedLocalFiles.count) { _, _ in
-            rebuildCoverageLookup()
-        }
-        .onChange(of: playback.currentFilePath) { _, newPath in
-            playingInstanceId = newPath.flatMap { filePathToInstanceId[$0] }
-        }
-        .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                HStack(spacing: 8) {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundStyle(.secondary)
-                            .font(.system(size: 13))
-                        TextField("Search artist, title, year…", text: $searchQuery)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 13))
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .frame(width: 240, height: 24)
-                    .background(Capsule().fill(Color.secondary.opacity(0.12)))
-                    .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.2), lineWidth: 0.5))
-                HStack(spacing: 4) {
-                    Image(systemName: "square.grid.3x3")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                    Slider(value: $cardSize, in: 0...1)
-                        .frame(width: 72)
-                        .controlSize(.mini)
-                    Image(systemName: "square.grid.2x2")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.tertiary)
-                }
-                sortButton
-                fetchTracksButton
-                scanAudioButton
-                filterButton
-                scanButton
-                Button {
-                    syncOrchestrator.startSync()
-                    showSyncSheet = true
-                } label: {
-                    Label("Sync", systemImage: "arrow.triangle.2.circlepath")
-                }
-                .disabled(syncOrchestrator.isSyncing)
-                .help("Sync with Discogs and run full enrichment pipeline for new releases")
-                .sheet(isPresented: $showSyncSheet) {
-                    SyncProgressView()
-                        .environment(syncOrchestrator)
-                }
-                Button {
-                    Task { await viewModel.importCollection() }
-                } label: {
-                    Label("Re-import from Discogs", systemImage: "arrow.down.circle")
-                }
-                .help("Re-import from Discogs (full wipe + reinsert)")
-            }
-        }
-        .alert("Rescan All Releases?", isPresented: $showRescanAlert) {
-            Button("Rescan", role: .destructive) { scanCoordinator.startRescan() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This will clear all existing MusicBrainz matches and re-scan every release.")
-        }
-        .alert("Refetch all track recordings?", isPresented: $showRefetchAlert) {
-            Button("Refetch", role: .destructive) { recordingsCoordinator.startRefetch() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This will delete all stored recording MBIDs and re-fetch every matched release. Takes ~7–8 minutes.")
-        }
-        .alert("Rescan all audio features?", isPresented: $showRescanAudioAlert) {
-            Button("Rescan", role: .destructive) { audioFeaturesCoordinator.rescanAll() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This will delete all stored BPM/key data and re-query AcousticBrainz for every recording MBID. Takes ~3 minutes.")
         }
     }
 

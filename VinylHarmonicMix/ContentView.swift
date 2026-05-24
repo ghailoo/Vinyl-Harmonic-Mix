@@ -3,7 +3,6 @@ import SwiftData
 
 enum SidebarItem: String, Hashable {
     case collection  = "Collection"
-    case mix         = "Mix"
     case sets        = "Sets"
     case stats       = "Stats"
     case fileMatches = "File Matches"
@@ -25,8 +24,6 @@ struct ContentView: View {
                 Divider()
                 Group {
                     switch sidebarSelection {
-                    case .mix:
-                        MixView()
                     case .sets:
                         SetsView()
                     case .stats:
@@ -168,8 +165,6 @@ private struct NowPlayingBar: View {
         List(selection: $sidebarSelection) {
             Label("Collection", systemImage: "record.circle")
                 .tag(SidebarItem.collection)
-            Label("Mix", systemImage: "slider.horizontal.3")
-                .tag(SidebarItem.mix)
             Label("Sets", systemImage: "list.bullet.rectangle")
                 .tag(SidebarItem.sets)
             Label("Stats", systemImage: "chart.bar.xaxis")
