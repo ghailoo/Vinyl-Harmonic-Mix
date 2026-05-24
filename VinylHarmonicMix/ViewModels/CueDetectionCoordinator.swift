@@ -13,6 +13,9 @@ final class CueDetectionCoordinator {
     // Files whose cueAnalyzerVersion != currentCueVersion re-qualify for detection.
     static let currentCueVersion = "v2-structural"
 
+    // MARK: - Scope
+    enum CueDetectionScope { case matched, unmatched, all }
+
     // MARK: - Phase
     enum Phase: Equatable {
         case idle, detecting, paused, completed, cancelled
@@ -37,14 +40,16 @@ final class CueDetectionCoordinator {
     // MARK: - Private
     private let context: ModelContext
     private var scanTask: Task<Void, Never>?
+    private var pendingScope: CueDetectionScope = .all
     private var pendingLimit: Int? = nil
 
     init(context: ModelContext) { self.context = context }
 
     // MARK: - Controls
 
-    func startDetection(limit: Int? = nil) {
+    func startDetection(scope: CueDetectionScope = .all, limit: Int? = nil) {
         guard phase.isIdle else { return }
+        pendingScope = scope
         pendingLimit = limit
         phase = .detecting
         processedCount = 0; detectedCount = 0; skippedCount = 0; failedCount = 0
@@ -52,7 +57,7 @@ final class CueDetectionCoordinator {
 
         scanTask = Task { [weak self] in
             guard let self else { return }
-            await self.runDetection(limit: limit)
+            await self.runDetection(scope: scope, limit: limit)
             guard !Task.isCancelled else { return }
             if self.phase == .detecting { self.phase = .completed }
         }
@@ -65,7 +70,7 @@ final class CueDetectionCoordinator {
 
     func resume() {
         guard phase == .paused else { return }
-        startDetection(limit: pendingLimit)
+        startDetection(scope: pendingScope, limit: pendingLimit)
     }
 
     func cancel() {
@@ -87,12 +92,19 @@ final class CueDetectionCoordinator {
         let label: String
     }
 
-    private func runDetection(limit: Int?) async {
+    private func runDetection(scope: CueDetectionScope, limit: Int?) async {
         let allFiles = (try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
+        let scopeMatches: (LocalFileEntity) -> Bool
+        switch scope {
+        case .matched:   scopeMatches = { $0.matchMethod != "unmatched" }
+        case .unmatched: scopeMatches = { $0.matchMethod == "unmatched" }
+        case .all:       scopeMatches = { _ in true }
+        }
         let candidates = allFiles.filter {
             $0.bpm > 0
             && !$0.filePath.isEmpty
             && ($0.cueAnalyzedAt == nil || $0.cueAnalyzerVersion != Self.currentCueVersion)
+            && scopeMatches($0)
         }
         let scoped = limit.map { Array(candidates.prefix($0)) } ?? candidates
 

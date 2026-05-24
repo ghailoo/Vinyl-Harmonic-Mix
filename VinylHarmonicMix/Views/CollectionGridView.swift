@@ -551,7 +551,13 @@ struct CollectionGridView: View {
     // MARK: - Detect cues toolbar button
 
     private var detectCuesButton: some View {
-        let pending = analyzedLocalFiles.filter { $0.cueAnalyzedAt == nil }.count
+        let currentVersion = CueDetectionCoordinator.currentCueVersion
+        let needsDetection: (LocalFileEntity) -> Bool = {
+            $0.cueAnalyzedAt == nil || $0.cueAnalyzerVersion != currentVersion
+        }
+        let matchedPending   = analyzedLocalFiles.filter { $0.matchMethod != "unmatched" && needsDetection($0) }.count
+        let unmatchedPending = analyzedLocalFiles.filter { $0.matchMethod == "unmatched"  && needsDetection($0) }.count
+        let allPending       = matchedPending + unmatchedPending
         let isActive: Bool = {
             switch cueCoordinator.phase {
             case .detecting, .paused: return true
@@ -561,14 +567,30 @@ struct CollectionGridView: View {
 
         return Menu {
             Button {
-                cueCoordinator.startDetection()
+                cueCoordinator.startDetection(scope: .matched)
             } label: {
-                Label("Detect all (\(pending))", systemImage: "waveform.path.ecg")
+                Label("Collection tracks (\(matchedPending))", systemImage: "checkmark.seal")
             }
-            .disabled(pending == 0 || isActive)
+            .disabled(matchedPending == 0 || isActive)
 
             Button {
-                cueCoordinator.startDetection(limit: 10)
+                cueCoordinator.startDetection(scope: .unmatched)
+            } label: {
+                Label("Unmatched files (\(unmatchedPending))", systemImage: "doc.questionmark")
+            }
+            .disabled(unmatchedPending == 0 || isActive)
+
+            Button {
+                cueCoordinator.startDetection(scope: .all)
+            } label: {
+                Label("All analyzed (\(allPending))", systemImage: "waveform.path.ecg")
+            }
+            .disabled(allPending == 0 || isActive)
+
+            Divider()
+
+            Button {
+                cueCoordinator.startDetection(scope: .all, limit: 10)
             } label: {
                 Label("Test batch (10)", systemImage: "play.circle")
             }
@@ -579,8 +601,8 @@ struct CollectionGridView: View {
                     .font(.system(size: 12, weight: .semibold))
                 Text("Cue points")
                     .font(.system(size: 13))
-                if pending > 0 && !isActive {
-                    Text("\(pending)")
+                if allPending > 0 && !isActive {
+                    Text("\(allPending)")
                         .font(.system(size: 11, weight: .semibold))
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
