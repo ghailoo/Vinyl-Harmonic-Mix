@@ -228,9 +228,9 @@ struct TransitionBubbleView: View {
             // Grade pips + label
             gradeRow(grade: grade)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 8)
         .padding(.vertical, 14)
-        .frame(minWidth: 108)
+        .frame(minWidth: 80)
         .background {
             let shape = RoundedRectangle(cornerRadius: 14)
             ZStack {

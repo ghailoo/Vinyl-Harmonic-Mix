@@ -241,7 +241,7 @@ struct MixModeView: View {
                 if let candidate = candidateTrack {
                     TransitionBubbleView(anchor: anchor, candidate: candidate)
                 } else {
-                    Color.clear.frame(width: 110)
+                    Color.clear.frame(width: 88)
                 }
                 deckCard(label: "NEXT UP", track: candidateTrack,
                          coverURL: candidateTrack.flatMap { thumbURLs[$0.filePath ?? ""] },

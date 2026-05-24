@@ -69,41 +69,62 @@ struct WaveformView: View {
         // Cue markers — drawn on top of bars + playhead
         guard duration > 0, !cueMarkers.isEmpty else { return }
 
+        let amber = Color(red: 1.0, green: 0.75, blue: 0.05)
         let switchInTimes = cueMarkers.filter { $0.type == "switch_in" }.map(\.timeSec)
 
-        // Structural ticks — drawn first (bottom layer), colored by energy direction
-        for marker in cueMarkers where marker.type == "structural" {
-            guard marker.timeSec >= 0, marker.timeSec <= duration else { continue }
-            // Suppress if within 2s of a switch_in — amber flag wins at that position
-            if switchInTimes.contains(where: { abs($0 - marker.timeSec) < 2.0 }) { continue }
-
-            let color: Color
-            switch marker.energyDirection {
-            case "rise":  color = Color(red: 0.2,  green: 0.8,  blue: 0.65)
-            case "fall":  color = Color(red: 0.45, green: 0.4,  blue: 0.9)
-            default:      color = Color(red: 0.55, green: 0.6,  blue: 0.7)
+        func structuralColor(_ dir: String) -> Color {
+            switch dir {
+            case "rise":  return Color(red: 0.1,  green: 0.9,  blue: 0.7)
+            case "fall":  return Color(red: 0.55, green: 0.45, blue: 1.0)
+            default:      return Color(red: 0.6,  green: 0.65, blue: 0.75)
             }
-
-            let x = size.width * CGFloat(marker.timeSec / duration)
-            let stemRect = CGRect(x: max(0, x - 0.5), y: 0, width: 1, height: size.height)
-            ctx.fill(Path(stemRect), with: .color(color.opacity(0.85)))
         }
 
-        // Switch-in markers — drawn last (top layer), always visually dominant
-        let amber = Color(red: 1.0, green: 0.75, blue: 0.05)
+        // Build chronologically sorted visible marker list (suppressed structurals excluded)
+        var visible: [(marker: CueMarker, color: Color)] = []
+        for marker in cueMarkers where marker.type == "structural" {
+            guard marker.timeSec >= 0, marker.timeSec <= duration else { continue }
+            if switchInTimes.contains(where: { abs($0 - marker.timeSec) < 2.0 }) { continue }
+            visible.append((marker, structuralColor(marker.energyDirection)))
+        }
         for marker in cueMarkers where marker.type == "switch_in" {
             guard marker.timeSec >= 0, marker.timeSec <= duration else { continue }
+            visible.append((marker, amber))
+        }
+        visible.sort { $0.marker.timeSec < $1.marker.timeSec }
+
+        // Structural ticks — bottom layer, 1.25px, full opacity
+        for (marker, color) in visible where marker.type == "structural" {
             let x = size.width * CGFloat(marker.timeSec / duration)
+            let stemRect = CGRect(x: max(0, x - 0.625), y: 0, width: 1.25, height: size.height)
+            ctx.fill(Path(stemRect), with: .color(color))
+        }
 
+        // Switch-in — top layer, 1.5px amber stem + downward ▼ flag
+        for (marker, _) in visible where marker.type == "switch_in" {
+            let x = size.width * CGFloat(marker.timeSec / duration)
             let stemRect = CGRect(x: max(0, x - 0.75), y: 0, width: 1.5, height: size.height)
-            ctx.fill(Path(stemRect), with: .color(amber.opacity(0.9)))
-
+            ctx.fill(Path(stemRect), with: .color(amber))
             var flag = Path()
             flag.move(to: CGPoint(x: x - 5, y: 0))
             flag.addLine(to: CGPoint(x: x + 5, y: 0))
             flag.addLine(to: CGPoint(x: x, y: 8))
             flag.closeSubpath()
             ctx.fill(flag, with: .color(amber))
+        }
+
+        // Number labels — drawn last, chronological across all visible cues
+        for (i, (marker, color)) in visible.enumerated() {
+            let x = size.width * CGFloat(marker.timeSec / duration)
+            // switch_in: below the flag (flag ends at y≈8); structural: near top edge
+            let labelY: CGFloat = marker.type == "switch_in" ? 14 : 5
+            ctx.draw(
+                Text("\(i + 1)")
+                    .font(.system(size: 8, weight: .bold).monospacedDigit())
+                    .foregroundStyle(color),
+                at: CGPoint(x: x, y: labelY),
+                anchor: .center
+            )
         }
     }
 }
