@@ -56,6 +56,7 @@ struct CollectionGridView: View {
     @Environment(AudioFeaturesScanCoordinator.self) private var audioFeaturesCoordinator
     @Environment(AudioPlaybackController.self) private var playback
     @Environment(SyncOrchestrator.self) private var syncOrchestrator
+    @Environment(CueDetectionCoordinator.self) private var cueCoordinator
     @Environment(\.modelContext) private var modelContext
 
     @Query private var allEntities: [CollectionItemEntity]
@@ -101,6 +102,7 @@ struct CollectionGridView: View {
         .animation(.easeInOut(duration: 0.25), value: audioFeaturesCoordinator.shouldShowPanel)
         .animation(.easeInOut(duration: 0.25), value: recordingsCoordinator.shouldShowPanel)
         .animation(.easeInOut(duration: 0.25), value: scanCoordinator.shouldShowPanel)
+        .animation(.easeInOut(duration: 0.25), value: cueCoordinator.shouldShowPanel)
         .animation(.easeInOut(duration: 0.2), value: activeFilter)
         .animation(.easeInOut(duration: 0.2), value: activeSort)
         .onAppear {
@@ -160,6 +162,7 @@ struct CollectionGridView: View {
                     sortButton
                     fetchTracksButton
                     scanAudioButton
+                    detectCuesButton
                     filterButton
                     scanButton
                     Button {
@@ -247,6 +250,14 @@ struct CollectionGridView: View {
                 .padding(.bottom, 12)
                 .frame(maxWidth: .infinity)
                 .transition(.move(edge: .top).combined(with: .opacity))
+            }
+            if cueCoordinator.shouldShowPanel {
+                CueDetectionPanel(coordinator: cueCoordinator)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 12)
+                    .padding(.bottom, 0)
+                    .frame(maxWidth: .infinity)
+                    .transition(.move(edge: .top).combined(with: .opacity))
             }
             if viewModel.items.isEmpty {
                 emptyState
@@ -535,6 +546,57 @@ struct CollectionGridView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .help("Fetch BPM and key from AcousticBrainz")
+    }
+
+    // MARK: - Detect cues toolbar button
+
+    private var detectCuesButton: some View {
+        let pending = analyzedLocalFiles.filter { $0.cueAnalyzedAt == nil }.count
+        let isActive: Bool = {
+            switch cueCoordinator.phase {
+            case .detecting, .paused: return true
+            default: return false
+            }
+        }()
+
+        return Menu {
+            Button {
+                cueCoordinator.startDetection()
+            } label: {
+                Label("Detect all (\(pending))", systemImage: "waveform.path.ecg")
+            }
+            .disabled(pending == 0 || isActive)
+
+            Button {
+                cueCoordinator.startDetection(limit: 10)
+            } label: {
+                Label("Test batch (10)", systemImage: "play.circle")
+            }
+            .disabled(isActive)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "waveform.path.ecg")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Cue points")
+                    .font(.system(size: 13))
+                if pending > 0 && !isActive {
+                    Text("\(pending)")
+                        .font(.system(size: 11, weight: .semibold))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.accentColor.opacity(0.2))
+                        .cornerRadius(4)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(Color.secondary.opacity(0.12)))
+            .overlay(Capsule().strokeBorder(Color.secondary.opacity(0.2), lineWidth: 0.5))
+            .foregroundStyle(Color.primary)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .help("Detect cue points using Essentia energy analysis")
     }
 
     // MARK: - Scan toolbar button

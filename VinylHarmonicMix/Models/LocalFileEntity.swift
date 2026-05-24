@@ -29,6 +29,10 @@ final class LocalFileEntity {
     var analyzedAt: Date? = nil
     var analyzerVersion: String = ""
 
+    @Relationship(deleteRule: .cascade, inverse: \CuePointEntity.localFile)
+    var cuePoints: [CuePointEntity] = []
+    var cueAnalyzedAt: Date? = nil
+
     var track: TrackEntity?
 
     init(filePath: String, fileName: String,

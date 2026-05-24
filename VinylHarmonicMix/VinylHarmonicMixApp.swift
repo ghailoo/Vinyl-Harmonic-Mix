@@ -13,6 +13,7 @@ struct VinylHarmonicMixApp: App {
     @State private var fileMatchCoordinator: FileMatchCoordinator
     @State private var fingerprintCoordinator: FingerprintScanCoordinator
     @State private var localAnalysisCoordinator: LocalAnalysisCoordinator
+    @State private var cueDetectionCoordinator: CueDetectionCoordinator
     @State private var audioPlaybackController: AudioPlaybackController
     @State private var syncOrchestrator: SyncOrchestrator
 
@@ -31,6 +32,7 @@ struct VinylHarmonicMixApp: App {
                 LocalAudioFeaturesEntity.self,
                 SetlistEntity.self,
                 SetlistItemEntity.self,
+                CuePointEntity.self,
             ])
             // Sandbox is disabled so the default store path moves to ~/Library/Application Support/.
             // Pin to the container path so existing Discogs/MusicBrainz data is preserved
@@ -65,6 +67,7 @@ struct VinylHarmonicMixApp: App {
         let audio = AudioFeaturesScanCoordinator(context: ctx)
         let files = FileMatchCoordinator(context: ctx)
         let local = LocalAnalysisCoordinator(context: ctx)
+        let cue   = CueDetectionCoordinator(context: ctx)
 
         _collectionViewModel        = State(initialValue: cv)
         _scanCoordinator            = State(initialValue: scan)
@@ -74,6 +77,7 @@ struct VinylHarmonicMixApp: App {
         _fileMatchCoordinator       = State(initialValue: files)
         _fingerprintCoordinator     = State(initialValue: FingerprintScanCoordinator(context: ctx))
         _localAnalysisCoordinator   = State(initialValue: local)
+        _cueDetectionCoordinator    = State(initialValue: cue)
         _audioPlaybackController    = State(initialValue: AudioPlaybackController())
         _syncOrchestrator           = State(initialValue: SyncOrchestrator(
             collectionViewModel:       cv,
@@ -116,6 +120,7 @@ struct VinylHarmonicMixApp: App {
                 .environment(fileMatchCoordinator)
                 .environment(fingerprintCoordinator)
                 .environment(localAnalysisCoordinator)
+                .environment(cueDetectionCoordinator)
                 .environment(audioPlaybackController)
                 .environment(syncOrchestrator)
         }
