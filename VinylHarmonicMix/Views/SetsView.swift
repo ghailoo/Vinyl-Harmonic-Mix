@@ -76,7 +76,7 @@ struct SetsView: View {
     @ViewBuilder
     private var detailPanel: some View {
         if let set = selectedSet {
-            SetBuilderDetailView(setlist: set)
+            SetLibraryView(setlist: set)
         } else {
             VStack(spacing: 8) {
                 Image(systemName: "list.bullet.rectangle")
