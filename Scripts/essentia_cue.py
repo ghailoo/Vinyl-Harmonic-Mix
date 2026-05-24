@@ -4,29 +4,36 @@ essentia_cue.py <audio_file>
 
 Energy-only EXPERT cue-point detection.
 (Zehren, Alunno, Bientinesi 2022 — "Automatic Detection of Cue Points for the Emulation
-of DJ Mixing", Computer Music Journal — energy feature only, v1.)
+of DJ Mixing", Computer Music Journal — energy feature only, v2.)
 
-Detects ONE switch-in point per track: the highest-novelty position inside the intro's
-4-bar-aligned grid where a DJ would cleanly mix this track in.
+Detects TWO classes of cue points per track:
+
+  switch_points  — ONE intro mix-in point (unchanged from v1): the highest-novelty
+                   position inside the intro's 4-bar-aligned grid.
+
+  structural_points — 5-8 section-boundary points across the whole track (drops,
+                   breakdowns, texture changes) found by greedy peak-picking the same
+                   full-track novelty curve, with energy-direction labels.
 
 Output JSON:
   {
-    "switch_points": [{"time_sec": 16.42, "feature": "energy", "novelty": 0.73, "beat_index": 32}],
+    "switch_points":     [{"time_sec": 16.42, "feature": "energy", "novelty": 0.73, "beat_index": 32}],
+    "structural_points": [{"time_sec": 48.5,  "novelty": 0.91,    "beat_index": 96,  "energy_direction": "rise"},
+                          {"time_sec": 80.2,  "novelty": 0.78,    "beat_index": 160, "energy_direction": "fall"},
+                          ...],
     "bpm": 124.0,
     "n_beats": 548
   }
-  or {"switch_points": [], "bpm": ..., "n_beats": ...} on no detection (too short, no intro, etc.)
+  switch_points is [] when no usable intro is found (same conditions as v1).
+  structural_points is [] only for very short / silent tracks.
 
 Error:
   {"error": "description"}   exit code 1
 
-Pipeline (5 stages):
-  1. Strong-beat grid:     beats[0,2,4,...] (every other beat = 2 per bar in 4/4)
-  2. Energy per window:    per-frame RMS aggregated into each half-bar window; normalised 0..1
-  3. Foote novelty:        1-D SSM + Gaussian-tapered 8-bar checkerboard kernel (zero-padded)
-  4. 4-bar offset:         find phase p in [0..7] that maximises sum(novelty * energy) on 8-step grid
-  5. Intro peak-pick:      restrict to intro (< first sustained-energy salience point),
-                           take the aligned candidate with highest novelty
+Pipeline:
+  Stages 1-4 run for EVERY track (energy curve, SSM/Foote novelty, 4-bar alignment).
+  Structural detection uses the full aligned grid after Stage 4 (no recomputation).
+  Stage 5 (intro salience + switch-in) runs only when a usable intro is found.
 """
 
 import json
@@ -45,6 +52,16 @@ _MIN_BEATS   = 16    # fewer → no detection
 _PERIOD      = 8     # strong-beat windows per 4-bar period (4 bars × 2 sb/bar)
 _KERNEL_HALF = 8     # Foote kernel half-size in strong-beat windows (= 4 bars)
                      # → full 8-bar kernel of size (16 × 16)
+
+# Structural peak-picking
+_STRUCT_MAX          = 8    # maximum structural cue points per track
+_STRUCT_MIN_SPACING  = 16   # min gap between picks in strong-beat windows (= 8 bars)
+_STRUCT_THRESHOLD    = 0.25 # minimum normalised novelty score to qualify as a boundary
+_STRUCT_MIN_TIME_SEC = 8.0  # skip candidates before this time (kills zero-padding artifacts)
+
+# Energy-direction labeling
+_DIR_WINDOW  = 4    # windows on each side of boundary for mean comparison (= 2 bars)
+_DIR_EPSILON = 0.05 # minimum energy difference (normalised) to assign direction
 
 
 # ── Feature extraction ───────────────────────────────────────────────────────
@@ -130,6 +147,58 @@ def _foote_novelty(energy_norm: np.ndarray) -> np.ndarray:
     return novelty_full[K: K + len(energy_norm)]
 
 
+# ── Structural peak-picking ───────────────────────────────────────────────────
+
+def _pick_structural(aligned: np.ndarray, novelty_norm: np.ndarray,
+                     energy_norm: np.ndarray, strong: np.ndarray) -> list:
+    """
+    Greedy top-N peak-pick on the full 4-bar-aligned grid.
+
+    Sort aligned positions by descending novelty; greedily accept each position
+    that is (a) above _STRUCT_THRESHOLD and (b) at least _STRUCT_MIN_SPACING
+    windows away from every already-accepted position.  Stop at _STRUCT_MAX.
+    Returned list is sorted chronologically.
+    """
+    n_w = len(energy_norm)
+    scores      = novelty_norm[aligned]
+    sorted_order = aligned[np.argsort(scores)[::-1]]  # highest novelty first
+
+    picked = []
+    for w in sorted_order:
+        nov = float(novelty_norm[w])
+        if nov < _STRUCT_THRESHOLD:
+            break  # sorted descending — nothing better remains
+        if float(strong[w]) < _STRUCT_MIN_TIME_SEC:
+            continue  # zero-padding artifact near track start — skip, don't count
+        if all(abs(int(w) - p) >= _STRUCT_MIN_SPACING for p in picked):
+            picked.append(int(w))
+        if len(picked) >= _STRUCT_MAX:
+            break
+
+    picked.sort()  # restore chronological order
+
+    result = []
+    for w in picked:
+        # Energy direction: compare mean energy in the windows before vs after
+        before = energy_norm[max(0, w - _DIR_WINDOW) : w]
+        after  = energy_norm[w : min(n_w, w + _DIR_WINDOW)]
+        bm = float(np.mean(before)) if len(before) > 0 else 0.0
+        am = float(np.mean(after))  if len(after)  > 0 else 0.0
+
+        if   am > bm + _DIR_EPSILON:  direction = "rise"
+        elif bm > am + _DIR_EPSILON:  direction = "fall"
+        else:                          direction = "neutral"
+
+        result.append({
+            "time_sec":         round(float(strong[w]), 3),
+            "novelty":          round(float(novelty_norm[w]), 4),
+            "beat_index":       w * 2,
+            "energy_direction": direction,
+        })
+
+    return result
+
+
 # ── Main detection pipeline ───────────────────────────────────────────────────
 
 def _detect(bpm: float, beats: np.ndarray, rms: np.ndarray) -> dict:
@@ -137,32 +206,30 @@ def _detect(bpm: float, beats: np.ndarray, rms: np.ndarray) -> dict:
     base    = {"bpm": round(bpm, 2), "n_beats": n_beats}
 
     if n_beats < _MIN_BEATS:
-        return {**base, "switch_points": []}
+        return {**base, "switch_points": [], "structural_points": []}
 
     # ── Stage 1: strong beats ─────────────────────────────────────────────────
     strong = beats[::2]           # shape (n_strong,)
     n_w    = len(strong) - 1      # number of strong-beat windows
 
     if n_w < _PERIOD * 2:         # need at least 2 full 4-bar periods
-        return {**base, "switch_points": []}
+        return {**base, "switch_points": [], "structural_points": []}
 
     # ── Stage 2: windowed energy, normalised 0..1 ─────────────────────────────
     energy = _window_energy(strong, rms)
     e_max  = energy.max()
     if e_max <= 0.0:
-        return {**base, "switch_points": []}
+        return {**base, "switch_points": [], "structural_points": []}
     energy_norm = energy / e_max
 
     # ── Stage 3: Foote novelty, normalised 0..1 ───────────────────────────────
     novelty = _foote_novelty(energy_norm)
     nov_rng = novelty.max() - novelty.min()
     if nov_rng <= 0.0:
-        return {**base, "switch_points": []}
+        return {**base, "switch_points": [], "structural_points": []}
     novelty_norm = (novelty - novelty.min()) / nov_rng
 
     # ── Stage 4: 4-bar phase offset detection ────────────────────────────────
-    # Find offset p in [0, PERIOD) that maximises sum(novelty * energy) on the
-    # period-aligned grid.  Weight by energy per the paper.
     best_p, best_score = 0, -np.inf
     for p in range(_PERIOD):
         cands = np.arange(p, n_w, _PERIOD)
@@ -171,16 +238,15 @@ def _detect(bpm: float, beats: np.ndarray, rms: np.ndarray) -> dict:
             best_score, best_p = score, p
     aligned = np.arange(best_p, n_w, _PERIOD)
 
+    # ── Structural detection — runs for ALL tracks ────────────────────────────
+    structural_points = _pick_structural(aligned, novelty_norm, energy_norm, strong)
+
     # ── Stage 5a: DJ search space — intro boundary ────────────────────────────
-    # Stricter energy-only salience: the rolling mean over a 16-strong-beat-window
-    # band (≈ 8 bars) must exceed the track's 75th-percentile energy, sustained for
-    # 16 consecutive windows.  Using the 75th pct (not median) and a wider sustain
-    # window avoids firing on tracks that are simply loud throughout.
-    _SAL_BAND     = 16   # rolling-mean window (strong-beat windows)
-    _SAL_SUSTAIN  = 16   # how many consecutive windows must all exceed the threshold
+    _SAL_BAND     = 16
+    _SAL_SUSTAIN  = 16
     threshold_e   = float(np.percentile(energy_norm, 75))
     salience_found = False
-    salience_idx   = n_w  # placeholder; only used if salience_found is True
+    salience_idx   = n_w
 
     if n_w >= _SAL_BAND + _SAL_SUSTAIN:
         rolling = np.convolve(energy_norm, np.ones(_SAL_BAND) / _SAL_BAND, mode="valid")
@@ -191,34 +257,25 @@ def _detect(bpm: float, beats: np.ndarray, rms: np.ndarray) -> dict:
                 salience_found = True
                 break
 
-    # No salience boundary found → wall-to-wall energy, no real intro.
-    # Treating the entire track as intro would let the peak-pick land anywhere.
-    if not salience_found:
-        return {**base, "switch_points": []}
-
-    if salience_idx < _PERIOD:
-        # Salience fires within the first full period → no usable intro
-        return {**base, "switch_points": []}
+    # No intro found — return structural points only
+    if not salience_found or salience_idx < _PERIOD:
+        return {**base, "switch_points": [], "structural_points": structural_points}
 
     # ── Stage 5b: peak-pick inside the intro ─────────────────────────────────
     intro_cands = aligned[aligned < salience_idx]
     if len(intro_cands) == 0:
-        return {**base, "switch_points": []}
+        return {**base, "switch_points": [], "structural_points": structural_points}
 
     best_w    = int(intro_cands[np.argmax(novelty_norm[intro_cands])])
     time_sec  = float(strong[best_w])
-    beat_idx  = best_w * 2        # strong-beat window i → original beat index 2i
+    beat_idx  = best_w * 2
 
     # ── Post-detection guards ─────────────────────────────────────────────────
-    # 1. Minimum: first 4 bars is not a usable mix-in point.
-    if time_sec < 4.0 or beat_idx < 8:
-        return {**base, "switch_points": []}
-
-    # 2. Maximum: intro must fall within the first 30% of the track.
-    #    Proxy for track duration: last beat time + one beat length.
     estimated_duration = float(beats[-1]) + 60.0 / bpm
+    if time_sec < 4.0 or beat_idx < 8:
+        return {**base, "switch_points": [], "structural_points": structural_points}
     if time_sec > 0.30 * estimated_duration:
-        return {**base, "switch_points": []}
+        return {**base, "switch_points": [], "structural_points": structural_points}
 
     return {
         **base,
@@ -228,6 +285,7 @@ def _detect(bpm: float, beats: np.ndarray, rms: np.ndarray) -> dict:
             "novelty":    round(float(novelty_norm[best_w]), 4),
             "beat_index": beat_idx,
         }],
+        "structural_points": structural_points,
     }
 
 
