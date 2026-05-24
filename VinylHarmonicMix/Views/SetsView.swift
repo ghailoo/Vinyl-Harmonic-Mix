@@ -76,7 +76,7 @@ struct SetsView: View {
     @ViewBuilder
     private var detailPanel: some View {
         if let set = selectedSet {
-            SetDetailPlaceholder(set: set)
+            SetBuilderDetailView(setlist: set)
         } else {
             VStack(spacing: 8) {
                 Image(systemName: "list.bullet.rectangle")
@@ -182,30 +182,6 @@ private struct SetlistRowView: View {
             Divider()
             Button("Delete", role: .destructive, action: onDelete)
         }
-    }
-}
-
-// MARK: - Detail placeholder
-
-private struct SetDetailPlaceholder: View {
-    let set: SetlistEntity
-
-    var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "list.bullet.rectangle")
-                .font(.system(size: 36))
-                .foregroundStyle(.tertiary)
-            Text(set.name)
-                .font(.title2.bold())
-            Text(set.items.isEmpty ? "No tracks yet" : "\(set.items.count) track\(set.items.count == 1 ? "" : "s")")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            Text("Track builder coming in Stage 2")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-                .padding(.top, 4)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

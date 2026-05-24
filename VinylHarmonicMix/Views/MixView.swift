@@ -1,55 +1,6 @@
 import SwiftUI
 import SwiftData
 
-// MARK: - Unified track model (TrackEntity or LocalFileEntity source)
-
-struct MixTrack: Identifiable, Equatable, Hashable, Sendable {
-    let displayArtist: String
-    let displayTitle: String
-    let bpm: Double
-    let camelot: String
-    let key: String
-    let source: TrackEntity.FeatureSource
-    let filePath: String?
-
-    var id: String { filePath ?? "\(displayArtist)|\(displayTitle)|\(bpm)" }
-    func hash(into hasher: inout Hasher) { hasher.combine(id) }
-    static func == (lhs: MixTrack, rhs: MixTrack) -> Bool { lhs.id == rhs.id }
-
-    // Precomputed integer key: 1A→0, 1B→1, 2A→2, … 12B→23
-    var camelotSortKey: Int {
-        guard let last = camelot.last, let num = Int(camelot.dropLast()) else { return Int.max }
-        return (num - 1) * 2 + (last == "B" ? 1 : 0)
-    }
-}
-
-// MARK: - Harmonic compatibility group
-
-enum HarmonicGroup: String, CaseIterable {
-    case perfectMatch = "Perfect match"
-    case energyBoost  = "Energy boost"
-    case energyDrop   = "Energy drop"
-    case moodSwitch   = "Mood switch"
-
-    var systemImage: String {
-        switch self {
-        case .perfectMatch: return "checkmark.circle.fill"
-        case .energyBoost:  return "arrow.up.circle"
-        case .energyDrop:   return "arrow.down.circle"
-        case .moodSwitch:   return "arrow.left.arrow.right.circle"
-        }
-    }
-
-    var color: Color {
-        switch self {
-        case .perfectMatch: return Color(red: 0.15, green: 0.55, blue: 0.30)
-        case .energyBoost:  return .orange
-        case .energyDrop:   return .blue
-        case .moodSwitch:   return .purple
-        }
-    }
-}
-
 // MARK: - MixView
 
 struct MixView: View {
@@ -68,12 +19,6 @@ struct MixView: View {
         case bpm     = "BPM"
         case camelot = "Camelot"
         case artist  = "Artist"
-    }
-
-    struct CompatibleItem: Identifiable {
-        var id: String { track.id }
-        let track: MixTrack
-        let bpmDelta: Double
     }
 
     @State private var scope: MixScope = .confident
@@ -180,40 +125,6 @@ struct MixView: View {
         }
     }
 
-    private func compatibleGroups(for selected: MixTrack) -> [HarmonicGroup: [CompatibleItem]] {
-        guard !selected.camelot.isEmpty else { return [:] }
-        let compat = CamelotConverter.compatibleCodes(for: selected.camelot)
-        // compat[0] = same number, other letter → mood switch
-        // compat[1] = next number, same letter  → energy boost
-        // compat[2] = prev number, same letter  → energy drop
-
-        var result: [HarmonicGroup: [CompatibleItem]] = [:]
-        for track in tracks {
-            guard track.id != selected.id else { continue }
-            let delta = track.bpm - selected.bpm
-            guard abs(delta) <= bpmTolerance else { continue }
-
-            let group: HarmonicGroup
-            if track.camelot == selected.camelot {
-                group = .perfectMatch
-            } else if compat.count >= 3 && track.camelot == compat[1] {
-                group = .energyBoost
-            } else if compat.count >= 3 && track.camelot == compat[2] {
-                group = .energyDrop
-            } else if !compat.isEmpty && track.camelot == compat[0] {
-                group = .moodSwitch
-            } else {
-                continue
-            }
-
-            result[group, default: []].append(CompatibleItem(track: track, bpmDelta: delta))
-        }
-        for key in result.keys {
-            result[key]?.sort { abs($0.bpmDelta) < abs($1.bpmDelta) }
-        }
-        return result
-    }
-
     // MARK: - Left pane
 
     private var leftPane: some View {
@@ -309,7 +220,7 @@ struct MixView: View {
 
                 // Waveform for the selected track
                 if let fp = selected.filePath {
-                    SelectedTrackWaveformView(filePath: fp)
+                    TrackWaveformView(filePath: fp)
                     Divider()
                 }
 
@@ -330,7 +241,7 @@ struct MixView: View {
                 Divider()
 
                 // Compatible tracks grouped by harmonic relationship
-                let grouped = compatibleGroups(for: selected)
+                let grouped = HarmonicCompatibility.compatibleGroups(for: selected, in: tracks, bpmTolerance: bpmTolerance)
                 let totalCount = grouped.values.reduce(0) { $0 + $1.count }
 
                 if totalCount == 0 {
@@ -459,7 +370,7 @@ struct MixView: View {
             .padding(.vertical, 2)
 
             if let fp = item.track.filePath, playback.currentFilePath == fp {
-                SelectedTrackWaveformView(filePath: fp)
+                TrackWaveformView(filePath: fp)
             }
         }
     }
@@ -514,56 +425,3 @@ struct MixView: View {
     }
 }
 
-// MARK: - Selected-track waveform (own @Observable context so currentTime drives live progress)
-
-private struct SelectedTrackWaveformView: View {
-    @Environment(AudioPlaybackController.self) private var playback
-    let filePath: String
-
-    var body: some View {
-        let isActive = playback.currentFilePath == filePath
-        let progress: Double = isActive && playback.duration > 0
-            ? min(1, max(0, playback.currentTime / playback.duration))
-            : 0.0
-
-        VStack(alignment: .leading, spacing: 4) {
-            switch playback.waveformState(for: filePath) {
-            case .ready(let peaks):
-                WaveformView(peaks: peaks, progress: progress) { fraction in
-                    playback.seek(toFraction: fraction)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-            case .loading:
-                ZStack {
-                    RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.1))
-                    HStack(spacing: 6) {
-                        ProgressView().scaleEffect(0.6)
-                        Text("Loading waveform…").font(.caption2).foregroundStyle(.secondary)
-                    }
-                }
-            case .failed:
-                ZStack {
-                    RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.08))
-                    Text("Waveform unavailable").font(.caption2).foregroundStyle(.tertiary)
-                }
-            case .idle:
-                Color.clear
-                    .onAppear { playback.loadWaveformIfNeeded(filePath: filePath) }
-            }
-
-            if isActive && playback.duration > 0 {
-                Text("\(formatTime(playback.currentTime)) / \(formatTime(playback.duration))")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .frame(height: 52)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-    }
-
-    private func formatTime(_ seconds: Double) -> String {
-        let s = max(0, Int(seconds))
-        return String(format: "%d:%02d", s / 60, s % 60)
-    }
-}
