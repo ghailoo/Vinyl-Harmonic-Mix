@@ -191,42 +191,98 @@ struct TransitionBubbleView: View {
             ? abs(candidate.bpm - anchor.bpm) / anchor.bpm * 100.0
             : 0.0
 
-        VStack(spacing: 3) {
-            Circle()
-                .fill(grade.color)
-                .frame(width: 10, height: 10)
-            Text(grade.label)
-                .font(.system(size: 9, weight: .bold))
+        VStack(spacing: 0) {
+            // Hero: BPM% — the first thing the eye hits
+            Text(String(format: "%.1f%%", bpmPct))
+                .font(.system(size: 22, weight: .black).monospacedDigit())
                 .foregroundStyle(grade.color)
-                .multilineTextAlignment(.center)
+                .padding(.bottom, 2)
+
+            Text(info.bpmDelta)
+                .font(.system(size: 10, weight: .medium).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .padding(.bottom, 10)
+
+            // Camelot key transition
+            if !anchor.camelot.isEmpty, !candidate.camelot.isEmpty {
+                Text("\(anchor.camelot) → \(candidate.camelot)")
+                    .font(.system(size: 13, weight: .bold).monospacedDigit())
+                    .foregroundStyle(.primary)
+                    .padding(.bottom, 10)
+            }
 
             Rectangle()
-                .fill(Color.secondary.opacity(0.2))
-                .frame(height: 1)
-                .padding(.vertical, 2)
+                .fill(grade.color.opacity(0.25))
+                .frame(height: 0.5)
+                .padding(.bottom, 8)
 
-            if !anchor.camelot.isEmpty, !candidate.camelot.isEmpty {
-                Text("\(anchor.camelot)→\(candidate.camelot)")
+            // Group label
+            if let group = info.group {
+                Text(group.rawValue)
                     .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(info.group?.color ?? Color.secondary)
+                    .foregroundStyle(grade.color.opacity(0.9))
+                    .multilineTextAlignment(.center)
+                    .padding(.bottom, 7)
             }
-            Text(info.bpmDelta)
-                .font(.system(size: 9, weight: .medium).monospacedDigit())
-                .foregroundStyle(.secondary)
-            Text(String(format: "%.1f%%", bpmPct))
-                .font(.system(size: 8).monospacedDigit())
-                .foregroundStyle(.tertiary)
+
+            // Grade pips + label
+            gradeRow(grade: grade)
         }
-        .frame(width: 62)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(grade.color.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .strokeBorder(grade.color.opacity(0.3), lineWidth: 1)
-                )
-        )
+        .padding(.horizontal, 12)
+        .padding(.vertical, 14)
+        .frame(minWidth: 108)
+        .background {
+            let shape = RoundedRectangle(cornerRadius: 14)
+            ZStack {
+                // Gradient fill — stronger at top, fades down
+                shape.fill(LinearGradient(
+                    colors: [grade.color.opacity(0.20), grade.color.opacity(0.04)],
+                    startPoint: .top, endPoint: .bottom
+                ))
+                // Glass highlight at top edge
+                shape.fill(LinearGradient(
+                    colors: [Color.white.opacity(0.10), Color.clear],
+                    startPoint: .top,
+                    endPoint: .init(x: 0.5, y: 0.45)
+                ))
+                // Gradient stroke — vivid at top, soft at bottom
+                shape.strokeBorder(LinearGradient(
+                    colors: [grade.color.opacity(0.60), grade.color.opacity(0.18)],
+                    startPoint: .top, endPoint: .bottom
+                ), lineWidth: 1.5)
+            }
+        }
+        .shadow(color: grade.color.opacity(0.28), radius: 10, x: 0, y: 4)
+    }
+
+    @ViewBuilder
+    private func gradeRow(grade: BlendGrade) -> some View {
+        let filled: Int = {
+            switch grade {
+            case .perfect:  return 3
+            case .good:     return 2
+            case .workable: return 1
+            case .hardCut:  return 0
+            }
+        }()
+        HStack(spacing: 4) {
+            HStack(spacing: 3) {
+                ForEach(0..<3, id: \.self) { i in
+                    if i < filled {
+                        Circle()
+                            .fill(grade.color)
+                            .frame(width: 7, height: 7)
+                            .shadow(color: grade.color.opacity(0.65), radius: 3)
+                    } else {
+                        Circle()
+                            .strokeBorder(grade.color.opacity(0.28), lineWidth: 1)
+                            .frame(width: 7, height: 7)
+                    }
+                }
+            }
+            Text(grade.label)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(grade.color.opacity(0.7))
+        }
     }
 }

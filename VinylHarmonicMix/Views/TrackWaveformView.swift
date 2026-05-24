@@ -42,9 +42,7 @@ struct TrackWaveformView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .frame(height: 52)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .frame(height: 68)
     }
 
     private func formatTime(_ seconds: Double) -> String {

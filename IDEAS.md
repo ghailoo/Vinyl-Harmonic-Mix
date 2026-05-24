@@ -67,3 +67,16 @@ transition the user is auditioning (before "Add to Set"):
   * Workable (orange): harmonic but larger BPM gap, OR close BPM but off-key
   * Hard cut (grey): neither — a deliberate break (not "bad", ties to 2.7)
 Reuses transitionInfo() from Stage 3; adds a grading function. Sits visually between Deck A & Deck B.
+
+## FUTURE (major) — Live two-deck crossfader mixer in Mix mode
+Add a crossfader UNDER the transition bubble to actually HEAR tracks A and B mixed live (not just
+audition one at a time). Requirements / why it's a big build:
+- DUAL simultaneous playback — both decks play at once. Current AudioPlaybackController is
+  single-player/one-at-a-time; needs rearchitecting (likely AVAudioEngine with two player nodes).
+- Crossfader — equal-power gain blend between the two decks' volumes.
+- BPM SYNC / beatmatching — time-stretch one track to match the other's tempo without pitch change
+  (AVAudioUnitTimePitch on AVAudioEngine). Real DSP, substantial.
+- Beat/phase alignment — downbeats must line up, which DEPENDS ON cue points / beat grids.
+DEPENDENCY: requires cue-point detection (roadmap #3) done first — need beat positions to beatmatch/align.
+MILESTONE PLACEMENT: AFTER #3 (cue points). This is its own major milestone (call it #5 / "Live Mixer"),
+built on top of cue points + an AVAudioEngine playback rebuild. NOT a polish item — a flagship feature.

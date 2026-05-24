@@ -30,15 +30,17 @@ struct MixModeView: View {
     @State private var pool: [MixTrack] = []
     @State private var thumbURLs: [String: URL] = [:]
     @State private var releaseNameByPath: [String: String] = [:]
+    @State private var mixableCount: [Int: Int] = [:]
 
     // Building state
     @State private var candidateTrack: MixTrack? = nil
-    @State private var bpmTolerance: Double = 6.0   // percent
+    @AppStorage("mixBpmTolerance") private var bpmTolerance: Double = 6.0
 
     // Strip group-filter chips
-    @State private var showSameKey:  Bool = true
-    @State private var showAdjacent: Bool = true
-    @State private var showAdvanced: Bool = true
+    @State private var showPerfect: Bool = true
+    @State private var showBoost:   Bool = true
+    @State private var showDrop:    Bool = true
+    @State private var showMood:    Bool = true
 
     // Track picker sheet
     @State private var trackPickerRelease: CollectionItemEntity? = nil
@@ -73,9 +75,10 @@ struct MixModeView: View {
 
     private var visibleGroups: [HarmonicGroup] {
         var g: [HarmonicGroup] = []
-        if showSameKey  { g.append(.perfectMatch) }
-        if showAdjacent { g.append(.energyBoost); g.append(.energyDrop) }
-        if showAdvanced { g.append(.moodSwitch) }
+        if showPerfect { g.append(.perfectMatch) }
+        if showBoost   { g.append(.energyBoost) }
+        if showDrop    { g.append(.energyDrop) }
+        if showMood    { g.append(.moodSwitch) }
         return g
     }
 
@@ -129,8 +132,9 @@ struct MixModeView: View {
             }
         }
         .onChange(of: scope)                    { _, _ in rebuildPool() }
-        .onChange(of: allTrackEntities.count)   { _, _ in rebuildPool() }
+        .onChange(of: allTrackEntities.count)    { _, _ in rebuildPool() }
         .onChange(of: analyzedFiles.count)      { _, _ in rebuildPool() }
+        .onChange(of: allCollectionEntities.count) { _, _ in rebuildMixableCount() }
         .onChange(of: activeSet) { _, newSet in
             activeSetID = newSet?.id ?? ""
         }
@@ -230,16 +234,18 @@ struct MixModeView: View {
     @ViewBuilder
     private func deckRow(anchor: MixTrack) -> some View {
         VStack(spacing: 8) {
-            HStack(alignment: .center, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
                 deckCard(label: "NOW PLAYING", track: anchor,
-                         coverURL: thumbURLs[anchor.filePath ?? ""])
+                         coverURL: thumbURLs[anchor.filePath ?? ""],
+                         tintColor: .accentColor)
                 if let candidate = candidateTrack {
                     TransitionBubbleView(anchor: anchor, candidate: candidate)
                 } else {
-                    Color.clear.frame(width: 62)
+                    Color.clear.frame(width: 110)
                 }
                 deckCard(label: "NEXT UP", track: candidateTrack,
                          coverURL: candidateTrack.flatMap { thumbURLs[$0.filePath ?? ""] },
+                         tintColor: .orange,
                          dismissable: true)
             }
             if candidateTrack != nil {
@@ -260,64 +266,79 @@ struct MixModeView: View {
 
     @ViewBuilder
     private func deckCard(label: String, track: MixTrack?, coverURL: URL?,
-                          dismissable: Bool = false) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            AsyncImage(url: coverURL) { phase in
-                switch phase {
-                case .success(let img):
-                    img.resizable().aspectRatio(contentMode: .fill)
-                default:
-                    ZStack {
-                        Color.secondary.opacity(0.1)
-                        Image(systemName: "music.note").font(.system(size: 18)).foregroundStyle(.secondary)
+                          tintColor: Color, dismissable: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 10) {
+                AsyncImage(url: coverURL) { phase in
+                    switch phase {
+                    case .success(let img):
+                        img.resizable().aspectRatio(contentMode: .fill)
+                    default:
+                        ZStack {
+                            Color.secondary.opacity(0.1)
+                            Image(systemName: "music.note").font(.system(size: 18)).foregroundStyle(.secondary)
+                        }
                     }
                 }
-            }
-            .frame(width: 68, height: 68)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+                .frame(width: 68, height: 68)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 4) {
-                    Text(label)
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(label == "NOW PLAYING" ? Color.accentColor : Color.orange)
-                        .kerning(0.3)
-                    Spacer()
-                    if dismissable, track != nil {
-                        Button { candidateTrack = nil } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 14))
-                                .foregroundStyle(Color.secondary.opacity(0.55))
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 4) {
+                        Text(label)
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(tintColor)
+                            .kerning(0.3)
+                        Spacer()
+                        if dismissable, track != nil {
+                            Button { candidateTrack = nil } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(Color.secondary.opacity(0.55))
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
+                        if let fp = track?.filePath { playButton(fp, fontSize: 15) }
                     }
-                    if let fp = track?.filePath { playButton(fp, fontSize: 15) }
-                }
-                if let t = track {
-                    Text(t.displayTitle)
-                        .font(.system(size: 13, weight: .semibold))
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text(t.displayArtist)
-                        .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                    HStack(spacing: 5) {
-                        camelotPill(t.camelot, fontSize: 9)
-                        Text("\(Int(t.bpm.rounded())) BPM")
-                            .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                        if !t.key.isEmpty {
-                            Text(t.key).font(.system(size: 10)).foregroundStyle(.secondary)
+                    if let t = track {
+                        Text(t.displayTitle)
+                            .font(.system(size: 13, weight: .semibold))
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(t.displayArtist)
+                            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                        HStack(spacing: 5) {
+                            camelotPill(t.camelot, fontSize: 9)
+                            Text("\(Int(t.bpm.rounded())) BPM")
+                                .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                            if !t.key.isEmpty {
+                                Text(t.key).font(.system(size: 10)).foregroundStyle(.secondary)
+                            }
                         }
+                    } else {
+                        Text("—").font(.system(size: 13)).foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
-                } else {
-                    Text("—").font(.system(size: 13)).foregroundStyle(.tertiary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: 88)
+
+            if let fp = track?.filePath, !fp.isEmpty {
+                TrackWaveformView(filePath: fp)
+                    .id(fp)
+            } else {
+                Color.clear.frame(height: 68)
+            }
         }
         .padding(10)
-        .frame(maxWidth: .infinity, minHeight: 88)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.06)))
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(tintColor.opacity(0.07))
+                .overlay(RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(tintColor.opacity(0.18), lineWidth: 1))
+        )
     }
 
     // MARK: - BPM slider
@@ -390,12 +411,14 @@ struct MixModeView: View {
 
     private var stripFilterChips: some View {
         HStack(spacing: 8) {
-            filterChip("Same key",  icon: "checkmark.circle.fill",
-                        color: HarmonicGroup.perfectMatch.color, isOn: $showSameKey)
-            filterChip("Adjacent",  icon: "arrow.up.arrow.down.circle",
-                        color: HarmonicGroup.energyBoost.color,  isOn: $showAdjacent)
-            filterChip("Advanced",  icon: "arrow.left.arrow.right.circle",
-                        color: HarmonicGroup.moodSwitch.color,   isOn: $showAdvanced)
+            filterChip("Perfect match", icon: HarmonicGroup.perfectMatch.systemImage,
+                       color: HarmonicGroup.perfectMatch.color, isOn: $showPerfect)
+            filterChip("Energy boost",  icon: HarmonicGroup.energyBoost.systemImage,
+                       color: HarmonicGroup.energyBoost.color,  isOn: $showBoost)
+            filterChip("Energy drop",   icon: HarmonicGroup.energyDrop.systemImage,
+                       color: HarmonicGroup.energyDrop.color,   isOn: $showDrop)
+            filterChip("Mood switch",   icon: HarmonicGroup.moodSwitch.systemImage,
+                       color: HarmonicGroup.moodSwitch.color,   isOn: $showMood)
             Spacer()
         }
         .padding(.horizontal, 14).padding(.vertical, 7)
@@ -435,17 +458,23 @@ struct MixModeView: View {
         ScrollView {
             LazyVGrid(columns: gridColumns, spacing: 20) {
                 ForEach(viewModel.items) { item in
+                    let count = mixableCount[item.id] ?? 0
                     Button {
-                        guard activeSet != nil else { return }
-                        if let entity = allCollectionEntities.first(where: { $0.instanceId == item.id }),
-                           !entity.tracks.isEmpty {
+                        guard activeSet != nil, count > 0 else { return }
+                        if let entity = allCollectionEntities.first(where: { $0.instanceId == item.id }) {
                             trackPickerRelease = entity
                         }
                     } label: {
-                        CollectionCardView(
-                            item: item, hasMBID: false,
-                            covered: 0, total: 0, localCovered: 0, isActive: false
-                        )
+                        ZStack(alignment: .bottomLeading) {
+                            CollectionCardView(
+                                item: item, hasMBID: false,
+                                covered: 0, total: 0, localCovered: 0, isActive: false
+                            )
+                            .opacity(count == 0 ? 0.38 : 1.0)
+                            if count > 0 {
+                                mixableBadge(count)
+                            }
+                        }
                     }
                     .buttonStyle(.plain)
                     .opacity(activeSet == nil ? 0.45 : 1.0)
@@ -466,6 +495,22 @@ struct MixModeView: View {
         }
     }
 
+    @ViewBuilder
+    private func mixableBadge(_ count: Int) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: "waveform")
+                .font(.system(size: 8, weight: .semibold))
+            Text("\(count)")
+                .font(.system(size: 9, weight: .bold).monospacedDigit())
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(Color(red: 0.15, green: 0.55, blue: 0.30)))
+        .padding(.leading, 6)
+        .padding(.bottom, 6)
+    }
+
     // MARK: - Pool rebuild
 
     private func rebuildPool() {
@@ -482,6 +527,18 @@ struct MixModeView: View {
             names[fp] = title
         }
         releaseNameByPath = names
+        rebuildMixableCount()
+    }
+
+    private func rebuildMixableCount() {
+        var counts: [Int: Int] = [:]
+        counts.reserveCapacity(allCollectionEntities.count)
+        for entity in allCollectionEntities {
+            counts[entity.instanceId] = entity.tracks.filter {
+                $0.effectiveBpm != nil && !($0.effectiveCamelot ?? "").isEmpty
+            }.count
+        }
+        mixableCount = counts
     }
 
     // MARK: - Actions
