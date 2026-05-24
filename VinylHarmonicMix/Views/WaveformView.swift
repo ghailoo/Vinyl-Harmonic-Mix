@@ -2,8 +2,10 @@ import SwiftUI
 
 struct WaveformView: View {
     let peaks: [Float]
-    let progress: Double    // 0…1, current playhead position
-    let onSeek: (Double) -> Void
+    let progress: Double        // 0…1, current playhead position
+    var cuePoints: [Double] = []   // cue times in seconds
+    var duration: Double = 0       // track duration in seconds (for time→x mapping)
+    let onSeek: (Double) -> Void   // last so trailing-closure callers without cue data still compile
 
     var body: some View {
         GeometryReader { geo in
@@ -56,6 +58,26 @@ struct WaveformView: View {
                 height: size.height
             )
             ctx.fill(Path(lineRect), with: .color(.white.opacity(0.85)))
+        }
+
+        // Cue markers — drawn on top of bars + playhead
+        guard duration > 0, !cuePoints.isEmpty else { return }
+        let cueColor = Color(red: 1.0, green: 0.75, blue: 0.05)
+        for t in cuePoints {
+            guard t >= 0, t <= duration else { continue }
+            let x = size.width * CGFloat(t / duration)
+
+            // 1.5px vertical line full height
+            let stemRect = CGRect(x: max(0, x - 0.75), y: 0, width: 1.5, height: size.height)
+            ctx.fill(Path(stemRect), with: .color(cueColor.opacity(0.9)))
+
+            // Small downward-pointing flag at the top edge
+            var flag = Path()
+            flag.move(to: CGPoint(x: x - 5, y: 0))
+            flag.addLine(to: CGPoint(x: x + 5, y: 0))
+            flag.addLine(to: CGPoint(x: x, y: 8))
+            flag.closeSubpath()
+            ctx.fill(flag, with: .color(cueColor))
         }
     }
 }

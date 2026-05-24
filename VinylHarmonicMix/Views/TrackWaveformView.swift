@@ -1,19 +1,32 @@
 import SwiftUI
+import SwiftData
 
 struct TrackWaveformView: View {
     @Environment(AudioPlaybackController.self) private var playback
+    @Environment(\.modelContext) private var modelContext
     let filePath: String
 
+    @State private var cueTimes: [Double] = []
+    @State private var fileDuration: Double = 0
+
     var body: some View {
-        let isActive = playback.currentFilePath == filePath
-        let progress: Double = isActive && playback.duration > 0
-            ? min(1, max(0, playback.currentTime / playback.duration))
+        let isActive         = playback.currentFilePath == filePath
+        let playbackDuration = isActive ? playback.duration : 0.0
+        let progress: Double = playbackDuration > 0
+            ? min(1, max(0, playback.currentTime / playbackDuration))
             : 0.0
+        // Use live playback duration when playing; fall back to DB durationMs when idle
+        let duration = playbackDuration > 0 ? playbackDuration : fileDuration
 
         VStack(alignment: .leading, spacing: 4) {
             switch playback.waveformState(for: filePath) {
             case .ready(let peaks):
-                WaveformView(peaks: peaks, progress: progress) { fraction in
+                WaveformView(
+                    peaks: peaks,
+                    progress: progress,
+                    cuePoints: cueTimes,
+                    duration: duration
+                ) { fraction in
                     guard playback.currentFilePath == filePath else { return }
                     playback.seek(toFraction: fraction)
                 }
@@ -36,13 +49,27 @@ struct TrackWaveformView: View {
                     .onAppear { playback.loadWaveformIfNeeded(filePath: filePath) }
             }
 
-            if isActive && playback.duration > 0 {
-                Text("\(formatTime(playback.currentTime)) / \(formatTime(playback.duration))")
+            if isActive && playbackDuration > 0 {
+                Text("\(formatTime(playback.currentTime)) / \(formatTime(playbackDuration))")
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
         }
         .frame(height: 68)
+        .task(id: filePath) { loadCueData() }
+    }
+
+    // Fetch cue times + durationMs from the LocalFileEntity for this file.
+    // Runs synchronously on the main actor; safe because modelContext is main-actor isolated.
+    private func loadCueData() {
+        let fp = filePath
+        var fd = FetchDescriptor<LocalFileEntity>(
+            predicate: #Predicate { $0.filePath == fp }
+        )
+        fd.fetchLimit = 1
+        guard let file = try? modelContext.fetch(fd).first else { return }
+        cueTimes     = file.cuePoints.map(\.timeSec).sorted()
+        fileDuration = file.durationMs > 0 ? Double(file.durationMs) / 1000.0 : 0
     }
 
     private func formatTime(_ seconds: Double) -> String {
