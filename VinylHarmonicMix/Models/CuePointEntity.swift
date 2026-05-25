@@ -9,6 +9,7 @@ final class CuePointEntity {
     var beatIndex: Int = 0
     var type: String = "switch_in"     // "switch_in" | "structural"
     var energyDirection: String = ""   // "rise" | "fall" | "neutral" | ""
+    var energyDelta: Double = 0.0      // abs(mean_after - mean_before), normalised 0..1
     var createdAt: Date = Date()
 
     var localFile: LocalFileEntity?

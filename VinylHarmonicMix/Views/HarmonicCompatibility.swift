@@ -230,7 +230,7 @@ struct TransitionBubbleView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 14)
-        .frame(minWidth: 80)
+        .frame(width: 96)
         .background {
             let shape = RoundedRectangle(cornerRadius: 14)
             ZStack {

@@ -152,11 +152,12 @@ def _foote_novelty(energy_norm: np.ndarray) -> np.ndarray:
 def _pick_structural(aligned: np.ndarray, novelty_norm: np.ndarray,
                      energy_norm: np.ndarray, strong: np.ndarray) -> list:
     """
-    Greedy top-N peak-pick on the full 4-bar-aligned grid.
+    Greedy peak-pick on the full 4-bar-aligned grid.
 
     Sort aligned positions by descending novelty; greedily accept each position
     that is (a) above _STRUCT_THRESHOLD and (b) at least _STRUCT_MIN_SPACING
-    windows away from every already-accepted position.  Stop at _STRUCT_MAX.
+    windows away from every already-accepted position.  _STRUCT_MAX is a sanity
+    ceiling only — threshold and spacing are the natural limiters.
     Returned list is sorted chronologically.
     """
     n_w = len(energy_norm)
@@ -194,6 +195,7 @@ def _pick_structural(aligned: np.ndarray, novelty_norm: np.ndarray,
             "novelty":          round(float(novelty_norm[w]), 4),
             "beat_index":       w * 2,
             "energy_direction": direction,
+            "energy_delta":     round(abs(am - bm), 2),
         })
 
     return result

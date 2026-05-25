@@ -69,7 +69,8 @@ struct TrackWaveformView: View {
         fd.fetchLimit = 1
         guard let file = try? modelContext.fetch(fd).first else { return }
         cueMarkers   = file.cuePoints
-            .map { CueMarker(timeSec: $0.timeSec, type: $0.type, energyDirection: $0.energyDirection) }
+            .map { CueMarker(timeSec: $0.timeSec, type: $0.type,
+                             energyDirection: $0.energyDirection, energyDelta: $0.energyDelta) }
             .sorted { $0.timeSec < $1.timeSec }
         fileDuration = file.durationMs > 0 ? Double(file.durationMs) / 1000.0 : 0
     }

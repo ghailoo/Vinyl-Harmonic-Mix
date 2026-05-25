@@ -4,6 +4,7 @@ struct CueMarker {
     let timeSec: Double
     let type: String            // "switch_in" | "structural"
     let energyDirection: String // "rise" | "fall" | "neutral" | ""
+    let energyDelta: Double     // abs(mean_after - mean_before), normalised 0..1; 0 for switch_in
 }
 
 struct WaveformView: View {
@@ -113,18 +114,40 @@ struct WaveformView: View {
             ctx.fill(flag, with: .color(amber))
         }
 
-        // Number labels — drawn last, chronological across all visible cues
+        // Labels — drawn last, chronological across all visible cues
         for (i, (marker, color)) in visible.enumerated() {
             let x = size.width * CGFloat(marker.timeSec / duration)
-            // switch_in: below the flag (flag ends at y≈8); structural: near top edge
-            let labelY: CGFloat = marker.type == "switch_in" ? 14 : 5
-            ctx.draw(
-                Text("\(i + 1)")
-                    .font(.system(size: 8, weight: .bold).monospacedDigit())
-                    .foregroundStyle(color),
-                at: CGPoint(x: x, y: labelY),
-                anchor: .center
-            )
+
+            if marker.type == "switch_in" {
+                // Just the cue number, below the flag (flag ends at y≈8)
+                ctx.draw(
+                    Text("\(i + 1)")
+                        .font(.system(size: 8, weight: .bold).monospacedDigit())
+                        .foregroundStyle(color),
+                    at: CGPoint(x: x, y: 14),
+                    anchor: .center
+                )
+            } else {
+                // Number + energy arrow+delta, e.g. "3↑.42" near top edge
+                let arrowAndDelta: String
+                switch marker.energyDirection {
+                case "rise":
+                    let s = String(format: "%.2f", min(marker.energyDelta, 0.99))
+                    arrowAndDelta = "↑" + (s.hasPrefix("0") ? String(s.dropFirst()) : s)
+                case "fall":
+                    let s = String(format: "%.2f", min(marker.energyDelta, 0.99))
+                    arrowAndDelta = "↓" + (s.hasPrefix("0") ? String(s.dropFirst()) : s)
+                default:
+                    arrowAndDelta = "•"
+                }
+                ctx.draw(
+                    Text("\(i + 1)\(arrowAndDelta)")
+                        .font(.system(size: 8, weight: .bold).monospacedDigit())
+                        .foregroundStyle(color),
+                    at: CGPoint(x: x, y: 5),
+                    anchor: .center
+                )
+            }
         }
     }
 }

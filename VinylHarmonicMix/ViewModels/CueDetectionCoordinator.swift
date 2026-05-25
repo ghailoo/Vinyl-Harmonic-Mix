@@ -167,6 +167,7 @@ final class CueDetectionCoordinator {
             let novelty: Double
             let beatIndex: Int
             let energyDirection: String
+            let energyDelta: Double
         }
         let switchPoints: [SwitchPoint]
         let structuralPoints: [StructuralPoint]
@@ -225,9 +226,10 @@ final class CueDetectionCoordinator {
                 guard let t = sp["time_sec"] as? Double,
                       let n = sp["novelty"] as? Double,
                       let b = sp["beat_index"] as? Int else { return nil }
-                let dir = sp["energy_direction"] as? String ?? ""
+                let dir   = sp["energy_direction"] as? String ?? ""
+                let delta = sp["energy_delta"]     as? Double ?? 0.0
                 return CueScriptResult.StructuralPoint(timeSec: t, novelty: n, beatIndex: b,
-                                                       energyDirection: dir)
+                                                       energyDirection: dir, energyDelta: delta)
             }
 
             return .success(CueScriptResult(switchPoints: switchPoints,
@@ -266,6 +268,7 @@ final class CueDetectionCoordinator {
                 cue.beatIndex       = sp.beatIndex
                 cue.type            = "structural"
                 cue.energyDirection = sp.energyDirection
+                cue.energyDelta     = sp.energyDelta
                 cue.createdAt       = .now
                 cue.localFile       = file
                 context.insert(cue)
