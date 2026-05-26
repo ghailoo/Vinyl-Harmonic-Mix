@@ -8,6 +8,7 @@ struct TrackWaveformView: View {
 
     @State private var cueMarkers: [CueMarker] = []
     @State private var fileDuration: Double = 0
+    @State private var fileEntity: LocalFileEntity? = nil
 
     var body: some View {
         let isActive         = playback.currentFilePath == filePath
@@ -25,11 +26,19 @@ struct TrackWaveformView: View {
                     peaks: peaks,
                     progress: progress,
                     cueMarkers: cueMarkers,
-                    duration: duration
-                ) { fraction in
-                    guard playback.currentFilePath == filePath else { return }
-                    playback.seek(toFraction: fraction)
-                }
+                    duration: duration,
+                    onSeek: { fraction in
+                        guard playback.currentFilePath == filePath else { return }
+                        playback.seek(toFraction: fraction)
+                    },
+                    onAddCue: { fraction, type, dir in
+                        addManualCue(fraction: fraction, type: type,
+                                     energyDirection: dir, duration: duration)
+                    },
+                    onDeleteCue: { ts in
+                        deleteManualCue(timeSec: ts)
+                    }
+                )
                 .clipShape(RoundedRectangle(cornerRadius: 4))
             case .loading:
                 ZStack {
@@ -59,8 +68,6 @@ struct TrackWaveformView: View {
         .task(id: filePath) { loadCueData() }
     }
 
-    // Fetch cue times + durationMs from the LocalFileEntity for this file.
-    // Runs synchronously on the main actor; safe because modelContext is main-actor isolated.
     private func loadCueData() {
         let fp = filePath
         var fd = FetchDescriptor<LocalFileEntity>(
@@ -68,11 +75,46 @@ struct TrackWaveformView: View {
         )
         fd.fetchLimit = 1
         guard let file = try? modelContext.fetch(fd).first else { return }
+        fileEntity   = file
         cueMarkers   = file.cuePoints
             .map { CueMarker(timeSec: $0.timeSec, type: $0.type,
-                             energyDirection: $0.energyDirection, energyDelta: $0.energyDelta) }
+                             energyDirection: $0.energyDirection, energyDelta: $0.energyDelta,
+                             isManual: $0.isManual) }
             .sorted { $0.timeSec < $1.timeSec }
         fileDuration = file.durationMs > 0 ? Double(file.durationMs) / 1000.0 : 0
+    }
+
+    private func addManualCue(fraction: Double, type: String,
+                               energyDirection: String, duration: Double) {
+        guard let file = fileEntity, duration > 0 else { return }
+        let timeSec = fraction * duration
+        let cue = CuePointEntity()
+        cue.timeSec         = timeSec
+        cue.feature         = "manual"
+        cue.novelty         = 1.0
+        cue.beatIndex       = 0
+        cue.type            = type
+        cue.energyDirection = energyDirection
+        cue.energyDelta     = 0.0
+        cue.source          = "manual"
+        cue.isManual        = true
+        cue.createdAt       = .now
+        cue.localFile       = file
+        modelContext.insert(cue)
+        try? modelContext.save()
+        cueMarkers.append(CueMarker(timeSec: timeSec, type: type,
+                                    energyDirection: energyDirection,
+                                    energyDelta: 0.0, isManual: true))
+        cueMarkers.sort { $0.timeSec < $1.timeSec }
+    }
+
+    private func deleteManualCue(timeSec: Double) {
+        guard let file = fileEntity else { return }
+        cueMarkers.removeAll { abs($0.timeSec - timeSec) < 0.01 }
+        if let match = file.cuePoints.first(where: { abs($0.timeSec - timeSec) < 0.01 }) {
+            modelContext.delete(match)
+            try? modelContext.save()
+        }
     }
 
     private func formatTime(_ seconds: Double) -> String {

@@ -33,6 +33,8 @@ final class LocalFileEntity {
     var cuePoints: [CuePointEntity] = []
     var cueAnalyzedAt: Date? = nil
     var cueAnalyzerVersion: String = ""
+    var fourToFloor: Bool = false
+    var kickRegularity: Double = 0
 
     var track: TrackEntity?
 

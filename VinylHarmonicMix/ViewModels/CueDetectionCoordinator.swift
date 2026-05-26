@@ -11,7 +11,7 @@ final class CueDetectionCoordinator {
 
     // Bump this string whenever the detection algorithm changes.
     // Files whose cueAnalyzerVersion != currentCueVersion re-qualify for detection.
-    static let currentCueVersion = "v2-structural"
+    static let currentCueVersion = "v3-fourtofloor"
 
     // MARK: - Scope
     enum CueDetectionScope { case matched, unmatched, all }
@@ -168,9 +168,12 @@ final class CueDetectionCoordinator {
             let beatIndex: Int
             let energyDirection: String
             let energyDelta: Double
+            let source: String
         }
         let switchPoints: [SwitchPoint]
         let structuralPoints: [StructuralPoint]
+        let fourToFloor: Bool
+        let kickRegularity: Double
     }
 
     enum ScriptOutcome: Sendable {
@@ -226,14 +229,21 @@ final class CueDetectionCoordinator {
                 guard let t = sp["time_sec"] as? Double,
                       let n = sp["novelty"] as? Double,
                       let b = sp["beat_index"] as? Int else { return nil }
-                let dir   = sp["energy_direction"] as? String ?? ""
-                let delta = sp["energy_delta"]     as? Double ?? 0.0
+                let dir    = sp["energy_direction"] as? String ?? ""
+                let delta  = sp["energy_delta"]     as? Double ?? 0.0
+                let source = sp["source"]           as? String ?? "energy"
                 return CueScriptResult.StructuralPoint(timeSec: t, novelty: n, beatIndex: b,
-                                                       energyDirection: dir, energyDelta: delta)
+                                                       energyDirection: dir, energyDelta: delta,
+                                                       source: source)
             }
 
+            let fourToFloor   = dict["four_to_floor"]   as? Bool   ?? false
+            let kickRegularity = dict["kick_regularity"] as? Double ?? 0.0
+
             return .success(CueScriptResult(switchPoints: switchPoints,
-                                            structuralPoints: structuralPoints))
+                                            structuralPoints: structuralPoints,
+                                            fourToFloor: fourToFloor,
+                                            kickRegularity: kickRegularity))
         }.value
     }
 
@@ -243,8 +253,8 @@ final class CueDetectionCoordinator {
         for (fileID, result) in buffer {
             guard let file = context.model(for: fileID) as? LocalFileEntity else { continue }
 
-            // Clear all previous cue rows before writing the new v2 set
-            for existing in file.cuePoints { context.delete(existing) }
+            // Clear auto cue rows before writing new ones; preserve manual cues
+            for existing in file.cuePoints where !existing.isManual { context.delete(existing) }
 
             for sp in result.switchPoints {
                 let cue = CuePointEntity()
@@ -269,12 +279,15 @@ final class CueDetectionCoordinator {
                 cue.type            = "structural"
                 cue.energyDirection = sp.energyDirection
                 cue.energyDelta     = sp.energyDelta
+                cue.source          = sp.source
                 cue.createdAt       = .now
                 cue.localFile       = file
                 context.insert(cue)
                 file.cuePoints.append(cue)
             }
 
+            file.fourToFloor        = result.fourToFloor
+            file.kickRegularity     = result.kickRegularity
             file.cueAnalyzedAt      = .now
             file.cueAnalyzerVersion = Self.currentCueVersion
         }

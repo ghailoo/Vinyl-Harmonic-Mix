@@ -5,6 +5,7 @@ struct CueMarker {
     let type: String            // "switch_in" | "structural"
     let energyDirection: String // "rise" | "fall" | "neutral" | ""
     let energyDelta: Double     // abs(mean_after - mean_before), normalised 0..1; 0 for switch_in
+    var isManual: Bool = false
 }
 
 struct WaveformView: View {
@@ -12,7 +13,24 @@ struct WaveformView: View {
     let progress: Double          // 0…1, current playhead position
     var cueMarkers: [CueMarker] = []
     var duration: Double = 0      // track duration in seconds (for time→x mapping)
-    let onSeek: (Double) -> Void  // last so trailing-closure callers without cue data still compile
+    let onSeek: (Double) -> Void
+    var onAddCue: ((Double, String, String) -> Void)? = nil   // (fraction, type, energyDirection)
+    var onDeleteCue: ((Double) -> Void)? = nil                // timeSec of cue to remove
+
+    @State private var hoverFraction: Double = 0
+
+    private var nearbyMarker: CueMarker? {
+        guard duration > 0, !cueMarkers.isEmpty else { return nil }
+        let clickTime = hoverFraction * duration
+        let threshold = max(2.0, duration * 0.015)
+        guard let closest = cueMarkers.min(by: { abs($0.timeSec - clickTime) < abs($1.timeSec - clickTime) }),
+              abs(closest.timeSec - clickTime) <= threshold else { return nil }
+        return closest
+    }
+
+    private func fmtTime(_ s: Double) -> String {
+        let t = max(0, Int(s)); return String(format: "%d:%02d", t / 60, t % 60)
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -20,6 +38,11 @@ struct WaveformView: View {
                 drawBars(ctx: ctx, size: size)
             }
             .contentShape(Rectangle())
+            .onContinuousHover { phase in
+                if case .active(let loc) = phase {
+                    hoverFraction = max(0, min(1, Double(loc.x / geo.size.width)))
+                }
+            }
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
@@ -27,6 +50,18 @@ struct WaveformView: View {
                         onSeek(max(0, min(1, fraction)))
                     }
             )
+            .contextMenu {
+                Button("Add Switch-In")    { onAddCue?(hoverFraction, "switch_in",  "") }
+                Button("Add Rise ↑")      { onAddCue?(hoverFraction, "structural", "rise") }
+                Button("Add Fall ↓")      { onAddCue?(hoverFraction, "structural", "fall") }
+                Button("Add Breakdown •") { onAddCue?(hoverFraction, "structural", "neutral") }
+                if let nearby = nearbyMarker {
+                    Divider()
+                    Button("Delete cue at \(fmtTime(nearby.timeSec))", role: .destructive) {
+                        onDeleteCue?(nearby.timeSec)
+                    }
+                }
+            }
         }
     }
 
@@ -99,6 +134,10 @@ struct WaveformView: View {
             let x = size.width * CGFloat(marker.timeSec / duration)
             let stemRect = CGRect(x: max(0, x - 0.625), y: 0, width: 1.25, height: size.height)
             ctx.fill(Path(stemRect), with: .color(color))
+            if marker.isManual {
+                ctx.fill(Path(ellipseIn: CGRect(x: x - 3, y: size.height - 7, width: 6, height: 6)),
+                         with: .color(color))
+            }
         }
 
         // Switch-in — top layer, 1.5px amber stem + downward ▼ flag
@@ -112,6 +151,10 @@ struct WaveformView: View {
             flag.addLine(to: CGPoint(x: x, y: 8))
             flag.closeSubpath()
             ctx.fill(flag, with: .color(amber))
+            if marker.isManual {
+                ctx.fill(Path(ellipseIn: CGRect(x: x - 3, y: size.height - 7, width: 6, height: 6)),
+                         with: .color(amber))
+            }
         }
 
         // Labels — drawn last, chronological across all visible cues

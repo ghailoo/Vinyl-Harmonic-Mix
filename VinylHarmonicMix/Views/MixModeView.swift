@@ -45,6 +45,9 @@ struct MixModeView: View {
     // Track picker sheet
     @State private var trackPickerRelease: CollectionItemEntity? = nil
 
+    // Search
+    @State private var searchText: String = ""
+
     // Shared grid sizing
     @AppStorage("collectionGridCardSize") private var cardSize: Double = 0.25
     private var gridColumns: [GridItem] {
@@ -90,6 +93,16 @@ struct MixModeView: View {
         }
     }
 
+    private var filteredItems: [CollectionItem] {
+        let q = searchText.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return viewModel.items }
+        let lower = q.lowercased()
+        return viewModel.items.filter { item in
+            item.basicInformation.title.lowercased().contains(lower)
+            || item.basicInformation.artists.contains { $0.name.lowercased().contains(lower) }
+        }
+    }
+
     private var bpmRangeLabel: String {
         guard let a = anchorTrack, a.bpm > 0, bpmTolerance > 0 else { return "" }
         let pct = bpmTolerance / 100.0
@@ -122,6 +135,7 @@ struct MixModeView: View {
                 Divider()
             }
 
+            searchRow
             coverGrid
         }
         .onAppear {
@@ -452,12 +466,39 @@ struct MixModeView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    // MARK: - Search row
+
+    private var searchRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+            TextField("Search releases…", text: $searchText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+            if !searchText.isEmpty {
+                Button { searchText = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color.secondary.opacity(0.6))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.secondary.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
     // MARK: - Cover grid
 
     private var coverGrid: some View {
         ScrollView {
             LazyVGrid(columns: gridColumns, spacing: 20) {
-                ForEach(viewModel.items) { item in
+                ForEach(filteredItems) { item in
                     let count = mixableCount[item.id] ?? 0
                     Button {
                         guard activeSet != nil, count > 0 else { return }
