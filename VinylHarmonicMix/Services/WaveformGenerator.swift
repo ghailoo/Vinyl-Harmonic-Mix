@@ -4,7 +4,7 @@ enum WaveformGenerator {
 
     /// Reads an audio file off the main thread and returns ~`targetBuckets` normalized peak
     /// amplitude values (0…1). Returns nil if the file cannot be opened or is empty.
-    static func generate(filePath: String, targetBuckets: Int = 300) async -> [Float]? {
+    static func generate(filePath: String, targetBuckets: Int = 4000) async -> [Float]? {
         await Task.detached(priority: .utility) { () -> [Float]? in
             guard FileManager.default.fileExists(atPath: filePath) else { return nil }
             let url = URL(fileURLWithPath: filePath)
