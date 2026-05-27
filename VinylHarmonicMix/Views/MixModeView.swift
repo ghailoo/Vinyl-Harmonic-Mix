@@ -159,7 +159,12 @@ struct MixModeView: View {
             }
         }
         .onChange(of: candidateTrack) { _, val in
-            if let fp = val?.filePath { playback.loadWaveformIfNeeded(filePath: fp) }
+            if let fp = val?.filePath {
+                playback.loadWaveformIfNeeded(filePath: fp)
+                playback.preloadAudio(filePath: fp)
+            } else {
+                playback.cancelPreload()
+            }
         }
         .sheet(item: $trackPickerRelease) { entity in
             TrackPickerSheet(entity: entity) { track in handleTrackPick(track) }
@@ -249,18 +254,26 @@ struct MixModeView: View {
     private func deckRow(anchor: MixTrack) -> some View {
         VStack(spacing: 8) {
             HStack(alignment: .top, spacing: 8) {
-                deckCard(label: "NOW PLAYING", track: anchor,
-                         coverURL: thumbURLs[anchor.filePath ?? ""],
-                         tintColor: .accentColor)
+                DeckCardView(
+                    label: "NOW PLAYING",
+                    track: anchor,
+                    coverURL: thumbURLs[anchor.filePath ?? ""],
+                    tintColor: .accentColor,
+                    onDismiss: {}
+                )
                 if let candidate = candidateTrack {
                     TransitionBubbleView(anchor: anchor, candidate: candidate)
                 } else {
                     Color.clear.frame(width: 96)
                 }
-                deckCard(label: "NEXT UP", track: candidateTrack,
-                         coverURL: candidateTrack.flatMap { thumbURLs[$0.filePath ?? ""] },
-                         tintColor: .orange,
-                         dismissable: true)
+                DeckCardView(
+                    label: "NEXT UP",
+                    track: candidateTrack,
+                    coverURL: candidateTrack.flatMap { thumbURLs[$0.filePath ?? ""] },
+                    tintColor: .orange,
+                    dismissable: true,
+                    onDismiss: { candidateTrack = nil }
+                )
             }
             if candidateTrack != nil {
                 HStack {
@@ -276,83 +289,6 @@ struct MixModeView: View {
         .padding(.top, 10)
         .padding(.bottom, candidateTrack != nil ? 8 : 10)
         .background(Color.secondary.opacity(0.03))
-    }
-
-    @ViewBuilder
-    private func deckCard(label: String, track: MixTrack?, coverURL: URL?,
-                          tintColor: Color, dismissable: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 10) {
-                AsyncImage(url: coverURL) { phase in
-                    switch phase {
-                    case .success(let img):
-                        img.resizable().aspectRatio(contentMode: .fill)
-                    default:
-                        ZStack {
-                            Color.secondary.opacity(0.1)
-                            Image(systemName: "music.note").font(.system(size: 18)).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                .frame(width: 68, height: 68)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 4) {
-                        Text(label)
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(tintColor)
-                            .kerning(0.3)
-                        Spacer()
-                        if dismissable, track != nil {
-                            Button { candidateTrack = nil } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.system(size: 14))
-                                    .foregroundStyle(Color.secondary.opacity(0.55))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        if let fp = track?.filePath { playButton(fp, fontSize: 15) }
-                    }
-                    if let t = track {
-                        Text(t.displayTitle)
-                            .font(.system(size: 13, weight: .semibold))
-                            .lineLimit(2)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text(t.displayArtist)
-                            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                        HStack(spacing: 5) {
-                            camelotPill(t.camelot, fontSize: 9)
-                            Text("\(Int(t.bpm.rounded())) BPM")
-                                .font(.system(size: 11, weight: .semibold).monospacedDigit())
-                            if !t.key.isEmpty {
-                                Text(t.key).font(.system(size: 10)).foregroundStyle(.secondary)
-                            }
-                        }
-                    } else {
-                        Text("—").font(.system(size: 13)).foregroundStyle(.tertiary)
-                            .frame(maxWidth: .infinity, alignment: .topLeading)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-            }
-            .frame(maxWidth: .infinity, minHeight: 88)
-
-            if let fp = track?.filePath, !fp.isEmpty {
-                TrackWaveformView(filePath: fp)
-                    .id(fp)
-            } else {
-                Color.clear.frame(height: 68)
-            }
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(tintColor.opacity(0.07))
-                .overlay(RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(tintColor.opacity(0.18), lineWidth: 1))
-        )
     }
 
     // MARK: - BPM slider
@@ -630,12 +566,135 @@ struct MixModeView: View {
     // MARK: - Sub-components
 
     @ViewBuilder
-    private func playButton(_ filePath: String, fontSize: CGFloat) -> some View {
+    private func camelotPill(_ code: String, fontSize: CGFloat) -> some View {
+        Text(code)
+            .font(.system(size: fontSize, weight: .bold).monospacedDigit())
+            .foregroundStyle(CamelotColor.text(for: code))
+            .padding(.horizontal, 5).padding(.vertical, 2)
+            .background(Capsule().fill(CamelotColor.background(for: code)))
+    }
+}
+
+// MARK: - Deck card (owns zoom state so zoom changes don't re-render MixModeView)
+
+private struct DeckCardView: View {
+    @Environment(AudioPlaybackController.self) private var playback
+
+    let label: String
+    let track: MixTrack?
+    let coverURL: URL?
+    let tintColor: Color
+    var dismissable: Bool = false
+    let onDismiss: () -> Void
+
+    @State private var zoomFactor: Double = 1.0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 10) {
+                AsyncImage(url: coverURL) { phase in
+                    switch phase {
+                    case .success(let img):
+                        img.resizable().aspectRatio(contentMode: .fill)
+                    default:
+                        ZStack {
+                            Color.secondary.opacity(0.1)
+                            Image(systemName: "music.note").font(.system(size: 18)).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .frame(width: 68, height: 68)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 4) {
+                        Text(label)
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(tintColor)
+                            .kerning(0.3)
+                        Spacer()
+                        if dismissable, track != nil {
+                            Button { onDismiss() } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(Color.secondary.opacity(0.55))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        if let fp = track?.filePath { playButton(fp) }
+                    }
+                    if let t = track {
+                        Text(t.displayTitle)
+                            .font(.system(size: 13, weight: .semibold))
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(t.displayArtist)
+                            .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                        HStack(spacing: 5) {
+                            camelotPill(t.camelot)
+                            Text("\(Int(t.bpm.rounded())) BPM")
+                                .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                            if !t.key.isEmpty {
+                                Text(t.key).font(.system(size: 10)).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            HStack(spacing: 3) {
+                                Button {
+                                    zoomFactor = zoomFactor == 16 ? 12 : (zoomFactor == 12 ? 8 : max(1, zoomFactor / 2))
+                                } label: {
+                                    Image(systemName: "minus")
+                                        .font(.system(size: 9, weight: .semibold))
+                                }
+                                if zoomFactor > 1 {
+                                    Text("\(Int(zoomFactor))×")
+                                        .font(.system(size: 9, weight: .medium).monospacedDigit())
+                                }
+                                Button {
+                                    zoomFactor = zoomFactor == 12 ? 16 : (zoomFactor == 8 ? 12 : min(16, zoomFactor * 2))
+                                } label: {
+                                    Image(systemName: "plus")
+                                        .font(.system(size: 9, weight: .semibold))
+                                }
+                            }
+                            .foregroundStyle(Color.secondary.opacity(0.7))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(Color.black.opacity(0.25)))
+                            .buttonStyle(.plain)
+                        }
+                    } else {
+                        Text("—").font(.system(size: 13)).foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            .frame(maxWidth: .infinity, minHeight: 88)
+
+            if let fp = track?.filePath, !fp.isEmpty {
+                TrackWaveformView(filePath: fp, zoomFactor: $zoomFactor)
+                    .id(fp)
+            } else {
+                Color.clear.frame(height: 68)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(tintColor.opacity(0.07))
+                .overlay(RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(tintColor.opacity(0.18), lineWidth: 1))
+        )
+    }
+
+    @ViewBuilder
+    private func playButton(_ filePath: String) -> some View {
         Button { playback.play(filePath: filePath) } label: {
             let isActive  = playback.currentFilePath == filePath
             let isPlaying = isActive && playback.isPlaying
             Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                .font(.system(size: fontSize))
+                .font(.system(size: 15))
                 .foregroundStyle(isActive ? Color.accentColor : Color.secondary.opacity(0.5))
                 .contentTransition(.symbolEffect(.replace))
         }
@@ -643,9 +702,9 @@ struct MixModeView: View {
     }
 
     @ViewBuilder
-    private func camelotPill(_ code: String, fontSize: CGFloat) -> some View {
+    private func camelotPill(_ code: String) -> some View {
         Text(code)
-            .font(.system(size: fontSize, weight: .bold).monospacedDigit())
+            .font(.system(size: 9, weight: .bold).monospacedDigit())
             .foregroundStyle(CamelotColor.text(for: code))
             .padding(.horizontal, 5).padding(.vertical, 2)
             .background(Capsule().fill(CamelotColor.background(for: code)))

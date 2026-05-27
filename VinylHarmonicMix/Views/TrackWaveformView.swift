@@ -5,14 +5,14 @@ struct TrackWaveformView: View {
     @Environment(AudioPlaybackController.self) private var playback
     @Environment(\.modelContext) private var modelContext
     let filePath: String
+    @Binding var zoomFactor: Double
 
     @State private var cueMarkers: [CueMarker] = []
     @State private var fileDuration: Double = 0
     @State private var fileEntity: LocalFileEntity? = nil
-    @State private var zoomFactor: Double = 1.0
     @State private var viewportWidth: CGFloat = 0
+    @State private var lastScrollBucket: Int = -1
 
-    // Zoomed canvas width; 0 until the outer geometry fires on first layout.
     private var canvasWidth: CGFloat {
         viewportWidth > 0 ? viewportWidth * zoomFactor : 0
     }
@@ -46,14 +46,17 @@ struct TrackWaveformView: View {
                                 },
                                 onDeleteCue: { ts in
                                     deleteManualCue(timeSec: ts)
+                                },
+                                onMoveCue: { old, new in
+                                    moveCue(oldTimeSec: old, newTimeSec: new)
                                 }
                             )
-                            .frame(width: canvasWidth > 0 ? canvasWidth : nil, height: 50)
+                            .frame(width: canvasWidth > 0 ? canvasWidth : nil, height: 80)
                             .clipShape(RoundedRectangle(cornerRadius: 4))
 
-                            // Invisible 1-px anchor positioned at the playhead —
-                            // used by scrollTo to keep the playhead centred while playing.
-                            if canvasWidth > 0 {
+                            // Invisible anchor for scroll-to-playhead.
+                            // Only created when zoomed — avoids per-tick layout work at 1×.
+                            if zoomFactor > 1, canvasWidth > 0 {
                                 HStack(spacing: 0) {
                                     Color.clear
                                         .frame(width: max(0, canvasWidth * CGFloat(progress) - 1),
@@ -65,15 +68,23 @@ struct TrackWaveformView: View {
                                 .frame(width: canvasWidth, height: 1)
                             }
                         }
-                        .frame(width: canvasWidth > 0 ? canvasWidth : nil, height: 50)
+                        .frame(width: canvasWidth > 0 ? canvasWidth : nil, height: 80)
                     }
                     .onChange(of: progress) { _, p in
                         guard isActive && playback.isPlaying && zoomFactor > 1 else { return }
+                        // Throttle to ~1% progress buckets — avoids per-tick scrollTo thrash.
+                        let bucket = min(99, max(0, Int(p * 100)))
+                        guard bucket != lastScrollBucket else { return }
+                        lastScrollBucket = bucket
                         proxy.scrollTo("waveformPlayhead", anchor: .center)
                     }
-                }
-                .overlay(alignment: .bottomTrailing) {
-                    zoomControls
+                    .onChange(of: zoomFactor) { _, _ in
+                        // Reset bucket so the next progress tick re-centres the playhead.
+                        // Removed proxy.scrollTo here — it competed with NSScrollView's internal
+                        // offset reconciliation when the canvas shrinks (zoom out), causing a
+                        // double-layout stutter on the minus button.
+                        lastScrollBucket = -1
+                    }
                 }
 
             case .loading:
@@ -84,59 +95,30 @@ struct TrackWaveformView: View {
                         Text("Loading waveform…").font(.caption2).foregroundStyle(.secondary)
                     }
                 }
-                .frame(height: 50)
+                .frame(height: 80)
             case .failed:
                 ZStack {
                     RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.08))
                     Text("Waveform unavailable").font(.caption2).foregroundStyle(.tertiary)
                 }
-                .frame(height: 50)
+                .frame(height: 80)
             case .idle:
                 Color.clear
-                    .frame(height: 50)
+                    .frame(height: 80)
                     .onAppear { playback.loadWaveformIfNeeded(filePath: filePath) }
             }
 
-            if isActive && playbackDuration > 0 {
-                Text("\(formatTime(playback.currentTime)) / \(formatTime(playbackDuration))")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
+            Text(isActive && playbackDuration > 0
+                ? "\(formatTime(playback.currentTime)) / \(formatTime(playbackDuration))"
+                : " ")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
         }
-        .frame(height: 68)
+        .frame(height: 100)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { w in
             if w > 0 { viewportWidth = w }
         }
         .task(id: filePath) { loadCueData() }
-    }
-
-    // MARK: - Zoom controls
-
-    private var zoomControls: some View {
-        HStack(spacing: 4) {
-            Button {
-                zoomFactor = max(1, zoomFactor / 2)
-            } label: {
-                Image(systemName: "minus")
-                    .font(.system(size: 9, weight: .semibold))
-            }
-            if zoomFactor > 1 {
-                Text("\(Int(zoomFactor))×")
-                    .font(.system(size: 9, weight: .medium).monospacedDigit())
-            }
-            Button {
-                zoomFactor = min(8, zoomFactor * 2)
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 9, weight: .semibold))
-            }
-        }
-        .foregroundStyle(Color.secondary.opacity(0.7))
-        .padding(.horizontal, 5)
-        .padding(.vertical, 3)
-        .background(Capsule().fill(Color.black.opacity(0.35)))
-        .padding(4)
-        .buttonStyle(.plain)
     }
 
     // MARK: - Data loading
@@ -158,37 +140,100 @@ struct TrackWaveformView: View {
     }
 
     // MARK: - Manual cue mutations
+    //
+    // All three follow the same pattern:
+    //   1. Mutate main-context in-memory (fast, no I/O) so file.cuePoints stays correct.
+    //   2. Update cueMarkers view array for instant UI.
+    //   3. Persist via Task.detached on a fresh background ModelContext — WAL checkpoint
+    //      (the slow part) happens entirely off the main thread.
+    //
+    // Only PersistentIdentifier, ModelContainer, and value types cross the task boundary.
+    // @Model objects are never passed across — re-fetched inside the background context.
 
     private func addManualCue(fraction: Double, type: String,
                                energyDirection: String, duration: Double) {
-        guard let file = fileEntity, duration > 0 else { return }
-        let timeSec = fraction * duration
-        let cue = CuePointEntity()
-        cue.timeSec         = timeSec
-        cue.feature         = "manual"
-        cue.novelty         = 1.0
-        cue.beatIndex       = 0
-        cue.type            = type
-        cue.energyDirection = energyDirection
-        cue.energyDelta     = 0.0
-        cue.source          = "manual"
-        cue.isManual        = true
-        cue.createdAt       = .now
-        cue.localFile       = file
-        modelContext.insert(cue)
-        try? modelContext.save()
+        // Capture file's stable ID before entering the background task.
+        guard let fileID = fileEntity?.persistentModelID, duration > 0 else { return }
+        let timeSec   = fraction * duration
+        let createdAt = Date.now
+
+        // Instant UI — no main-context changes needed for add (merge delivers the entity later).
         cueMarkers.append(CueMarker(timeSec: timeSec, type: type,
                                     energyDirection: energyDirection,
                                     energyDelta: 0.0, isManual: true))
         cueMarkers.sort { $0.timeSec < $1.timeSec }
+
+        // Insert + save on background context. Main thread never touches disk.
+        let container = modelContext.container
+        Task.detached(priority: .utility) {
+            let ctx = ModelContext(container)
+            guard let file = ctx.model(for: fileID) as? LocalFileEntity else { return }
+            let cue = CuePointEntity()
+            cue.timeSec         = timeSec
+            cue.feature         = "manual"
+            cue.novelty         = 1.0
+            cue.beatIndex       = 0
+            cue.type            = type
+            cue.energyDirection = energyDirection
+            cue.energyDelta     = 0.0
+            cue.source          = "manual"
+            cue.isManual        = true
+            cue.createdAt       = createdAt
+            cue.localFile       = file
+            ctx.insert(cue)
+            try? ctx.save()
+        }
     }
 
     private func deleteManualCue(timeSec: Double) {
         guard let file = fileEntity else { return }
         cueMarkers.removeAll { abs($0.timeSec - timeSec) < 0.01 }
-        if let match = file.cuePoints.first(where: { abs($0.timeSec - timeSec) < 0.01 }) {
-            modelContext.delete(match)
-            try? modelContext.save()
+        guard let match = file.cuePoints.first(where: { abs($0.timeSec - timeSec) < 0.01 }) else { return }
+
+        // Capture ID before deletion so the background context can re-fetch it.
+        let id = match.persistentModelID
+        // Remove from main context in-memory so file.cuePoints is immediately clean.
+        modelContext.delete(match)
+
+        // Delete + save on background context.
+        let container = modelContext.container
+        Task.detached(priority: .utility) {
+            let ctx = ModelContext(container)
+            if let entity = ctx.model(for: id) as? CuePointEntity {
+                ctx.delete(entity)
+                try? ctx.save()
+            }
+        }
+    }
+
+    private func moveCue(oldTimeSec: Double, newTimeSec: Double) {
+        guard let file = fileEntity,
+              let entity = file.cuePoints.first(where: { abs($0.timeSec - oldTimeSec) < 0.01 })
+        else { return }
+
+        // Mutate on main context in-memory so rapid re-drags find the updated timeSec.
+        entity.timeSec = newTimeSec
+        entity.isManual = true
+        let id = entity.persistentModelID
+
+        // Update view array.
+        if let idx = cueMarkers.firstIndex(where: { abs($0.timeSec - oldTimeSec) < 0.01 }) {
+            let old = cueMarkers[idx]
+            cueMarkers[idx] = CueMarker(timeSec: newTimeSec, type: old.type,
+                                         energyDirection: old.energyDirection,
+                                         energyDelta: old.energyDelta, isManual: true)
+            cueMarkers.sort { $0.timeSec < $1.timeSec }
+        }
+
+        // Persist on background context.
+        let container = modelContext.container
+        Task.detached(priority: .utility) {
+            let ctx = ModelContext(container)
+            if let e = ctx.model(for: id) as? CuePointEntity {
+                e.timeSec   = newTimeSec
+                e.isManual  = true
+                try? ctx.save()
+            }
         }
     }
 

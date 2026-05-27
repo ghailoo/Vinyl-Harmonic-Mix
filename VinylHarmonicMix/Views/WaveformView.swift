@@ -16,8 +16,11 @@ struct WaveformView: View {
     let onSeek: (Double) -> Void
     var onAddCue: ((Double, String, String) -> Void)? = nil   // (fraction, type, energyDirection)
     var onDeleteCue: ((Double) -> Void)? = nil                // timeSec of cue to remove
+    var onMoveCue: ((Double, Double) -> Void)? = nil          // (oldTimeSec, newTimeSec)
 
     @State private var hoverFraction: Double = 0
+    @State private var draggedMarkerTimeSec: Double? = nil
+    @State private var dragLiveFraction: Double = 0
 
     private var nearbyMarker: CueMarker? {
         guard duration > 0, !cueMarkers.isEmpty else { return nil }
@@ -46,8 +49,38 @@ struct WaveformView: View {
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
-                        let fraction = Double(value.location.x / geo.size.width)
-                        onSeek(max(0, min(1, fraction)))
+                        if draggedMarkerTimeSec == nil {
+                            // Hit-test startLocation against marker stems (±8 px)
+                            if duration > 0, !cueMarkers.isEmpty {
+                                let startX = value.startLocation.x
+                                let hitRadius: CGFloat = 8
+                                if let closest = cueMarkers.min(by: {
+                                    abs(geo.size.width * CGFloat($0.timeSec / duration) - startX) <
+                                    abs(geo.size.width * CGFloat($1.timeSec / duration) - startX)
+                                }) {
+                                    let markerX = geo.size.width * CGFloat(closest.timeSec / duration)
+                                    if abs(markerX - startX) <= hitRadius {
+                                        draggedMarkerTimeSec = closest.timeSec
+                                        dragLiveFraction = max(0, min(1, Double(value.location.x / geo.size.width)))
+                                        return
+                                    }
+                                }
+                            }
+                            // No marker hit — seek as before
+                            onSeek(max(0, min(1, Double(value.location.x / geo.size.width))))
+                        } else {
+                            // Marker drag in progress — follow cursor live
+                            dragLiveFraction = max(0, min(1, Double(value.location.x / geo.size.width)))
+                        }
+                    }
+                    .onEnded { value in
+                        if let oldTimeSec = draggedMarkerTimeSec {
+                            let newFraction = max(0, min(1, Double(value.location.x / geo.size.width)))
+                            let newTimeSec = newFraction * duration
+                            onMoveCue?(oldTimeSec, newTimeSec)
+                            draggedMarkerTimeSec = nil
+                            dragLiveFraction = 0
+                        }
                     }
             )
             .contextMenu {
@@ -131,7 +164,9 @@ struct WaveformView: View {
 
         // Structural ticks — bottom layer, 1.25px, full opacity
         for (marker, color) in visible where marker.type == "structural" {
-            let x = size.width * CGFloat(marker.timeSec / duration)
+            let x: CGFloat = (draggedMarkerTimeSec == marker.timeSec)
+                ? size.width * CGFloat(dragLiveFraction)
+                : size.width * CGFloat(marker.timeSec / duration)
             let stemRect = CGRect(x: max(0, x - 0.625), y: 0, width: 1.25, height: size.height)
             ctx.fill(Path(stemRect), with: .color(color))
             if marker.isManual {
@@ -142,7 +177,9 @@ struct WaveformView: View {
 
         // Switch-in — top layer, 1.5px amber stem + downward ▼ flag
         for (marker, _) in visible where marker.type == "switch_in" {
-            let x = size.width * CGFloat(marker.timeSec / duration)
+            let x: CGFloat = (draggedMarkerTimeSec == marker.timeSec)
+                ? size.width * CGFloat(dragLiveFraction)
+                : size.width * CGFloat(marker.timeSec / duration)
             let stemRect = CGRect(x: max(0, x - 0.75), y: 0, width: 1.5, height: size.height)
             ctx.fill(Path(stemRect), with: .color(amber))
             var flag = Path()
@@ -159,10 +196,11 @@ struct WaveformView: View {
 
         // Labels — drawn last, chronological across all visible cues
         for (i, (marker, color)) in visible.enumerated() {
-            let x = size.width * CGFloat(marker.timeSec / duration)
+            let x: CGFloat = (draggedMarkerTimeSec == marker.timeSec)
+                ? size.width * CGFloat(dragLiveFraction)
+                : size.width * CGFloat(marker.timeSec / duration)
 
             if marker.type == "switch_in" {
-                // Just the cue number, below the flag (flag ends at y≈8)
                 ctx.draw(
                     Text("\(i + 1)")
                         .font(.system(size: 8, weight: .bold).monospacedDigit())
@@ -171,7 +209,6 @@ struct WaveformView: View {
                     anchor: .center
                 )
             } else {
-                // Number + energy arrow+delta, e.g. "3↑.42" near top edge
                 let arrowAndDelta: String
                 switch marker.energyDirection {
                 case "rise":
