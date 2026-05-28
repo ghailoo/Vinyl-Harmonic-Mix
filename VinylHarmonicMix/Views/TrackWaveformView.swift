@@ -34,6 +34,7 @@ struct TrackWaveformView: View {
                                 peaks: peaks,
                                 cueMarkers: cueMarkers,
                                 duration: duration,
+                                colors: playback.waveformColors(filePath: filePath),
                                 onSeek: { fraction in
                                     guard playback.currentFilePath == filePath else { return }
                                     playback.seek(toFraction: fraction)

@@ -36,6 +36,7 @@ final class LocalFileEntity {
     var fourToFloor: Bool = false
     var kickRegularity: Double = 0
     var waveformPeaks: Data? = nil   // 4000 × Float32 = 16 KB; nil until first generation
+    var waveformColors: Data? = nil  // 4000 × 3 × Float32 = 48 KB (R,G,B per-band energy); nil until first generation
 
     var track: TrackEntity?
 

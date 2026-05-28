@@ -30,6 +30,7 @@ final class AudioPlaybackController {
     // MARK: - Waveform state (unchanged)
 
     private(set) var waveformCache: [String: [Float]] = [:]
+    private(set) var waveformColorsCache: [String: Data] = [:]
     private(set) var loadingWaveformPaths: Set<String> = []
     private(set) var failedWaveformPaths: Set<String> = []
 
@@ -337,38 +338,53 @@ final class AudioPlaybackController {
             // 1. Persistent cache — background fetch, no main-thread I/O.
             if let container {
                 let fp = filePath
-                let cached = await Task.detached(priority: .utility) { () -> [Float]? in
+                let cached = await Task.detached(priority: .utility) {
+                    () -> (peaks: [Float], colors: Data)? in
                     let ctx = ModelContext(container)
                     var fd  = FetchDescriptor<LocalFileEntity>(
                         predicate: #Predicate { $0.filePath == fp }
                     )
                     fd.fetchLimit = 1
-                    guard let entity = try? ctx.fetch(fd).first,
-                          let data   = entity.waveformPeaks,
-                          !data.isEmpty else { return nil }
-                    let count = data.count / MemoryLayout<Float>.size
-                    return data.withUnsafeBytes { ptr in
+                    guard let entity = try? ctx.fetch(fd).first else { return nil }
+
+                    // If peaks are cached but colors missing (row predates this feature),
+                    // clear peaks so the generator runs and produces both fields together.
+                    guard let peakData  = entity.waveformPeaks,  !peakData.isEmpty,
+                          let colorData = entity.waveformColors, !colorData.isEmpty else {
+                        if entity.waveformPeaks != nil {
+                            entity.waveformPeaks = nil
+                            try? ctx.save()
+                        }
+                        return nil
+                    }
+
+                    let count = peakData.count / MemoryLayout<Float>.size
+                    let peaks = peakData.withUnsafeBytes { ptr in
                         Array(ptr.bindMemory(to: Float.self).prefix(count))
                     }
+                    return (peaks, colorData)
                 }.value
 
                 if let cached {
                     self.loadingWaveformPaths.remove(filePath)
-                    self.waveformCache[filePath] = cached
+                    self.waveformCache[filePath]       = cached.peaks
+                    self.waveformColorsCache[filePath] = cached.colors
                     return
                 }
             }
 
             // 2. Generate on dedicated GCD queue (not cooperative pool — no UI stall).
-            let peaks = await WaveformGenerator.generate(filePath: filePath)
+            let result = await WaveformGenerator.generate(filePath: filePath)
             self.loadingWaveformPaths.remove(filePath)
 
-            if let peaks {
-                self.waveformCache[filePath] = peaks
-                // 3. Persist so this file is never recomputed.
+            if let result {
+                self.waveformCache[filePath]       = result.peaks
+                self.waveformColorsCache[filePath] = result.colors
+                // 3. Persist both fields so this file is never recomputed.
                 if let container {
-                    let fp   = filePath
-                    let data = peaks.withUnsafeBytes { Data($0) }
+                    let fp        = filePath
+                    let peakData  = result.peaks.withUnsafeBytes { Data($0) }
+                    let colorData = result.colors
                     Task.detached(priority: .utility) {
                         let ctx = ModelContext(container)
                         var fd  = FetchDescriptor<LocalFileEntity>(
@@ -376,7 +392,8 @@ final class AudioPlaybackController {
                         )
                         fd.fetchLimit = 1
                         guard let entity = try? ctx.fetch(fd).first else { return }
-                        entity.waveformPeaks = data
+                        entity.waveformPeaks  = peakData
+                        entity.waveformColors = colorData
                         try? ctx.save()
                     }
                 }
@@ -385,6 +402,8 @@ final class AudioPlaybackController {
             }
         }
     }
+
+    func waveformColors(filePath: String) -> Data? { waveformColorsCache[filePath] }
 
     func waveformState(for filePath: String) -> WaveformState {
         if let peaks = waveformCache[filePath] { return .ready(peaks) }

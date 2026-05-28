@@ -13,6 +13,7 @@ struct WaveformView: View {
     var cueMarkers: [CueMarker] = []
 
     var duration: Double = 0      // track duration in seconds (for time→x mapping)
+    var colors: Data? = nil       // 4000 × 3 × Float32 [R,G,B] per bucket; nil = grey fallback
     let onSeek: (Double) -> Void
     var onAddCue: ((Double, String, String) -> Void)? = nil   // (fraction, type, energyDirection)
     var onDeleteCue: ((Double) -> Void)? = nil                // timeSec of cue to remove
@@ -105,20 +106,52 @@ struct WaveformView: View {
         let barWidth = size.width / count
         let midY = size.height / 2
 
-        let barShading = GraphicsContext.Shading.color(.secondary.opacity(0.35))
-        var barPath = Path()
-        for (i, peak) in peaks.enumerated() {
-            let x = CGFloat(i) * barWidth
-            let barHeight = max(2, CGFloat(peak) * size.height * 0.85)
-            let gap = barWidth * 0.12
-            barPath.addRect(CGRect(
-                x: x + gap,
-                y: midY - barHeight / 2,
-                width: max(1, barWidth - gap * 2),
-                height: barHeight
-            ))
+        // Decode per-bar color floats once. Size mismatch or nil → grey fallback.
+        let expectedColorBytes = peaks.count * 3 * MemoryLayout<Float>.size
+        let colorFloats: [Float]?
+        if let data = colors, data.count == expectedColorBytes {
+            let floatCount = data.count / MemoryLayout<Float>.size
+            colorFloats = data.withUnsafeBytes { ptr in
+                Array(ptr.bindMemory(to: Float.self).prefix(floatCount))
+            }
+        } else {
+            colorFloats = nil
         }
-        ctx.fill(barPath, with: barShading)
+
+        if let cf = colorFloats {
+            // Colored path: per-bar Path + fill.
+            // Per-bar cost is fine here — .equatable() gate ensures drawBars only fires
+            // on legitimate change (track switch, cue edit, zoom), not 50×/sec.
+            for (i, peak) in peaks.enumerated() {
+                let x = CGFloat(i) * barWidth
+                let barHeight = max(2, CGFloat(peak) * size.height * 0.85)
+                let gap = barWidth * 0.12
+                let rect = CGRect(x: x + gap, y: midY - barHeight / 2,
+                                  width: max(1, barWidth - gap * 2), height: barHeight)
+                let base = i * 3
+                ctx.fill(Path(rect), with: .color(Color(
+                    red:   Double(cf[base]),
+                    green: Double(cf[base + 1]),
+                    blue:  Double(cf[base + 2])
+                )))
+            }
+        } else {
+            // Fast path: single accumulated Path, one fill (unchanged from grey optimization).
+            let barShading = GraphicsContext.Shading.color(.secondary.opacity(0.35))
+            var barPath = Path()
+            for (i, peak) in peaks.enumerated() {
+                let x = CGFloat(i) * barWidth
+                let barHeight = max(2, CGFloat(peak) * size.height * 0.85)
+                let gap = barWidth * 0.12
+                barPath.addRect(CGRect(
+                    x: x + gap,
+                    y: midY - barHeight / 2,
+                    width: max(1, barWidth - gap * 2),
+                    height: barHeight
+                ))
+            }
+            ctx.fill(barPath, with: barShading)
+        }
 
         // Cue markers — drawn on top of bars
         guard duration > 0, !cueMarkers.isEmpty else { return }
@@ -219,12 +252,13 @@ struct WaveformView: View {
 
 extension WaveformView: Equatable {
     // Closures intentionally excluded. This is only safe while the closures capture nothing
-    // that changes independently of peaks/cueMarkers/duration. If you add a closure that
-    // captures volatile state, add that state to this comparison or this view will silently
-    // fail to redraw.
+    // that changes independently of peaks/cueMarkers/duration/colors. If you add a closure
+    // that captures volatile state, add that state to this comparison or this view will
+    // silently fail to redraw.
     static func == (lhs: WaveformView, rhs: WaveformView) -> Bool {
         lhs.peaks == rhs.peaks &&
         lhs.cueMarkers == rhs.cueMarkers &&
-        lhs.duration == rhs.duration
+        lhs.duration == rhs.duration &&
+        lhs.colors == rhs.colors
     }
 }
