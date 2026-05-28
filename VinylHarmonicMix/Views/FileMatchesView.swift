@@ -358,7 +358,7 @@ private struct ConfidentRowView: View {
 
         switch state {
         case .ready(let peaks):
-            WaveformView(peaks: peaks, progress: progress) { fraction in
+            WaveformView(peaks: peaks) { fraction in
                 playback.seek(toFraction: fraction)
             }
             .clipShape(RoundedRectangle(cornerRadius: 4))

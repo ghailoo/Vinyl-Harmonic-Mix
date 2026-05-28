@@ -1001,7 +1001,7 @@ struct CollectionDetailView: View {
             : 0.0
         switch playback.waveformState(for: filePath) {
         case .ready(let peaks):
-            WaveformView(peaks: peaks, progress: progress) { fraction in
+            WaveformView(peaks: peaks) { fraction in
                 playback.seek(toFraction: fraction)
             }
             .clipShape(RoundedRectangle(cornerRadius: 4))

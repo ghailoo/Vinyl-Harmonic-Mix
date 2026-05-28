@@ -78,7 +78,7 @@ struct VinylHarmonicMixApp: App {
         _fingerprintCoordinator     = State(initialValue: FingerprintScanCoordinator(context: ctx))
         _localAnalysisCoordinator   = State(initialValue: local)
         _cueDetectionCoordinator    = State(initialValue: cue)
-        _audioPlaybackController    = State(initialValue: AudioPlaybackController())
+        _audioPlaybackController    = State(initialValue: AudioPlaybackController(modelContainer: container))
         _syncOrchestrator           = State(initialValue: SyncOrchestrator(
             collectionViewModel:       cv,
             mbidCoordinator:           scan,

@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct CueMarker {
+struct CueMarker: Equatable {
     let timeSec: Double
     let type: String            // "switch_in" | "structural"
     let energyDirection: String // "rise" | "fall" | "neutral" | ""
@@ -10,8 +10,8 @@ struct CueMarker {
 
 struct WaveformView: View {
     let peaks: [Float]
-    let progress: Double          // 0…1, current playhead position
     var cueMarkers: [CueMarker] = []
+
     var duration: Double = 0      // track duration in seconds (for time→x mapping)
     let onSeek: (Double) -> Void
     var onAddCue: ((Double, String, String) -> Void)? = nil   // (fraction, type, energyDirection)
@@ -104,38 +104,23 @@ struct WaveformView: View {
         let count = CGFloat(peaks.count)
         let barWidth = size.width / count
         let midY = size.height / 2
-        let playedX = size.width * CGFloat(progress)
 
+        let barShading = GraphicsContext.Shading.color(.secondary.opacity(0.35))
+        var barPath = Path()
         for (i, peak) in peaks.enumerated() {
             let x = CGFloat(i) * barWidth
             let barHeight = max(2, CGFloat(peak) * size.height * 0.85)
             let gap = barWidth * 0.12
-
-            let rect = CGRect(
+            barPath.addRect(CGRect(
                 x: x + gap,
                 y: midY - barHeight / 2,
                 width: max(1, barWidth - gap * 2),
                 height: barHeight
-            )
-
-            let color: Color = x < playedX
-                ? .accentColor
-                : .secondary.opacity(0.35)
-            ctx.fill(Path(rect), with: .color(color))
+            ))
         }
+        ctx.fill(barPath, with: barShading)
 
-        // Playhead — thin white line at current position
-        if progress > 0 && progress < 1 {
-            let lineRect = CGRect(
-                x: max(0, playedX - 1),
-                y: 0,
-                width: 2,
-                height: size.height
-            )
-            ctx.fill(Path(lineRect), with: .color(.white.opacity(0.85)))
-        }
-
-        // Cue markers — drawn on top of bars + playhead
+        // Cue markers — drawn on top of bars
         guard duration > 0, !cueMarkers.isEmpty else { return }
 
         let amber = Color(red: 1.0, green: 0.75, blue: 0.05)
@@ -229,5 +214,17 @@ struct WaveformView: View {
                 )
             }
         }
+    }
+}
+
+extension WaveformView: Equatable {
+    // Closures intentionally excluded. This is only safe while the closures capture nothing
+    // that changes independently of peaks/cueMarkers/duration. If you add a closure that
+    // captures volatile state, add that state to this comparison or this view will silently
+    // fail to redraw.
+    static func == (lhs: WaveformView, rhs: WaveformView) -> Bool {
+        lhs.peaks == rhs.peaks &&
+        lhs.cueMarkers == rhs.cueMarkers &&
+        lhs.duration == rhs.duration
     }
 }

@@ -35,6 +35,7 @@ final class LocalFileEntity {
     var cueAnalyzerVersion: String = ""
     var fourToFloor: Bool = false
     var kickRegularity: Double = 0
+    var waveformPeaks: Data? = nil   // 4000 × Float32 = 16 KB; nil until first generation
 
     var track: TrackEntity?
 

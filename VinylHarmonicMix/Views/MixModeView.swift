@@ -166,6 +166,15 @@ struct MixModeView: View {
                 playback.cancelPreload()
             }
         }
+        // Preload Deck A whenever the anchor (Now Playing) file changes.
+        // .task(id:) fires on first appearance AND on every subsequent change,
+        // covering both initial set selection and track commits.
+        .task(id: anchorTrack?.filePath) {
+            if let fp = anchorTrack?.filePath {
+                playback.loadDeck(.A, filePath: fp)
+                playback.loadWaveformIfNeeded(filePath: fp)
+            }
+        }
         .sheet(item: $trackPickerRelease) { entity in
             TrackPickerSheet(entity: entity) { track in handleTrackPick(track) }
         }
@@ -553,6 +562,9 @@ struct MixModeView: View {
         item.setlist = set
         modelContext.insert(item)
         try? modelContext.save()
+        // Promote Deck B player → Deck A in-place so the in-RAM player (and its
+        // playback position) moves to the Now Playing slot without reloading.
+        playback.promoteDeckBToA()
         candidateTrack = nil
     }
 

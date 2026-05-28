@@ -11,7 +11,6 @@ struct TrackWaveformView: View {
     @State private var fileDuration: Double = 0
     @State private var fileEntity: LocalFileEntity? = nil
     @State private var viewportWidth: CGFloat = 0
-    @State private var lastScrollBucket: Int = -1
 
     private var canvasWidth: CGFloat {
         viewportWidth > 0 ? viewportWidth * zoomFactor : 0
@@ -33,7 +32,6 @@ struct TrackWaveformView: View {
                         ZStack(alignment: .topLeading) {
                             WaveformView(
                                 peaks: peaks,
-                                progress: progress,
                                 cueMarkers: cueMarkers,
                                 duration: duration,
                                 onSeek: { fraction in
@@ -51,6 +49,7 @@ struct TrackWaveformView: View {
                                     moveCue(oldTimeSec: old, newTimeSec: new)
                                 }
                             )
+                            .equatable()
                             .frame(width: canvasWidth > 0 ? canvasWidth : nil, height: 80)
                             .clipShape(RoundedRectangle(cornerRadius: 4))
 
@@ -70,20 +69,45 @@ struct TrackWaveformView: View {
                         }
                         .frame(width: canvasWidth > 0 ? canvasWidth : nil, height: 80)
                     }
-                    .onChange(of: progress) { _, p in
-                        guard isActive && playback.isPlaying && zoomFactor > 1 else { return }
-                        // Throttle to ~1% progress buckets — avoids per-tick scrollTo thrash.
-                        let bucket = min(99, max(0, Int(p * 100)))
-                        guard bucket != lastScrollBucket else { return }
-                        lastScrollBucket = bucket
-                        proxy.scrollTo("waveformPlayhead", anchor: .center)
+                    // Playhead line rendered in viewport coordinates.
+                    // MODE 1 (zoom==1): line moves at viewportWidth × progress across the fixed canvas.
+                    // MODE 2 (zoom>1): line is pinned to viewport centre; waveform scrolls under it.
+                    .overlay(alignment: .leading) {
+                        if isActive && viewportWidth > 0 {
+                            let lineX: CGFloat = zoomFactor <= 1
+                                ? viewportWidth * CGFloat(progress)
+                                : viewportWidth / 2
+                            Rectangle()
+                                .fill(Color.white.opacity(0.9))
+                                .frame(width: 2.5)
+                                .offset(x: lineX - 1.25)
+                                .allowsHitTesting(false)
+                        }
                     }
-                    .onChange(of: zoomFactor) { _, _ in
-                        // Reset bucket so the next progress tick re-centres the playhead.
-                        // Removed proxy.scrollTo here — it competed with NSScrollView's internal
-                        // offset reconciliation when the canvas shrinks (zoom out), causing a
-                        // double-layout stutter on the minus button.
-                        lastScrollBucket = -1
+                    // Zoom>1: scroll fires every timer tick (no bucket throttle) so the waveform
+                    // tracks the fixed centre line in real time. withAnimation(.none) = instant jump.
+                    .onChange(of: progress) { _, _ in
+                        guard isActive && playback.isPlaying && zoomFactor > 1 else { return }
+                        withAnimation(.none) {
+                            proxy.scrollTo("waveformPlayhead", anchor: .center)
+                        }
+                    }
+                    // On zoom-in: immediately centre the playhead in the new zoomed viewport.
+                    .onChange(of: zoomFactor) { _, newZoom in
+                        guard newZoom > 1 else { return }
+                        withAnimation(.none) {
+                            proxy.scrollTo("waveformPlayhead", anchor: .center)
+                        }
+                    }
+                    // Deck switch: deferred one runloop so SwiftUI commits the updated
+                    // progress layout before scrollTo resolves the anchor position.
+                    .onChange(of: isActive) { _, active in
+                        guard active && zoomFactor > 1 else { return }
+                        Task { @MainActor in
+                            withAnimation(.none) {
+                                proxy.scrollTo("waveformPlayhead", anchor: .center)
+                            }
+                        }
                     }
                 }
 
