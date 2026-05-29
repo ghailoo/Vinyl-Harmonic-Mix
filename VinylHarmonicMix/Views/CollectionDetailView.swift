@@ -295,14 +295,17 @@ struct CollectionDetailView: View {
             ForEach(Array(detail.tracklist.enumerated()), id: \.offset) { index, track in
                 let rmbid = recordingMBID(forPosition: track.position, fallbackIndex: index)
                 let matchedTrack = rmbid.flatMap { r in trackEntities.first { $0.recordingMBID == r } }
-                let filePath: String? = matchedTrack?.fileMatchState == "confident"
-                    ? matchedTrack?.primaryLocalFilePath : nil
-                let isActive  = filePath.map { playback.currentFilePath == $0 } ?? false
-                let isPlaying = isActive && playback.isPlaying
                 let normPos = normalizePosition(track.position)
                 let trackEntityByPos: TrackEntity? =
                     trackEntities.first { normalizePosition($0.position) == normPos }
                     ?? matchedTrack
+                let filePath: String? = {
+                    let candidate = matchedTrack ?? trackEntityByPos
+                    guard let t = candidate, t.fileMatchState == "confident" else { return nil }
+                    return t.primaryLocalFilePath
+                }()
+                let isActive  = filePath.map { playback.currentFilePath == $0 } ?? false
+                let isPlaying = isActive && playback.isPlaying
 
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(spacing: 0) {
@@ -1028,7 +1031,8 @@ struct CollectionDetailView: View {
 
     @ViewBuilder
     private func trackWaveformView(filePath: String) -> some View {
-        let progress = playback.duration > 0
+        let isActive = playback.currentFilePath == filePath
+        let progress: Double = isActive && playback.duration > 0
             ? min(1, max(0, playback.currentTime / playback.duration))
             : 0.0
         switch playback.waveformState(for: filePath) {
@@ -1036,7 +1040,19 @@ struct CollectionDetailView: View {
             WaveformView(peaks: peaks) { fraction in
                 playback.seek(toFraction: fraction)
             }
+            .equatable()
             .clipShape(RoundedRectangle(cornerRadius: 4))
+            .overlay(alignment: .leading) {
+                if isActive {
+                    GeometryReader { geo in
+                        Rectangle()
+                            .fill(Color.red)
+                            .frame(width: 2.5)
+                            .offset(x: geo.size.width * CGFloat(progress) - 1.25)
+                            .allowsHitTesting(false)
+                    }
+                }
+            }
         case .loading:
             ZStack {
                 RoundedRectangle(cornerRadius: 4).fill(Color.secondary.opacity(0.1))

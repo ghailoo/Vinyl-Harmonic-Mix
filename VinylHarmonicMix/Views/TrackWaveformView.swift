@@ -79,7 +79,7 @@ struct TrackWaveformView: View {
                                 ? viewportWidth * CGFloat(progress)
                                 : viewportWidth / 2
                             Rectangle()
-                                .fill(Color.white.opacity(0.9))
+                                .fill(Color.red)
                                 .frame(width: 2.5)
                                 .offset(x: lineX - 1.25)
                                 .allowsHitTesting(false)
