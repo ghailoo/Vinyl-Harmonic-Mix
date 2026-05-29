@@ -6,6 +6,9 @@ struct TrackWaveformView: View {
     @Environment(\.modelContext) private var modelContext
     let filePath: String
     @Binding var zoomFactor: Double
+    /// Non-nil when this waveform represents a specific Mix-mode deck.
+    /// Nil = legacy single-player path (collection cards, SetLibrary, etc.)
+    var deck: AudioPlaybackController.Deck? = nil
 
     @State private var cueMarkers: [CueMarker] = []
     @State private var fileDuration: Double = 0
@@ -17,10 +20,27 @@ struct TrackWaveformView: View {
     }
 
     var body: some View {
-        let isActive         = playback.currentFilePath == filePath
-        let playbackDuration = isActive ? playback.duration : 0.0
+        // Deck-aware state resolution — closure avoids @ViewBuilder interpreting switch as View.
+        let deckState: (isActive: Bool, duration: Double, currentTime: Double, isPlaying: Bool) = {
+            switch deck {
+            case .A:
+                return (playback.deckADuration > 0, playback.deckADuration,
+                        playback.deckACurrentTime, playback.deckAIsPlaying)
+            case .B:
+                return (playback.deckBDuration > 0, playback.deckBDuration,
+                        playback.deckBCurrentTime, playback.deckBIsPlaying)
+            case nil:
+                let active = playback.currentFilePath == filePath
+                return (active, active ? playback.duration : 0.0,
+                        playback.currentTime, playback.isPlaying)
+            }
+        }()
+        let isActive         = deckState.isActive
+        let playbackDuration = deckState.duration
+        let deckCurrentTime  = deckState.currentTime
+        let deckIsPlaying    = deckState.isPlaying
         let progress: Double = playbackDuration > 0
-            ? min(1, max(0, playback.currentTime / playbackDuration))
+            ? min(1, max(0, deckCurrentTime / playbackDuration))
             : 0.0
         let duration = playbackDuration > 0 ? playbackDuration : fileDuration
 
@@ -36,8 +56,13 @@ struct TrackWaveformView: View {
                                 duration: duration,
                                 colors: playback.waveformColors(filePath: filePath),
                                 onSeek: { fraction in
-                                    guard playback.currentFilePath == filePath else { return }
-                                    playback.seek(toFraction: fraction)
+                                    switch deck {
+                                    case .A:  playback.seekDeckA(toFraction: fraction)
+                                    case .B:  playback.seekDeckB(toFraction: fraction)
+                                    case nil:
+                                        guard playback.currentFilePath == filePath else { return }
+                                        playback.seek(toFraction: fraction)
+                                    }
                                 },
                                 onAddCue: { fraction, type, dir in
                                     addManualCue(fraction: fraction, type: type,
@@ -88,7 +113,7 @@ struct TrackWaveformView: View {
                     // Zoom>1: scroll fires every timer tick (no bucket throttle) so the waveform
                     // tracks the fixed centre line in real time. withAnimation(.none) = instant jump.
                     .onChange(of: progress) { _, _ in
-                        guard isActive && playback.isPlaying && zoomFactor > 1 else { return }
+                        guard isActive && deckIsPlaying && zoomFactor > 1 else { return }
                         withAnimation(.none) {
                             proxy.scrollTo("waveformPlayhead", anchor: .center)
                         }
@@ -134,7 +159,7 @@ struct TrackWaveformView: View {
             }
 
             Text(isActive && playbackDuration > 0
-                ? "\(formatTime(playback.currentTime)) / \(formatTime(playbackDuration))"
+                ? "\(formatTime(deckCurrentTime)) / \(formatTime(playbackDuration))"
                 : " ")
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.secondary)

@@ -264,6 +264,7 @@ struct MixModeView: View {
         VStack(spacing: 8) {
             HStack(alignment: .top, spacing: 8) {
                 DeckCardView(
+                    deck: .A,
                     label: "NOW PLAYING",
                     track: anchor,
                     coverURL: thumbURLs[anchor.filePath ?? ""],
@@ -276,6 +277,7 @@ struct MixModeView: View {
                     Color.clear.frame(width: 96)
                 }
                 DeckCardView(
+                    deck: .B,
                     label: "NEXT UP",
                     track: candidateTrack,
                     coverURL: candidateTrack.flatMap { thumbURLs[$0.filePath ?? ""] },
@@ -284,6 +286,7 @@ struct MixModeView: View {
                     onDismiss: { candidateTrack = nil }
                 )
             }
+            crossfaderRow
             if candidateTrack != nil {
                 HStack {
                     Spacer()
@@ -298,6 +301,24 @@ struct MixModeView: View {
         .padding(.top, 10)
         .padding(.bottom, candidateTrack != nil ? 8 : 10)
         .background(Color.secondary.opacity(0.03))
+    }
+
+    private var crossfaderRow: some View {
+        HStack(spacing: 8) {
+            Text("A")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 14, alignment: .center)
+            Slider(
+                value: Binding(get: { playback.crossfade }, set: { playback.crossfade = $0 }),
+                in: 0...1
+            )
+            Text("B")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Color.orange)
+                .frame(width: 14, alignment: .center)
+        }
+        .padding(.horizontal, 4)
     }
 
     // MARK: - BPM slider
@@ -592,6 +613,7 @@ struct MixModeView: View {
 private struct DeckCardView: View {
     @Environment(AudioPlaybackController.self) private var playback
 
+    let deck: AudioPlaybackController.Deck
     let label: String
     let track: MixTrack?
     let coverURL: URL?
@@ -684,7 +706,7 @@ private struct DeckCardView: View {
             .frame(maxWidth: .infinity, minHeight: 88)
 
             if let fp = track?.filePath, !fp.isEmpty {
-                TrackWaveformView(filePath: fp, zoomFactor: $zoomFactor)
+                TrackWaveformView(filePath: fp, zoomFactor: $zoomFactor, deck: deck)
                     .id(fp)
             } else {
                 Color.clear.frame(height: 68)
@@ -702,12 +724,16 @@ private struct DeckCardView: View {
 
     @ViewBuilder
     private func playButton(_ filePath: String) -> some View {
-        Button { playback.play(filePath: filePath) } label: {
-            let isActive  = playback.currentFilePath == filePath
-            let isPlaying = isActive && playback.isPlaying
+        Button {
+            switch deck {
+            case .A: playback.playDeckA()
+            case .B: playback.playDeckB()
+            }
+        } label: {
+            let isPlaying = deck == .A ? playback.deckAIsPlaying : playback.deckBIsPlaying
             Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
                 .font(.system(size: 15))
-                .foregroundStyle(isActive ? Color.accentColor : Color.secondary.opacity(0.5))
+                .foregroundStyle(isPlaying ? Color.accentColor : Color.secondary.opacity(0.5))
                 .contentTransition(.symbolEffect(.replace))
         }
         .buttonStyle(.plain)

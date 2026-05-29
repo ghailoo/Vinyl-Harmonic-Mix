@@ -18,12 +18,20 @@ final class AudioPlaybackController {
     private(set) var playbackErrors: [String: String] = [:]
     private(set) var playbackFinishedCount: Int = 0
 
+    // Mix-mode deck state — both decks observable simultaneously
+    private(set) var deckACurrentTime: Double = 0
+    private(set) var deckBCurrentTime: Double = 0
+    private(set) var deckADuration:    Double = 0
+    private(set) var deckBDuration:    Double = 0
+    private(set) var deckAIsPlaying:   Bool   = false
+    private(set) var deckBIsPlaying:   Bool   = false
+
+    var crossfade: Double = 0.5 { didSet { applyCrossfade() } }
+
     var volume: Double = 1.0 {
         didSet {
-            let v = Float(volume)
-            player?.volume      = v
-            deckAPlayer?.volume = v
-            deckBPlayer?.volume = v
+            player?.volume = Float(volume)
+            applyCrossfade()
         }
     }
 
@@ -267,10 +275,12 @@ final class AudioPlaybackController {
                     self.deckAPlayer   = p
                     self.deckADelegate = delegate
                     self.deckALoadTask = nil
+                    self.deckADuration = p.duration
                 } else {
                     self.deckBPlayer   = p
                     self.deckBDelegate = delegate
                     self.deckBLoadTask = nil
+                    self.deckBDuration = p.duration
                 }
             }
         }
@@ -291,8 +301,10 @@ final class AudioPlaybackController {
         cancelDeckLoad(deck)
         if deck == .A {
             deckAPlayer = nil; deckADelegate = nil; deckAFilePath = nil
+            deckACurrentTime = 0; deckADuration = 0; deckAIsPlaying = false
         } else {
             deckBPlayer = nil; deckBDelegate = nil; deckBFilePath = nil
+            deckBCurrentTime = 0; deckBDuration = 0; deckBIsPlaying = false
         }
     }
 
@@ -301,18 +313,24 @@ final class AudioPlaybackController {
     /// reloading from disk. If B was the active source, A becomes the active source.
     func promoteDeckBToA() {
         cancelDeckLoad(.A)
-        deckAPlayer   = deckBPlayer
-        deckAFilePath = deckBFilePath
-        deckADelegate = deckBDelegate
-        deckALoadTask = nil
+        deckAPlayer      = deckBPlayer
+        deckAFilePath    = deckBFilePath
+        deckADelegate    = deckBDelegate
+        deckALoadTask    = nil
+        deckADuration    = deckBDuration
+        deckACurrentTime = deckBCurrentTime
+        deckAIsPlaying   = deckBIsPlaying
 
-        deckBPlayer   = nil
-        deckBFilePath = nil
-        deckBDelegate = nil
+        deckBPlayer      = nil
+        deckBFilePath    = nil
+        deckBDelegate    = nil
         deckBLoadTask?.cancel(); deckBLoadTask = nil
+        deckBDuration    = 0
+        deckBCurrentTime = 0
+        deckBIsPlaying   = false
 
         if activeSource == .deckB { activeSource = .deckA }
-        // currentFilePath is unchanged — same file, just moved from B slot to A slot.
+        crossfade = 0   // B slot is empty — snap fader to full deck A
     }
 
     // MARK: - Backward-compatible wrappers (existing callers unchanged)
@@ -322,6 +340,68 @@ final class AudioPlaybackController {
 
     /// Cancel the Deck B preload.
     func cancelPreload() { unloadDeck(.B) }
+
+    // MARK: - Mix-mode per-deck playback controls
+    // These are the Mix-mode entry points. Unlike play(filePath:), they do NOT call
+    // pauseCurrentActive() — both decks can run simultaneously while the fader blends them.
+
+    func playDeckA() {
+        guard let p = deckAPlayer else { return }
+        if p.isPlaying {
+            p.pause()
+            deckAIsPlaying = false
+            if !anyPlayerActive { stopTimer() }
+        } else {
+            applyCrossfade()
+            p.play()
+            deckAIsPlaying = true
+            if let fp = deckAFilePath { playbackErrors.removeValue(forKey: fp) }
+            startTimer()
+        }
+    }
+
+    func pauseDeckA() {
+        guard deckAPlayer?.isPlaying == true else { return }
+        deckAPlayer?.pause()
+        deckAIsPlaying = false
+        if !anyPlayerActive { stopTimer() }
+    }
+
+    func seekDeckA(toFraction fraction: Double) {
+        guard let p = deckAPlayer else { return }
+        let t = max(0, min(1, fraction)) * p.duration
+        p.currentTime = t
+        deckACurrentTime = t
+    }
+
+    func playDeckB() {
+        guard let p = deckBPlayer else { return }
+        if p.isPlaying {
+            p.pause()
+            deckBIsPlaying = false
+            if !anyPlayerActive { stopTimer() }
+        } else {
+            applyCrossfade()
+            p.play()
+            deckBIsPlaying = true
+            if let fp = deckBFilePath { playbackErrors.removeValue(forKey: fp) }
+            startTimer()
+        }
+    }
+
+    func pauseDeckB() {
+        guard deckBPlayer?.isPlaying == true else { return }
+        deckBPlayer?.pause()
+        deckBIsPlaying = false
+        if !anyPlayerActive { stopTimer() }
+    }
+
+    func seekDeckB(toFraction fraction: Double) {
+        guard let p = deckBPlayer else { return }
+        let t = max(0, min(1, fraction)) * p.duration
+        p.currentTime = t
+        deckBCurrentTime = t
+    }
 
     // MARK: - Waveform
 
@@ -414,10 +494,18 @@ final class AudioPlaybackController {
 
     // MARK: - Delegate callbacks
 
-    func handlePlaybackFinished() {
-        isPlaying   = false
-        currentTime = duration
-        stopTimer()
+    func handlePlaybackFinished(player finishedPlayer: AVAudioPlayer? = nil) {
+        if finishedPlayer != nil && finishedPlayer === deckAPlayer {
+            deckAIsPlaying   = false
+            deckACurrentTime = deckADuration
+        } else if finishedPlayer != nil && finishedPlayer === deckBPlayer {
+            deckBIsPlaying   = false
+            deckBCurrentTime = deckBDuration
+        } else {
+            isPlaying   = false
+            currentTime = duration
+        }
+        if !anyPlayerActive { stopTimer() }
         playbackFinishedCount += 1
     }
 
@@ -448,6 +536,20 @@ final class AudioPlaybackController {
         player         = nil
         playerDelegate = nil
         ramLoadTask?.cancel(); ramLoadTask = nil
+    }
+
+    private func applyCrossfade() {
+        let v     = Float(volume)
+        let aGain = Float(cos(crossfade * .pi / 2))
+        let bGain = Float(sin(crossfade * .pi / 2))
+        deckAPlayer?.volume = v * aGain
+        deckBPlayer?.volume = v * bGain
+    }
+
+    private var anyPlayerActive: Bool {
+        player?.isPlaying == true
+        || deckAPlayer?.isPlaying == true
+        || deckBPlayer?.isPlaying == true
     }
 
     private func cancelDeckLoad(_ deck: Deck) {
@@ -529,6 +631,14 @@ final class AudioPlaybackController {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.currentTime = self.activePlayer?.currentTime ?? self.currentTime
+                if let a = self.deckAPlayer {
+                    self.deckACurrentTime = a.currentTime
+                    self.deckAIsPlaying   = a.isPlaying
+                }
+                if let b = self.deckBPlayer {
+                    self.deckBCurrentTime = b.currentTime
+                    self.deckBIsPlaying   = b.isPlaying
+                }
             }
         }
         RunLoop.main.add(t, forMode: .common)
@@ -548,7 +658,8 @@ private final class PlayerDelegate: NSObject, AVAudioPlayerDelegate,
     weak var owner: AudioPlaybackController?
 
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        Task { @MainActor [weak self] in self?.owner?.handlePlaybackFinished() }
+        let p = player
+        Task { @MainActor [weak self] in self?.owner?.handlePlaybackFinished(player: p) }
     }
 
     func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
