@@ -111,15 +111,12 @@ final class RecordingsScanCoordinator {
         phase = .scanning
         showBanner = true
 
-        // Mark items without MBID as skipped
+        // Mark items without MBID as skipped, synthesize orphan TrackEntity rows
         let rawUnscanned = RecordingsScanState.unscanned.rawValue
         let noMBIDCandidates = (try? context.fetch(FetchDescriptor<CollectionItemEntity>(
             predicate: #Predicate { $0.recordingsScanState == rawUnscanned }
         )))?.filter { $0.mbid == nil } ?? []
-        for item in noMBIDCandidates {
-            item.recordingsScanState = RecordingsScanState.skipped.rawValue
-        }
-        if !noMBIDCandidates.isEmpty { try? context.save() }
+        markSkippedAndSynthesize(noMBIDCandidates)
 
         let rawFailed = RecordingsScanState.failed.rawValue
         let remaining = (try? context.fetchCount(FetchDescriptor<CollectionItemEntity>(
@@ -146,10 +143,7 @@ final class RecordingsScanCoordinator {
 
         let mbidQueue = queue.filter { $0.mbid != nil }
         let skippable = queue.filter { $0.mbid == nil }
-        for item in skippable {
-            item.recordingsScanState = RecordingsScanState.skipped.rawValue
-        }
-        if !skippable.isEmpty { try? context.save() }
+        markSkippedAndSynthesize(skippable)
 
         print("🎵 Recordings scan: \(mbidQueue.count) items with MBID to process")
 
@@ -271,6 +265,94 @@ final class RecordingsScanCoordinator {
         entity.recordingsScanState = RecordingsScanState.unscanned.rawValue
         entity.recordingsScannedAt = nil
         try? context.save()
+    }
+
+    // MARK: - Orphan release synthesis
+
+    /// Marks each item as .skipped and synthesizes TrackEntity rows from its Discogs
+    /// tracklist. One save at the end — callers must not save separately.
+    private func markSkippedAndSynthesize(_ items: [CollectionItemEntity]) {
+        guard !items.isEmpty else { return }
+        for item in items {
+            item.recordingsScanState = RecordingsScanState.skipped.rawValue
+            synthesizeTracksForOrphanRelease(item)
+        }
+        try? context.save()
+    }
+
+    /// Back-fills synthetic TrackEntity rows for any orphan release already in the
+    /// database that doesn't yet have tracks. Safe to call on every launch — idempotent
+    /// (skips any release whose tracks array is already non-empty).
+    func backfillOrphanReleaseTracks() {
+        let all = (try? context.fetch(FetchDescriptor<CollectionItemEntity>())) ?? []
+        let orphans = all.filter { ($0.mbid ?? "").isEmpty && $0.tracks.isEmpty }
+        guard !orphans.isEmpty else { return }
+        var totalCreated = 0
+        let processed = orphans.count
+        for entity in orphans {
+            totalCreated += synthesizeTracksForOrphanRelease(entity)
+        }
+        if totalCreated > 0 { try? context.save() }
+    }
+
+    /// Synthesize TrackEntity rows for a release that has no MusicBrainz release MBID.
+    /// Uses the Discogs tracklist as the source of truth. Each synthesized track gets
+    /// trackMBID = "discogs:{releaseId}:{position}" (unique, stable, visually distinct
+    /// from real MB UUIDs), recordingMBID = "" (empty, signals "no MB binding"),
+    /// and fileMatchState = "unscanned" (so the UI shows the "Set file" button).
+    ///
+    /// Idempotent: if a TrackEntity with the synthesized trackMBID already exists,
+    /// it is left untouched.
+    ///
+    /// Returns the number of new TrackEntity rows created.
+    @discardableResult
+    func synthesizeTracksForOrphanRelease(_ entity: CollectionItemEntity) -> Int {
+        guard (entity.mbid ?? "").isEmpty else { return 0 }
+
+        let releaseId = entity.releaseId
+        var rde = FetchDescriptor<ReleaseDetailEntity>(
+            predicate: #Predicate { $0.releaseId == releaseId }
+        )
+        rde.fetchLimit = 1
+        guard let detailEntity = try? context.fetch(rde).first else {
+            return 0
+        }
+
+        let detail: ReleaseDetail
+        do {
+            detail = try JSONDecoder().decode(ReleaseDetail.self, from: detailEntity.jsonData)
+        } catch {
+            return 0
+        }
+
+        guard !detail.tracklist.isEmpty else {
+            return 0
+        }
+
+        let surrogatePrefix = "discogs:\(releaseId):"
+        var existingFD = FetchDescriptor<TrackEntity>(
+            predicate: #Predicate { $0.trackMBID.starts(with: surrogatePrefix) }
+        )
+        let existingSurrogates = Set((try? context.fetch(existingFD))?.map(\.trackMBID) ?? [])
+        var created = 0
+
+        for track in detail.tracklist {
+            let surrogate = "discogs:\(releaseId):\(track.position)"
+            guard !existingSurrogates.contains(surrogate) else { continue }
+            let newTrack = TrackEntity(
+                trackMBID: surrogate,
+                recordingMBID: "",
+                position: track.position,
+                title: track.title,
+                durationMs: nil,
+                artistCredit: ""
+            )
+            newTrack.collectionItem = entity
+            context.insert(newTrack)
+            created += 1
+        }
+
+        return created
     }
 
     func startRefetch() {

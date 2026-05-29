@@ -88,24 +88,6 @@ struct VinylHarmonicMixApp: App {
             localAnalysisCoordinator:  local,
             context:                   ctx
         ))
-#if DEBUG
-        Task { @MainActor in
-            let itemDescriptor = FetchDescriptor<CollectionItemEntity>()
-            let detailDescriptor = FetchDescriptor<ReleaseDetailEntity>()
-            let itemCount = (try? ctx.fetchCount(itemDescriptor)) ?? -1
-            let detailCount = (try? ctx.fetchCount(detailDescriptor)) ?? -1
-            let allItems = (try? ctx.fetch(itemDescriptor)) ?? []
-            let distinctIds = Set(allItems.map(\.instanceId)).count
-            let fileCount = (try? ctx.fetchCount(FetchDescriptor<LocalFileEntity>())) ?? -1
-            print("📊 SwiftData state: CollectionItemEntity rows = \(itemCount), distinct instanceIds = \(distinctIds), ReleaseDetailEntity rows = \(detailCount)")
-            print("📊 LocalFileEntity rows = \(fileCount)")
-            if distinctIds < itemCount {
-                print("⚠️ DUPLICATE ROWS DETECTED: \(itemCount - distinctIds) duplicates with same instanceId — @Attribute(.unique) is not being enforced")
-            }
-            let states = Dictionary(grouping: allItems, by: \.mbidScanState).mapValues(\.count)
-            print("📊 mbidScanState distribution: \(states)")
-        }
-#endif
     }
 
     var body: some Scene {
@@ -123,6 +105,26 @@ struct VinylHarmonicMixApp: App {
                 .environment(cueDetectionCoordinator)
                 .environment(audioPlaybackController)
                 .environment(syncOrchestrator)
+                .task {
+                    recordingsCoordinator.backfillOrphanReleaseTracks()
+#if DEBUG
+                    let ctx = container.mainContext
+                    let itemDescriptor = FetchDescriptor<CollectionItemEntity>()
+                    let detailDescriptor = FetchDescriptor<ReleaseDetailEntity>()
+                    let itemCount = (try? ctx.fetchCount(itemDescriptor)) ?? -1
+                    let detailCount = (try? ctx.fetchCount(detailDescriptor)) ?? -1
+                    let allItems = (try? ctx.fetch(itemDescriptor)) ?? []
+                    let distinctIds = Set(allItems.map(\.instanceId)).count
+                    let fileCount = (try? ctx.fetchCount(FetchDescriptor<LocalFileEntity>())) ?? -1
+                    print("📊 SwiftData state: CollectionItemEntity rows = \(itemCount), distinct instanceIds = \(distinctIds), ReleaseDetailEntity rows = \(detailCount)")
+                    print("📊 LocalFileEntity rows = \(fileCount)")
+                    if distinctIds < itemCount {
+                        print("⚠️ DUPLICATE ROWS DETECTED: \(itemCount - distinctIds) duplicates with same instanceId — @Attribute(.unique) is not being enforced")
+                    }
+                    let states = Dictionary(grouping: allItems, by: \.mbidScanState).mapValues(\.count)
+                    print("📊 mbidScanState distribution: \(states)")
+#endif
+                }
         }
         .modelContainer(container)
 #if os(macOS)
