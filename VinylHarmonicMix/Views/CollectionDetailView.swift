@@ -347,11 +347,16 @@ struct CollectionDetailView: View {
                             .frame(width: 50, alignment: .trailing)
                     }
                     .padding(.top, 6)
-                    .padding(.bottom, rmbid != nil ? 3 : 6)
+                    .padding(.bottom, (rmbid != nil || trackEntityByPos?.effectiveBpm != nil) ? 3 : 6)
                     .padding(.horizontal, 20)
 
                     if let rmbid {
                         recordingMBIDCaption(rmbid)
+                            .padding(.bottom, isActive ? 4 : 6)
+                            .padding(.horizontal, 20)
+                            .padding(.leading, 40)
+                    } else if let te = trackEntityByPos, te.effectiveBpm != nil {
+                        orphanFeatureRow(trackEntity: te)
                             .padding(.bottom, isActive ? 4 : 6)
                             .padding(.horizontal, 20)
                             .padding(.leading, 40)
@@ -865,6 +870,33 @@ struct CollectionDetailView: View {
             let a = Int($0.position) ?? Int.max
             let b = Int($1.position) ?? Int.max
             return a == b ? $0.position < $1.position : a < b
+        }
+    }
+
+    @ViewBuilder
+    private func orphanFeatureRow(trackEntity: TrackEntity) -> some View {
+        if let bpm = trackEntity.effectiveBpm {
+            HStack(spacing: 8) {
+                Spacer(minLength: 0)
+                Text("ES")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color(red: 0.15, green: 0.55, blue: 0.30)))
+                    .help("BPM & key analyzed from your local audio file")
+                Text("\(Int(bpm)) BPM")
+                    .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(.primary)
+                if let code = trackEntity.effectiveCamelot {
+                    Text(code)
+                        .font(.system(size: 11, weight: .bold).monospacedDigit())
+                        .foregroundStyle(CamelotColor.text(for: code))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(CamelotColor.background(for: code)))
+                }
+            }
         }
     }
 
