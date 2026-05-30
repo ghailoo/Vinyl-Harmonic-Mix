@@ -44,6 +44,7 @@ struct MixModeView: View {
 
     // Track picker sheet
     @State private var trackPickerRelease: CollectionItemEntity? = nil
+    @State private var showingDeckAReleasePicker: Bool = false
 
     // Search
     @State private var searchText: String = ""
@@ -178,6 +179,15 @@ struct MixModeView: View {
         .sheet(item: $trackPickerRelease) { entity in
             TrackPickerSheet(entity: entity) { track in handleTrackPick(track) }
         }
+        .sheet(isPresented: $showingDeckAReleasePicker) {
+            DeckAReleasePicker(
+                allEntities: allCollectionEntities,
+                mixableCount: mixableCount
+            ) { track in
+                handleTrackPick(track)
+                showingDeckAReleasePicker = false
+            }
+        }
     }
 
     // MARK: - Top bar
@@ -269,7 +279,15 @@ struct MixModeView: View {
                     track: anchor,
                     coverURL: thumbURLs[anchor.filePath ?? ""],
                     tintColor: .accentColor,
-                    onDismiss: {}
+                    dismissable: true,
+                    onDismiss: {
+                        playback.unloadDeck(.A)
+                        guard let set = activeSet else { return }
+                        if let last = set.items.sorted(by: { $0.position < $1.position }).last {
+                            modelContext.delete(last)
+                            try? modelContext.save()
+                        }
+                    }
                 )
                 if let candidate = candidateTrack {
                     TransitionBubbleView(anchor: anchor, candidate: candidate)
@@ -423,13 +441,20 @@ struct MixModeView: View {
     // MARK: - Empty-set prompt
 
     private var emptySetPrompt: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "hand.tap").font(.system(size: 13)).foregroundStyle(.secondary)
-            Text("Tap a release below to pick the opening track for \"\(activeSet?.name ?? "this set")\"")
-                .font(.system(size: 12)).foregroundStyle(.secondary)
+        VStack(spacing: 12) {
+            Image(systemName: "music.note.list")
+                .font(.title2)
+                .foregroundStyle(.secondary)
+            Text("No track in deck A")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Button("Pick opening track") {
+                showingDeckAReleasePicker = true
+            }
+            .buttonStyle(.borderedProminent)
         }
-        .padding(.horizontal, 14).padding(.vertical, 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Search row
@@ -923,5 +948,94 @@ struct TrackPickerSheet: View {
             .foregroundStyle(CamelotColor.text(for: code))
             .padding(.horizontal, 5).padding(.vertical, 2)
             .background(Capsule().fill(CamelotColor.background(for: code)))
+    }
+}
+
+// MARK: - Deck A release picker
+
+private struct DeckAReleasePicker: View {
+    let allEntities: [CollectionItemEntity]
+    let mixableCount: [Int: Int]
+    let onPick: (MixTrack) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var searchText: String = ""
+    @State private var selectedRelease: CollectionItemEntity? = nil
+
+    private var mixableEntities: [CollectionItemEntity] {
+        let candidates = allEntities.filter { (mixableCount[$0.instanceId] ?? 0) > 0 }
+        let q = searchText.trimmingCharacters(in: .whitespaces)
+        let filtered = q.isEmpty ? candidates : candidates.filter { entity in
+            let title   = entity.basicInformation?.title ?? ""
+            let artists = entity.basicInformation?.artists.map(\.name).joined(separator: " ") ?? ""
+            let lower   = q.lowercased()
+            return title.lowercased().contains(lower) || artists.lowercased().contains(lower)
+        }
+        return filtered.sorted {
+            ($0.basicInformation?.title ?? "") < ($1.basicInformation?.title ?? "")
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Pick opening track").font(.headline)
+                    Text("\(mixableEntities.count) release\(mixableEntities.count == 1 ? "" : "s") with mixer-ready tracks")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Cancel") { dismiss() }
+            }
+            .padding(.horizontal, 20).padding(.top, 20).padding(.bottom, 12)
+
+            Divider()
+
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").font(.system(size: 13)).foregroundStyle(.secondary)
+                TextField("Search releases…", text: $searchText).textFieldStyle(.plain).font(.system(size: 13))
+                if !searchText.isEmpty {
+                    Button { searchText = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color.secondary.opacity(0.6))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(Color.secondary.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 7))
+            .padding(.horizontal, 14).padding(.vertical, 8)
+
+            List(mixableEntities, id: \.instanceId) { entity in
+                Button { selectedRelease = entity } label: {
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(entity.basicInformation?.title ?? "Unknown")
+                                .font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                            Text(entity.basicInformation?.artists.map(\.name).joined(separator: " & ") ?? "")
+                                .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        Spacer()
+                        let count = mixableCount[entity.instanceId] ?? 0
+                        Text("\(count) track\(count == 1 ? "" : "s")")
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11)).foregroundStyle(.tertiary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .listRowInsets(EdgeInsets(top: 5, leading: 14, bottom: 5, trailing: 14))
+            }
+            .listStyle(.plain)
+        }
+        .frame(minWidth: 460, minHeight: 420)
+        .sheet(item: $selectedRelease) { entity in
+            TrackPickerSheet(entity: entity) { track in
+                onPick(track)
+            }
+        }
     }
 }
