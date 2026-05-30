@@ -107,6 +107,7 @@ struct VinylHarmonicMixApp: App {
                 .environment(syncOrchestrator)
                 .task {
                     recordingsCoordinator.backfillOrphanReleaseTracks()
+                    recordingsCoordinator.backfillMBIDReleaseTracks()
 #if DEBUG
                     let ctx = container.mainContext
                     let itemDescriptor = FetchDescriptor<CollectionItemEntity>()

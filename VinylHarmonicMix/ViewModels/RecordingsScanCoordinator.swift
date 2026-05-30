@@ -355,6 +355,78 @@ final class RecordingsScanCoordinator {
         return created
     }
 
+    // MARK: - MBID release synthesis
+
+    /// Synthesizes surrogate TrackEntity rows for a MBID-matched release whose MB fetch
+    /// returned zero recordings. Uses the cached Discogs tracklist as the source.
+    ///
+    /// Surrogate trackMBID = "discogs:{releaseId}:{position}" — same stable scheme as
+    /// orphan releases, so the "Set file" button appears immediately.
+    ///
+    /// Idempotent: skips any position where a TrackEntity (surrogate or real) already
+    /// exists. When processItems runs later and MB returns real data, it will delete
+    /// these surrogates and insert real MB tracks.
+    ///
+    /// Returns the number of new TrackEntity rows created.
+    @discardableResult
+    func synthesizeMissingTracksForMatchedRelease(_ entity: CollectionItemEntity) -> Int {
+        guard let mbid = entity.mbid, !mbid.isEmpty else { return 0 }
+
+        let releaseId = entity.releaseId
+        var rde = FetchDescriptor<ReleaseDetailEntity>(
+            predicate: #Predicate { $0.releaseId == releaseId }
+        )
+        rde.fetchLimit = 1
+        guard let detailEntity = try? context.fetch(rde).first else { return 0 }
+
+        let detail: ReleaseDetail
+        do {
+            detail = try JSONDecoder().decode(ReleaseDetail.self, from: detailEntity.jsonData)
+        } catch {
+            return 0
+        }
+
+        guard !detail.tracklist.isEmpty else { return 0 }
+
+        let existingPositions = Set(entity.tracks.map(\.position))
+        let surrogatePrefix   = "discogs:\(releaseId):"
+        var created = 0
+
+        for track in detail.tracklist {
+            guard !existingPositions.contains(track.position) else { continue }
+            let newTrack = TrackEntity(
+                trackMBID: "\(surrogatePrefix)\(track.position)",
+                recordingMBID: "",
+                position: track.position,
+                title: track.title,
+                durationMs: nil,
+                artistCredit: ""
+            )
+            newTrack.collectionItem = entity
+            context.insert(newTrack)
+            created += 1
+        }
+
+        return created
+    }
+
+    /// Back-fills surrogate TrackEntity rows for all MBID-matched releases that currently
+    /// have zero tracks — typically because MB returned an empty recordings list for that
+    /// release MBID. Safe to call on every launch (idempotent).
+    func backfillMBIDReleaseTracks() {
+        let all = (try? context.fetch(FetchDescriptor<CollectionItemEntity>())) ?? []
+        let mbidEmpty = all.filter { ($0.mbid ?? "").isEmpty == false && $0.tracks.isEmpty }
+        guard !mbidEmpty.isEmpty else { return }
+        var totalCreated = 0
+        for entity in mbidEmpty {
+            totalCreated += synthesizeMissingTracksForMatchedRelease(entity)
+        }
+        if totalCreated > 0 {
+            print("🎵 Synthesized \(totalCreated) surrogate tracks for \(mbidEmpty.count) MBID releases with empty MB data")
+            try? context.save()
+        }
+    }
+
     func startRefetch() {
         switch phase {
         case .idle, .completed, .cancelled: break
