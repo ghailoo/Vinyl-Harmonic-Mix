@@ -31,14 +31,14 @@ struct ContentView: View {
                     case .fileMatches:
                         FileMatchesView()
                     default:
-                        CollectionGridView()
+                        SetBuilderView()
                     }
                 }
             }
         }
 #else
         NavigationStack {
-            CollectionGridView()
+            SetBuilderView()
                 .onAppear { collection.refreshConfiguration() }
                 .navigationTitle("VinylHarmonicMix")
                 .toolbar {
