@@ -51,6 +51,7 @@ struct CollectionDetailView: View {
             loadEntity()
             loadTrackEntities()
             loadFeatureEntities()
+            prefetchWaveforms()
         }
         .onChange(of: scanCoordinator.enrichmentStatus) { _, newStatus in
             if newStatus == nil {
@@ -1108,6 +1109,18 @@ struct CollectionDetailView: View {
     private func formatTime(_ seconds: Double) -> String {
         let s = max(0, Int(seconds))
         return String(format: "%d:%02d", s / 60, s % 60)
+    }
+
+    // MARK: - Waveform prefetch
+
+    private func prefetchWaveforms() {
+        let paths = trackEntities
+            .filter { $0.fileMatchState == "confident" }
+            .compactMap { $0.primaryLocalFilePath }
+            .filter { !$0.isEmpty }
+        for fp in paths {
+            playback.loadWaveformIfNeeded(filePath: fp)
+        }
     }
 
     // MARK: - Data loading
