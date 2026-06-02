@@ -8,6 +8,8 @@ struct MixTrack: Identifiable, Equatable, Hashable, Sendable {
     let key: String
     let source: TrackEntity.FeatureSource
     let filePath: String?
+    let label: String
+    let year: Int
 
     var id: String { filePath ?? "\(displayArtist)|\(displayTitle)|\(bpm)" }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }

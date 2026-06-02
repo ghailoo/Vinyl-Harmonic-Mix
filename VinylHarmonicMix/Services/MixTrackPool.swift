@@ -20,7 +20,9 @@ enum MixTrackPool {
                     camelot:  t.effectiveCamelot!,
                     key:      t.effectiveKey ?? "",
                     source:   t.featureSource,
-                    filePath: t.primaryLocalFilePath
+                    filePath: t.primaryLocalFilePath,
+                    label:    t.collectionItem?.basicInformation?.labels.first?.name ?? "",
+                    year:     t.collectionItem?.basicInformation?.year ?? 0
                 )
             }
     }
@@ -38,7 +40,9 @@ enum MixTrackPool {
                     camelot:  f.camelot,
                     key:      f.key.isEmpty ? "" : "\(f.key) \(f.scale)",
                     source:   .local,
-                    filePath: f.filePath
+                    filePath: f.filePath,
+                    label:    "",
+                    year:     0
                 )
             }
     }

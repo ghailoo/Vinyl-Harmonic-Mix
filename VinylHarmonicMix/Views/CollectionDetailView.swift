@@ -362,7 +362,9 @@ struct CollectionDetailView: View {
                                     camelot:       camelot,
                                     key:           te.effectiveKey ?? "",
                                     source:        te.featureSource,
-                                    filePath:      fp
+                                    filePath:      fp,
+                                    label:         item.basicInformation.labels.first?.name ?? "",
+                                    year:          item.basicInformation.year
                                 )
                                 onPromoteToCurrent?(mix)
                                 dismiss()

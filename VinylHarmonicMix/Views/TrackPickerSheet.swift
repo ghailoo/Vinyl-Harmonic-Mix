@@ -50,7 +50,9 @@ struct TrackPickerSheet: View {
                             camelot:       track.effectiveCamelot ?? "",
                             key:           track.effectiveKey ?? "",
                             source:        track.featureSource,
-                            filePath:      track.primaryLocalFilePath
+                            filePath:      track.primaryLocalFilePath,
+                            label:         entity.basicInformation?.labels.first?.name ?? "",
+                            year:          entity.basicInformation?.year ?? 0
                         )
                         onPick(mix)
                         dismiss()

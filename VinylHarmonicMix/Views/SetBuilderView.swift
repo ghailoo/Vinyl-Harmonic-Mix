@@ -162,11 +162,28 @@ struct SetBuilderView: View {
                             currentTrack = nil
                         } label: {
                             Image(systemName: "arrow.triangle.2.circlepath")
-                                .font(.system(size: 13))
-                                .foregroundStyle(Color.secondary.opacity(0.7))
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 22, height: 22)
+                                .background(Circle().fill(Color.accentColor))
                         }
                         .buttonStyle(.plain)
                         .help("Change current track")
+                    }
+
+                    let labelYear: String = {
+                        switch (track.label.isEmpty, track.year == 0) {
+                        case (false, false): return "\(track.label) · \(track.year)"
+                        case (false, true):  return track.label
+                        case (true, false):  return "\(track.year)"
+                        case (true, true):   return ""
+                        }
+                    }()
+                    if !labelYear.isEmpty {
+                        Text(labelYear)
+                            .font(.subheadline)
+                            .foregroundStyle(Color.secondary.opacity(0.85))
+                            .lineLimit(1)
                     }
 
                     Spacer()
