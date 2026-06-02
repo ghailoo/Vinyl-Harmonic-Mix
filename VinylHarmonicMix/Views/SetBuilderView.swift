@@ -31,6 +31,7 @@ struct SetBuilderView: View {
     @State private var activeFilter: CollectionFilter = .all
     @State private var activeSort: CollectionSort = .yearDesc
     @AppStorage("collectionGridCardSize") private var cardSize: Double = 0.25
+    @State private var thumbURLs: [String: URL] = [:]
 
     // Sheet state
     @State private var selectedItem: CollectionItem? = nil
@@ -52,18 +53,18 @@ struct SetBuilderView: View {
 
             Divider()
 
-            // Current Track section — filled in step 3
-            VStack {
-                if currentTrack == nil {
+            // Current Track section
+            VStack(spacing: 0) {
+                if let track = currentTrack {
+                    currentTrackHero(track: track)
+                } else {
                     Text("Tap a track in your collection below to begin")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    Text("Current Track placeholder")
                 }
             }
-            .frame(height: 120)
+            .frame(height: 280)
 
             Divider()
 
@@ -87,6 +88,7 @@ struct SetBuilderView: View {
         .onAppear {
             rebuildFeaturesLookup()
             rebuildCoverageLookup()
+            rebuildThumbURLs()
             if activeSet == nil, !activeSetID.isEmpty {
                 activeSet = allSets.first { $0.id == activeSetID }
                 if activeSet == nil { activeSetID = "" }
@@ -98,9 +100,15 @@ struct SetBuilderView: View {
         }
         .onChange(of: allTrackEntities.count) { _, _ in
             rebuildCoverageLookup()
+            rebuildThumbURLs()
         }
         .onChange(of: playback.currentFilePath) { _, newPath in
             playingInstanceId = newPath.flatMap { filePathToInstanceId[$0] }
+        }
+        .task(id: currentTrack?.filePath) {
+            if let fp = currentTrack?.filePath {
+                playback.loadWaveformIfNeeded(filePath: fp)
+            }
         }
         .sheet(item: $selectedItem) { item in
             CollectionDetailView(item: item, onPromoteToCurrent: { track in
@@ -113,6 +121,144 @@ struct SetBuilderView: View {
 
     private func handleTrackPick(_ track: MixTrack) {
         currentTrack = track
+    }
+
+    // MARK: - Current Track hero
+
+    @ViewBuilder
+    private func currentTrackHero(track: MixTrack) -> some View {
+        VStack(spacing: 0) {
+            // Top row: cover + info (~180pt)
+            HStack(alignment: .top, spacing: 16) {
+                AsyncImage(url: thumbURLs[track.filePath ?? ""]) { phase in
+                    switch phase {
+                    case .success(let img):
+                        img.resizable().aspectRatio(contentMode: .fill)
+                    default:
+                        ZStack {
+                            Color.secondary.opacity(0.10)
+                            Image(systemName: "music.note")
+                                .font(.system(size: 36))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .frame(width: 180, height: 180)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .shadow(color: .black.opacity(0.20), radius: 8, x: 0, y: 4)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(track.displayTitle)
+                        .font(.title2.bold())
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    HStack(spacing: 6) {
+                        Text(track.displayArtist)
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Button {
+                            currentTrack = nil
+                        } label: {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .font(.system(size: 13))
+                                .foregroundStyle(Color.secondary.opacity(0.7))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Change current track")
+                    }
+
+                    Spacer()
+
+                    HStack(spacing: 6) {
+                        if track.bpm > 0 {
+                            heroBadge("\(Int(track.bpm.rounded())) BPM", monospaced: true)
+                        }
+                        if !track.camelot.isEmpty {
+                            heroCamelotPill(track.camelot)
+                        }
+                        if !track.key.isEmpty {
+                            heroBadge(track.key, monospaced: false)
+                        }
+                        heroSourcePill(track.source)
+                    }
+                }
+                .padding(.leading, 4)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            .frame(height: 180)
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+
+            // Bottom row: play button + waveform (~88pt)
+            if let fp = track.filePath, !fp.isEmpty {
+                let isActive  = playback.currentFilePath == fp
+                let isPlaying = isActive && playback.isPlaying
+                HStack(spacing: 10) {
+                    Button {
+                        playback.play(filePath: fp)
+                    } label: {
+                        Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                            .font(.system(size: 22))
+                            .foregroundStyle(isActive ? Color.accentColor : Color.secondary.opacity(0.5))
+                            .contentTransition(.symbolEffect(.replace))
+                    }
+                    .buttonStyle(.plain)
+
+                    TrackWaveformView(filePath: fp, zoomFactor: .constant(1.0))
+                        .id(fp)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .padding(.bottom, 10)
+            } else {
+                Color.clear.frame(height: 88)
+            }
+        }
+    }
+
+    // MARK: - Hero badge helpers
+
+    @ViewBuilder
+    private func heroBadge(_ text: String, monospaced: Bool) -> some View {
+        Text(text)
+            .font(monospaced
+                  ? .system(size: 12, weight: .semibold).monospacedDigit()
+                  : .system(size: 12))
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(Capsule().fill(Color.secondary.opacity(0.12)))
+    }
+
+    @ViewBuilder
+    private func heroCamelotPill(_ code: String) -> some View {
+        Text(code)
+            .font(.system(size: 12, weight: .bold).monospacedDigit())
+            .foregroundStyle(CamelotColor.text(for: code))
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(Capsule().fill(CamelotColor.background(for: code)))
+    }
+
+    @ViewBuilder
+    private func heroSourcePill(_ source: TrackEntity.FeatureSource) -> some View {
+        switch source {
+        case .local:
+            Text("ES")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 6).padding(.vertical, 3)
+                .background(Capsule().fill(Color(red: 0.15, green: 0.55, blue: 0.30)))
+                .help("BPM & key analyzed from your local audio file (Essentia)")
+        case .ab:
+            Text("AB")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 6).padding(.vertical, 3)
+                .background(Capsule().fill(Color(red: 0.35, green: 0.45, blue: 0.65)))
+                .help("BPM & key from AcousticBrainz")
+        case .none:
+            EmptyView()
+        }
     }
 
     // MARK: - Grid controls row
@@ -314,6 +460,10 @@ struct SetBuilderView: View {
         })
         filePathToInstanceId = fpToId
         playingInstanceId = playback.currentFilePath.flatMap { fpToId[$0] }
+    }
+
+    private func rebuildThumbURLs() {
+        thumbURLs = MixCoverArt.thumbURLs(from: allTrackEntities)
     }
 
     // MARK: - Computed helpers
