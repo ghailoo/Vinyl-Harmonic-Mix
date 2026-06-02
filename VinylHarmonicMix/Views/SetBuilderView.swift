@@ -20,6 +20,7 @@ struct SetBuilderView: View {
 
     // Harmonic strip controls
     @AppStorage("setBuilderBpmTolerancePct") private var bpmTolerancePct: Double = 5.0
+    @AppStorage("setBuilderStopOnTrackChange") private var stopOnTrackChange: Bool = true
     @State private var visibleGroups: Set<HarmonicGroup> = Set(HarmonicGroup.allCases)
 
     // Grid state
@@ -43,10 +44,20 @@ struct SetBuilderView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Toolbar placeholder — filled in step 5
             HStack {
                 Text("Set Builder").font(.headline)
                 Spacer()
+                Menu {
+                    Toggle("Stop playback when changing track", isOn: $stopOnTrackChange)
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .frame(width: 28)
+                .help("Set Builder settings")
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
@@ -120,6 +131,7 @@ struct SetBuilderView: View {
     // MARK: - Track pick handler
 
     private func handleTrackPick(_ track: MixTrack) {
+        if stopOnTrackChange { playback.pause() }
         currentTrack = track
     }
 
