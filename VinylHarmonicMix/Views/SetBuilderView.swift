@@ -5,6 +5,7 @@ struct SetBuilderView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(AudioPlaybackController.self) private var playback
     @Environment(CollectionViewModel.self) private var viewModel
+    @Environment(CueDetectionCoordinator.self) private var cueCoordinator
 
     @Query private var allCollectionEntities: [CollectionItemEntity]
     @Query private var allTrackEntities: [TrackEntity]
@@ -237,6 +238,26 @@ struct SetBuilderView: View {
 
                     TrackWaveformView(filePath: fp, zoomFactor: .constant(1.0))
                         .id(fp)
+
+                    Button {
+                        cueCoordinator.startDetection(filePath: fp)
+                    } label: {
+                        if cueCoordinator.phase == .detecting
+                            && cueCoordinator.currentFileLabel
+                                == URL(fileURLWithPath: fp).lastPathComponent {
+                            ProgressView()
+                                .scaleEffect(0.55)
+                                .frame(width: 22, height: 22)
+                        } else {
+                            Image(systemName: "waveform.path.ecg")
+                                .font(.system(size: 18))
+                                .foregroundStyle(Color.secondary.opacity(0.8))
+                                .frame(width: 22, height: 22)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .help("Scan cue points for this track")
+                    .disabled(cueCoordinator.phase == .detecting)
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 8)

@@ -7,6 +7,7 @@ struct CollectionStatsView: View {
     @Environment(AudioFeaturesScanCoordinator.self) private var audioFeaturesCoordinator
     @Environment(FileMatchCoordinator.self) private var fileMatchCoordinator
     @Environment(LocalAnalysisCoordinator.self) private var localAnalysisCoordinator
+    @Environment(CueDetectionCoordinator.self) private var cueCoordinator
     @Query private var entities: [CollectionItemEntity]
     @Query private var detailEntities: [ReleaseDetailEntity]
     @Query private var trackEntities: [TrackEntity]
@@ -57,6 +58,7 @@ struct CollectionStatsView: View {
                             audioFeaturesCard
                             localFilesCard
                             localAnalysisCard
+                            cueDetectionCard
                         }
                         .padding(.horizontal, 24)
                         .padding(.vertical, 20)
@@ -909,6 +911,70 @@ struct CollectionStatsView: View {
         if h > 0 { return "\(h) h \(m) min" }
         let s = cachedDurationSeconds % 60
         return "\(m) min \(s) sec"
+    }
+
+    // MARK: - Cue Point Detection card
+
+    private var cueDetectionCard: some View {
+        let withCues = localFileEntities.filter { !$0.cuePoints.isEmpty }.count
+        let analyzed = localFileEntities.filter { $0.bpm > 0 }.count
+        let isDetecting = cueCoordinator.phase == .detecting || cueCoordinator.phase == .paused
+        let pct = analyzed > 0 ? withCues * 100 / max(analyzed, 1) : 0
+
+        return sectionCard {
+            sectionHeader(title: "Cue Point Detection")
+
+            if analyzed == 0 {
+                Text("No analyzed files yet — run local audio analysis first.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("\(withCues.formatted()) of \(analyzed.formatted()) analyzed files have cue points (\(pct)%)")
+                        .font(.system(size: 14))
+
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.secondary.opacity(0.15)).frame(height: 8)
+                            Capsule()
+                                .fill(Color.orange)
+                                .frame(
+                                    width: analyzed > 0
+                                        ? geo.size.width * CGFloat(withCues) / CGFloat(max(analyzed, 1))
+                                        : 0,
+                                    height: 8
+                                )
+                        }
+                    }
+                    .frame(height: 8)
+                }
+            }
+
+            if cueCoordinator.phase == .detecting {
+                HStack(spacing: 6) {
+                    ProgressView().scaleEffect(0.75)
+                    Text("\(cueCoordinator.processedCount) / \(cueCoordinator.totalCount) — \(cueCoordinator.currentFileLabel)")
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                .padding(.top, 4)
+            }
+
+            HStack(spacing: 8) {
+                Button(isDetecting ? "Detecting…" : "Scan all confident tracks") {
+                    cueCoordinator.startDetection(scope: .matched)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(isDetecting)
+
+                Button("Scan all tracks") {
+                    cueCoordinator.startDetection(scope: .all)
+                }
+                .controlSize(.small)
+                .disabled(isDetecting)
+            }
+            .padding(.top, 10)
+        }
     }
 
     private func parseDuration(_ s: String) -> Int {

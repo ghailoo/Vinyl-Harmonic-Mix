@@ -63,6 +63,47 @@ final class CueDetectionCoordinator {
         }
     }
 
+    func startDetection(filePath: String) {
+        guard phase.isIdle else { return }
+        phase = .detecting
+        currentFileLabel = URL(fileURLWithPath: filePath).lastPathComponent
+        totalCount = 1; processedCount = 0
+        detectedCount = 0; skippedCount = 0; failedCount = 0
+
+        scanTask = Task { [weak self] in
+            guard let self else { return }
+
+            var descriptor = FetchDescriptor<LocalFileEntity>(
+                predicate: #Predicate { $0.filePath == filePath }
+            )
+            descriptor.fetchLimit = 1
+            guard let file = (try? self.context.fetch(descriptor))?.first else {
+                self.phase = .failed("No LocalFileEntity found for \(filePath)")
+                return
+            }
+            let fileID = file.persistentModelID
+
+            let outcome = await self.runCueScriptSafe(filePath: filePath)
+            guard !Task.isCancelled else { return }
+
+            switch outcome {
+            case .success(let result):
+                self.flushCueResults([(fileID, result)])
+                if result.switchPoints.isEmpty && result.structuralPoints.isEmpty {
+                    self.skippedCount = 1
+                } else {
+                    self.detectedCount = 1
+                }
+            case .failure(let msg):
+                self.failedCount = 1
+                print("[CueDetection] ✗ \(filePath): \(msg)")
+            }
+
+            self.processedCount = 1
+            if !Task.isCancelled { self.phase = .completed }
+        }
+    }
+
     func pause() {
         scanTask?.cancel(); scanTask = nil
         phase = .paused
@@ -244,6 +285,105 @@ final class CueDetectionCoordinator {
                                             structuralPoints: structuralPoints,
                                             fourToFloor: fourToFloor,
                                             kickRegularity: kickRegularity))
+        }.value
+    }
+
+    private func runCueScriptSafe(filePath: String) async -> ScriptOutcome {
+        let scriptPath = Self.scriptPath
+        let python3 = LocalAnalysisCoordinator.python3Path
+
+        return await Task.detached(priority: .utility) { () -> ScriptOutcome in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: python3)
+            process.arguments = [scriptPath, filePath]
+
+            let stdoutPipe = Pipe()
+            let stderrPipe = Pipe()
+            process.standardOutput = stdoutPipe
+            process.standardError  = stderrPipe
+
+            var stdoutData = Data()
+            var stderrData = Data()
+            let stdoutLock = NSLock()
+            let stderrLock = NSLock()
+
+            stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+                let chunk = handle.availableData
+                if !chunk.isEmpty { stdoutLock.lock(); stdoutData.append(chunk); stdoutLock.unlock() }
+            }
+            stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+                let chunk = handle.availableData
+                if !chunk.isEmpty { stderrLock.lock(); stderrData.append(chunk); stderrLock.unlock() }
+            }
+
+            do { try process.run() } catch {
+                return .failure("Process error: \(error.localizedDescription)")
+            }
+
+            let timeoutSeconds: TimeInterval = 120
+            let startTime = Date()
+            while process.isRunning {
+                if Date().timeIntervalSince(startTime) > timeoutSeconds {
+                    process.terminate()
+                    Thread.sleep(forTimeInterval: 1)
+                    if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+                    break
+                }
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+            process.waitUntilExit()
+
+            stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            stderrPipe.fileHandleForReading.readabilityHandler = nil
+            let finalOut = stdoutPipe.fileHandleForReading.availableData
+            if !finalOut.isEmpty { stdoutLock.lock(); stdoutData.append(finalOut); stdoutLock.unlock() }
+            let finalErr = stderrPipe.fileHandleForReading.availableData
+            if !finalErr.isEmpty { stderrLock.lock(); stderrData.append(finalErr); stderrLock.unlock() }
+
+            guard let raw = String(data: stdoutData, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+                  !raw.isEmpty else {
+                let stderrSnippet = String(data: stderrData.prefix(1024), encoding: .utf8) ?? ""
+                return .failure("Empty output (exit \(process.terminationStatus)) stderr=\(stderrSnippet)")
+            }
+
+            guard let jsonData = raw.data(using: .utf8),
+                  let dict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
+            else {
+                return .failure("JSON parse failed: \(raw.prefix(120))")
+            }
+
+            if let err = dict["error"] as? String { return .failure(err) }
+
+            let rawSwitch = dict["switch_points"] as? [[String: Any]] ?? []
+            let switchPoints: [CueScriptResult.SwitchPoint] = rawSwitch.compactMap { sp in
+                guard let t = sp["time_sec"] as? Double,
+                      let f = sp["feature"] as? String,
+                      let n = sp["novelty"] as? Double,
+                      let b = sp["beat_index"] as? Int else { return nil }
+                return CueScriptResult.SwitchPoint(timeSec: t, feature: f, novelty: n, beatIndex: b)
+            }
+
+            let rawStruct = dict["structural_points"] as? [[String: Any]] ?? []
+            let structuralPoints: [CueScriptResult.StructuralPoint] = rawStruct.compactMap { sp in
+                guard let t = sp["time_sec"] as? Double,
+                      let n = sp["novelty"] as? Double,
+                      let b = sp["beat_index"] as? Int else { return nil }
+                let dir    = sp["energy_direction"] as? String ?? ""
+                let delta  = sp["energy_delta"]     as? Double ?? 0.0
+                let source = sp["source"]           as? String ?? "energy"
+                return CueScriptResult.StructuralPoint(timeSec: t, novelty: n, beatIndex: b,
+                                                        energyDirection: dir, energyDelta: delta,
+                                                        source: source)
+            }
+
+            let fourToFloor    = dict["four_to_floor"]    as? Bool   ?? false
+            let kickRegularity = dict["kick_regularity"] as? Double ?? 0.0
+
+            return .success(CueScriptResult(switchPoints: switchPoints,
+                                             structuralPoints: structuralPoints,
+                                             fourToFloor: fourToFloor,
+                                             kickRegularity: kickRegularity))
         }.value
     }
 
