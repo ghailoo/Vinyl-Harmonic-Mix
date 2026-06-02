@@ -1,8 +1,6 @@
 import SwiftUI
 import SwiftData
 
-enum CollectionMode { case browse, mix }
-
 enum CollectionSort: String, CaseIterable, Identifiable {
     case artistAsc  = "Artist (A → Z)"
     case artistDesc = "Artist (Z → A)"
@@ -79,8 +77,6 @@ struct CollectionGridView: View {
     @State private var activeFilter: CollectionFilter = .all
     @State private var activeSort: CollectionSort = .yearDesc
 
-    @State private var collectionMode: CollectionMode = .browse
-
     // 0 → 120pt minimum (many small cards), 1 → 280pt (few large cards).
     // Default 0.25 reproduces the previous 160pt minimum.
     @AppStorage("collectionGridCardSize") private var cardSize: Double = 0.25
@@ -91,14 +87,7 @@ struct CollectionGridView: View {
     }
 
     var body: some View {
-        Group {
-            if collectionMode == .mix {
-                MixModeView()
-            } else {
-                browseBody
-            }
-        }
-        .animation(.easeInOut(duration: 0.2), value: collectionMode)
+        browseBody
         .animation(.easeInOut(duration: 0.25), value: audioFeaturesCoordinator.shouldShowPanel)
         .animation(.easeInOut(duration: 0.25), value: recordingsCoordinator.shouldShowPanel)
         .animation(.easeInOut(duration: 0.25), value: scanCoordinator.shouldShowPanel)
@@ -123,19 +112,8 @@ struct CollectionGridView: View {
             playingInstanceId = newPath.flatMap { filePathToInstanceId[$0] }
         }
         .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Picker("Mode", selection: $collectionMode) {
-                    Label("Browse", systemImage: "square.grid.2x2").tag(CollectionMode.browse)
-                    Label("Mix", systemImage: "slider.horizontal.3").tag(CollectionMode.mix)
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 140)
-                .labelsHidden()
-                .help(collectionMode == .browse ? "Switch to Mix mode" : "Switch to Browse mode")
-            }
             ToolbarItemGroup(placement: .primaryAction) {
-                if collectionMode == .browse {
-                    HStack(spacing: 8) {
+                HStack(spacing: 8) {
                             Image(systemName: "magnifyingglass")
                                 .foregroundStyle(.secondary)
                                 .font(.system(size: 13))
@@ -183,7 +161,6 @@ struct CollectionGridView: View {
                         Label("Re-import from Discogs", systemImage: "arrow.down.circle")
                     }
                     .help("Re-import from Discogs (full wipe + reinsert)")
-                }
             }
         }
         .alert("Rescan All Releases?", isPresented: $showRescanAlert) {
