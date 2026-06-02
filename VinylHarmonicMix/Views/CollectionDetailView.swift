@@ -6,6 +6,8 @@ import AppKit
 
 struct CollectionDetailView: View {
     let item: CollectionItem
+    var onPromoteToCurrent: ((MixTrack) -> Void)? = nil
+
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @Environment(\.modelContext) private var modelContext
@@ -342,6 +344,35 @@ struct CollectionDetailView: View {
                             }
                             .buttonStyle(.plain)
                             .help(isPlaying ? "Pause" : "Play")
+                            .padding(.trailing, 6)
+                        }
+                        if onPromoteToCurrent != nil,
+                           let te = trackEntityByPos,
+                           te.effectiveBpm != nil,
+                           te.effectiveCamelot != nil {
+                            Button {
+                                guard let te = trackEntityByPos,
+                                      let bpm = te.effectiveBpm,
+                                      let camelot = te.effectiveCamelot,
+                                      let fp = te.primaryLocalFilePath else { return }
+                                let mix = MixTrack(
+                                    displayArtist: te.artistCredit,
+                                    displayTitle:  te.title,
+                                    bpm:           bpm,
+                                    camelot:       camelot,
+                                    key:           te.effectiveKey ?? "",
+                                    source:        te.featureSource,
+                                    filePath:      fp
+                                )
+                                onPromoteToCurrent?(mix)
+                                dismiss()
+                            } label: {
+                                Image(systemName: "plus.circle.fill")
+                                    .font(.system(size: 16))
+                                    .foregroundStyle(Color(red: 0.15, green: 0.55, blue: 0.30))
+                            }
+                            .buttonStyle(.plain)
+                            .help("Set as Current Track in Set Builder")
                             .padding(.trailing, 6)
                         }
                         Text(track.duration.isEmpty ? "—" : track.duration)
