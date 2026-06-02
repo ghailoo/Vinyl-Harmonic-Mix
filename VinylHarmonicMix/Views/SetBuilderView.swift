@@ -33,7 +33,7 @@ struct SetBuilderView: View {
     @AppStorage("collectionGridCardSize") private var cardSize: Double = 0.25
 
     // Sheet state
-    @State private var trackPickerRelease: CollectionItemEntity? = nil
+    @State private var selectedItem: CollectionItem? = nil
 
     private var gridColumns: [GridItem] {
         let minWidth = 120.0 + cardSize * 160.0
@@ -102,10 +102,10 @@ struct SetBuilderView: View {
         .onChange(of: playback.currentFilePath) { _, newPath in
             playingInstanceId = newPath.flatMap { filePathToInstanceId[$0] }
         }
-        .sheet(item: $trackPickerRelease) { entity in
-            TrackPickerSheet(entity: entity) { track in
+        .sheet(item: $selectedItem) { item in
+            CollectionDetailView(item: item, onPromoteToCurrent: { track in
                 handleTrackPick(track)
-            }
+            })
         }
     }
 
@@ -175,9 +175,7 @@ struct SetBuilderView: View {
                 LazyVGrid(columns: gridColumns, spacing: 20) {
                     ForEach(displayedItems) { item in
                         Button {
-                            if let entity = allCollectionEntities.first(where: { $0.instanceId == item.id }) {
-                                trackPickerRelease = entity
-                            }
+                            selectedItem = item
                         } label: {
                             CollectionCardView(
                                 item: item,
