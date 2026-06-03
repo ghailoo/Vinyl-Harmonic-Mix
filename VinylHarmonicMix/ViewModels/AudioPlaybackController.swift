@@ -418,6 +418,9 @@ final class AudioPlaybackController {
         waveformTokens[filePath] = token
         let task = Task { [weak self] in
             guard let self else { return }
+            let taskStart = Date()
+            let baseName  = URL(fileURLWithPath: filePath).lastPathComponent
+            print("[WF-LOAD] \(baseName) — task start")
             defer {
                 if self.waveformTokens[filePath] === token {
                     self.waveformTasks[filePath]  = nil
@@ -456,20 +459,26 @@ final class AudioPlaybackController {
                 }.value
 
                 if let cached {
-                    self.loadingWaveformPaths.remove(filePath)
+                    if self.waveformTokens[filePath] === token {
+                        self.loadingWaveformPaths.remove(filePath)
+                    }
                     self.waveformCache[filePath]       = cached.peaks
                     self.waveformColorsCache[filePath] = cached.colors
+                    print("[WF-LOAD] \(baseName) — DB cache hit, done in \(String(format: "%.3f", Date().timeIntervalSince(taskStart)))s")
                     return
                 }
             }
 
             // 2. Generate on dedicated GCD queue (not cooperative pool — no UI stall).
             let result = await WaveformGenerator.generate(filePath: filePath, token: token)
-            self.loadingWaveformPaths.remove(filePath)
+            if self.waveformTokens[filePath] === token {
+                self.loadingWaveformPaths.remove(filePath)
+            }
 
             if let result {
                 self.waveformCache[filePath]       = result.peaks
                 self.waveformColorsCache[filePath] = result.colors
+                print("[WF-LOAD] \(baseName) — generated in \(String(format: "%.3f", Date().timeIntervalSince(taskStart)))s")
                 // 3. Persist both fields so this file is never recomputed.
                 if let container {
                     let fp        = filePath
@@ -487,8 +496,11 @@ final class AudioPlaybackController {
                         try? ctx.save()
                     }
                 }
-            } else if !token.isCancelled {
+            } else if token.isCancelled {
+                print("[WF-LOAD] \(baseName) — cancelled")
+            } else {
                 self.failedWaveformPaths.insert(filePath)
+                print("[WF-LOAD] \(baseName) — generate failed, total \(String(format: "%.3f", Date().timeIntervalSince(taskStart)))s")
             }
         }
         waveformTasks[filePath] = task
