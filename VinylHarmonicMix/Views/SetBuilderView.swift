@@ -55,46 +55,9 @@ struct SetBuilderView: View {
 
     var body: some View {
         ScrollView {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Set Builder").font(.headline)
-                if !workingSetTracks.isEmpty {
-                    Text("· \(workingSetTracks.count) track\(workingSetTracks.count == 1 ? "" : "s")")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                if !workingSetTracks.isEmpty {
-                    Button("Save Set") { showSaveSetSheet = true }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                    Button("Clear") {
-                        workingSetTracks = []
-                        currentTrack = nil
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-                Menu {
-                    Toggle("Stop playback when changing track", isOn: $stopOnTrackChange)
-                } label: {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 14))
-                        .foregroundStyle(.secondary)
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .frame(width: 28)
-                .help("Set Builder settings")
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(Color.secondary.opacity(0.05))
-            .overlay(alignment: .bottom) {
-                Rectangle()
-                    .fill(Color.primary.opacity(0.08))
-                    .frame(height: 0.5)
-            }
+        LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
+            Section {
+            VStack(spacing: 0) {
 
             // Current Track section
             VStack(spacing: 0) {
@@ -123,6 +86,10 @@ struct SetBuilderView: View {
             // Collection grid section
             gridControlsRow
             collectionGrid
+            }
+            } header: {
+                floatingToolbar
+            }
         }
         }
         .onAppear {
@@ -213,6 +180,51 @@ struct SetBuilderView: View {
             newSetName = ""
         } catch {
             print("[SetBuilder] Failed to save set: \(error)")
+        }
+    }
+
+    // MARK: - Floating toolbar
+
+    private var floatingToolbar: some View {
+        HStack {
+            Text("Set Builder").font(.headline)
+            if !workingSetTracks.isEmpty {
+                Text("· \(workingSetTracks.count) track\(workingSetTracks.count == 1 ? "" : "s")")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if !workingSetTracks.isEmpty {
+                Button("Save Set") { showSaveSetSheet = true }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                Button("Clear") {
+                    workingSetTracks = []
+                    currentTrack = nil
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+            Menu {
+                Toggle("Stop playback when changing track", isOn: $stopOnTrackChange)
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .frame(width: 28)
+            .help("Set Builder settings")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity)
+        .background(.regularMaterial)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.primary.opacity(0.08))
+                .frame(height: 0.5)
         }
     }
 
