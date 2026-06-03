@@ -29,6 +29,7 @@ struct SetBuilderView: View {
     @AppStorage("setBuilderBpmTolerancePct") private var bpmTolerancePct: Double = 5.0
     @AppStorage("setBuilderStopOnTrackChange") private var stopOnTrackChange: Bool = true
     @State private var visibleGroups: Set<HarmonicGroup> = Set(HarmonicGroup.allCases)
+    @State private var sliderDragValue: Double = 5.0
 
     // Grid state
     @State private var featuresByMBID: [String: RecordingFeaturesEntity] = [:]
@@ -167,10 +168,13 @@ struct SetBuilderView: View {
 
             ForEach(HarmonicGroup.allCases, id: \.self) { group in
                 Button {
-                    if visibleGroups.contains(group) {
-                        visibleGroups.remove(group)
-                    } else {
-                        visibleGroups.insert(group)
+                    Task { @MainActor in
+                        await Task.yield()
+                        if visibleGroups.contains(group) {
+                            visibleGroups.remove(group)
+                        } else {
+                            visibleGroups.insert(group)
+                        }
                     }
                 } label: {
                     HStack(spacing: 4) {
@@ -190,13 +194,21 @@ struct SetBuilderView: View {
             Spacer()
 
             HStack(spacing: 4) {
-                Text("\(String(format: "%.1f", bpmTolerancePct))% BPM")
+                Text("\(String(format: "%.1f", sliderDragValue))% BPM")
                     .font(.caption)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
-                Slider(value: $bpmTolerancePct, in: 1...20, step: 0.5)
-                    .frame(width: 120)
-                    .controlSize(.mini)
+                Slider(
+                    value: $sliderDragValue,
+                    in: 1...20,
+                    step: 0.5,
+                    onEditingChanged: { editing in
+                        if !editing { bpmTolerancePct = sliderDragValue }
+                    }
+                )
+                .frame(width: 120)
+                .controlSize(.mini)
+                .onAppear { sliderDragValue = bpmTolerancePct }
             }
         }
         .padding(.horizontal, 14)
