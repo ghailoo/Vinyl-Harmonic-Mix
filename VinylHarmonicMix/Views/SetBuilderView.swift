@@ -88,8 +88,12 @@ struct SetBuilderView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-
-            Divider()
+            .background(.regularMaterial)
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(Color.primary.opacity(0.08))
+                    .frame(height: 0.5)
+            }
 
             // Current Track section
             VStack(spacing: 0) {
@@ -109,7 +113,6 @@ struct SetBuilderView: View {
             // Harmonic strip section
             VStack(spacing: 0) {
                 harmonicStripHeader
-                Divider()
                 harmonicStrip
             }
             .frame(height: 280)
@@ -118,7 +121,6 @@ struct SetBuilderView: View {
 
             // Collection grid section
             gridControlsRow
-            Divider()
             collectionGrid
         }
         .onAppear {
@@ -284,6 +286,12 @@ struct SetBuilderView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
+        .background(.regularMaterial)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.primary.opacity(0.08))
+                .frame(height: 0.5)
+        }
     }
 
     @ViewBuilder
@@ -548,7 +556,12 @@ struct SetBuilderView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 7)
-        .background(Color.secondary.opacity(0.03))
+        .background(.regularMaterial)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.primary.opacity(0.08))
+                .frame(height: 0.5)
+        }
     }
 
     // MARK: - Collection grid
