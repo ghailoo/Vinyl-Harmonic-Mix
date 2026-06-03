@@ -1,6 +1,12 @@
 import SwiftUI
 import SwiftData
 
+private struct HarmonicEntry: Identifiable {
+    let id: String
+    let group: HarmonicGroup
+    let item: CompatibleItem
+}
+
 struct SetBuilderView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(AudioPlaybackController.self) private var playback
@@ -80,15 +86,13 @@ struct SetBuilderView: View {
 
             Divider()
 
-            // Harmonic strip section — filled in step 4
-            VStack {
-                if currentTrack == nil {
-                    Color.clear
-                } else {
-                    Text("Compatible tracks placeholder")
-                }
+            // Harmonic strip section
+            VStack(spacing: 0) {
+                harmonicStripHeader
+                Divider()
+                harmonicStrip
             }
-            .frame(height: 220)
+            .frame(height: 280)
 
             Divider()
 
@@ -134,6 +138,112 @@ struct SetBuilderView: View {
     private func handleTrackPick(_ track: MixTrack) {
         if stopOnTrackChange { playback.pause() }
         currentTrack = track
+    }
+
+    // MARK: - Harmonic strip
+
+    private var pool: [MixTrack] {
+        MixTrackPool.confident(from: allTrackEntities)
+    }
+
+    private var compatibleItems: [HarmonicEntry] {
+        guard let anchor = currentTrack else { return [] }
+        let absoluteTolerance = anchor.bpm * bpmTolerancePct / 100.0
+        let grouped = HarmonicCompatibility.compatibleGroups(
+            for: anchor, in: pool, bpmTolerance: absoluteTolerance)
+        var result: [HarmonicEntry] = []
+        for group in HarmonicGroup.allCases where visibleGroups.contains(group) {
+            if let items = grouped[group] {
+                result.append(contentsOf: items.map { HarmonicEntry(id: $0.id, group: group, item: $0) })
+            }
+        }
+        return result
+    }
+
+    private var harmonicStripHeader: some View {
+        HStack(spacing: 12) {
+            Text("Compatible tracks")
+                .font(.headline)
+
+            ForEach(HarmonicGroup.allCases, id: \.self) { group in
+                Button {
+                    if visibleGroups.contains(group) {
+                        visibleGroups.remove(group)
+                    } else {
+                        visibleGroups.insert(group)
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(visibleGroups.contains(group) ? group.color : Color.clear)
+                            .overlay(Circle().stroke(group.color, lineWidth: 1.5))
+                            .frame(width: 10, height: 10)
+                        Text(group.shortName).font(.caption)
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(Capsule().fill(visibleGroups.contains(group) ? group.color.opacity(0.12) : Color.clear))
+                    .overlay(Capsule().stroke(Color.secondary.opacity(0.3), lineWidth: 0.5))
+                }
+                .buttonStyle(.plain)
+            }
+
+            Spacer()
+
+            HStack(spacing: 4) {
+                Text("\(String(format: "%.1f", bpmTolerancePct))% BPM")
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                Slider(value: $bpmTolerancePct, in: 1...20, step: 0.5)
+                    .frame(width: 120)
+                    .controlSize(.mini)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private var harmonicStrip: some View {
+        if currentTrack == nil {
+            Color.clear
+        } else if compatibleItems.isEmpty {
+            emptyStripState
+        } else {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(compatibleItems) { entry in
+                        StripTileView(
+                            track: entry.item.track,
+                            group: entry.group,
+                            thumbURL: thumbURLs[entry.item.track.filePath ?? ""],
+                            releaseName: nil,
+                            isCandidate: false
+                        )
+                        .onTapGesture { handleTrackPick(entry.item.track) }
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 4)
+            }
+        }
+    }
+
+    private var emptyStripState: some View {
+        VStack(spacing: 12) {
+            Spacer()
+            Text("No compatible tracks at ±\(String(format: "%.1f", bpmTolerancePct))% BPM tolerance")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Button("Widen to 10%") { bpmTolerancePct = 10.0 }
+                    .controlSize(.small)
+                Button("Widen to 20%") { bpmTolerancePct = 20.0 }
+                    .controlSize(.small)
+            }
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Current Track hero
