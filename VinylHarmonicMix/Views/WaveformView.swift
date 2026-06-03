@@ -133,9 +133,9 @@ struct WaveformView: View {
                                        width: max(1, barWidth - gap * 2), height: barHeight)
                 let base = rawI * 3
                 ctx.fill(Path(rect), with: .color(Color(
-                    red:   Double(cf[base]),
-                    green: Double(cf[base + 1]),
-                    blue:  Double(cf[base + 2])
+                    red:   0.5 + Double(cf[base])     * 0.5,
+                    green: 0.5 + Double(cf[base + 1]) * 0.5,
+                    blue:  0.5 + Double(cf[base + 2]) * 0.5
                 )))
             }
         } else {
