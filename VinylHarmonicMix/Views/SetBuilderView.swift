@@ -44,6 +44,9 @@ struct SetBuilderView: View {
 
     // Sheet state
     @State private var selectedItem: CollectionItem? = nil
+    @State private var workingSetTracks: [MixTrack] = []
+    @State private var showSaveSetSheet = false
+    @State private var newSetName = ""
 
     private var gridColumns: [GridItem] {
         let minWidth = 120.0 + cardSize * 160.0
@@ -54,7 +57,23 @@ struct SetBuilderView: View {
         VStack(spacing: 0) {
             HStack {
                 Text("Set Builder").font(.headline)
+                if !workingSetTracks.isEmpty {
+                    Text("· \(workingSetTracks.count) track\(workingSetTracks.count == 1 ? "" : "s")")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
+                if !workingSetTracks.isEmpty {
+                    Button("Save Set") { showSaveSetSheet = true }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    Button("Clear") {
+                        workingSetTracks = []
+                        currentTrack = nil
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
                 Menu {
                     Toggle("Stop playback when changing track", isOn: $stopOnTrackChange)
                 } label: {
@@ -132,6 +151,26 @@ struct SetBuilderView: View {
                 handleTrackPick(track)
             })
         }
+        .sheet(isPresented: $showSaveSetSheet) {
+            VStack(spacing: 16) {
+                Text("Save Set").font(.headline)
+                Text("\(workingSetTracks.count) tracks").font(.subheadline).foregroundStyle(.secondary)
+                TextField("Set name", text: $newSetName)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 280)
+                HStack(spacing: 12) {
+                    Button("Cancel") {
+                        showSaveSetSheet = false
+                        newSetName = ""
+                    }
+                    Button("Save") { saveWorkingSet() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(newSetName.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+            .padding(28)
+            .frame(width: 360, height: 200)
+        }
     }
 
     // MARK: - Track pick handler
@@ -139,6 +178,38 @@ struct SetBuilderView: View {
     private func handleTrackPick(_ track: MixTrack) {
         if stopOnTrackChange { playback.pause() }
         currentTrack = track
+        if workingSetTracks.last?.id != track.id {
+            workingSetTracks.append(track)
+        }
+    }
+
+    private func saveWorkingSet() {
+        let name = newSetName.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        let newSet = SetlistEntity(name: name)
+        modelContext.insert(newSet)
+        for (index, track) in workingSetTracks.enumerated() {
+            let item = SetlistItemEntity(
+                position: index,
+                filePath: track.filePath ?? "",
+                displayArtist: track.displayArtist,
+                displayTitle: track.displayTitle,
+                bpm: track.bpm,
+                camelot: track.camelot,
+                key: track.key
+            )
+            newSet.items.append(item)
+            modelContext.insert(item)
+        }
+        do {
+            try modelContext.save()
+            workingSetTracks = []
+            currentTrack = nil
+            showSaveSetSheet = false
+            newSetName = ""
+        } catch {
+            print("[SetBuilder] Failed to save set: \(error)")
+        }
     }
 
     // MARK: - Harmonic strip
