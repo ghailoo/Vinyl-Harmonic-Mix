@@ -39,6 +39,7 @@ struct CollectionDetailView: View {
     // Path of the file currently being Essentia-analyzed after manual assignment; nil = none
     @State private var analyzingTrackPath: String? = nil
     @State private var prefetchedPaths: [String] = []
+    @State private var showUnlinkConfirmation = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -576,6 +577,14 @@ struct CollectionDetailView: View {
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
+                            Button(role: .destructive) {
+                                showUnlinkConfirmation = true
+                            } label: {
+                                Label("Unlink", systemImage: "link.slash")
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .help("Remove this MusicBrainz match and clear track recordings")
                         }
                     }
                     if entity.scanState == .matchedViaSearch {
@@ -620,6 +629,14 @@ struct CollectionDetailView: View {
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 12)
+            }
+            .alert("Unlink MusicBrainz match?", isPresented: $showUnlinkConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Unlink", role: .destructive) {
+                    if let entity = itemEntity { unlinkMBID(entity: entity) }
+                }
+            } message: {
+                Text("This will remove the MusicBrainz match for this release and delete all per-track recording MBIDs. You can re-match the release afterward.")
             }
 
         case .notFound:
@@ -862,6 +879,18 @@ struct CollectionDetailView: View {
         )
         descriptor.fetchLimit = 1
         itemEntity = try? modelContext.fetch(descriptor).first
+    }
+
+    private func unlinkMBID(entity: CollectionItemEntity) {
+        let tracksToDelete = entity.tracks
+        for track in tracksToDelete {
+            modelContext.delete(track)
+        }
+        scanCoordinator.resetToNotFound(instanceId: entity.instanceId)
+        try? modelContext.save()
+        loadEntity()
+        loadTrackEntities()
+        loadFeatureEntities()
     }
 
     private func loadTrackEntities() {
