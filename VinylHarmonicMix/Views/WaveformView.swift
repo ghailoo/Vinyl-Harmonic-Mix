@@ -119,10 +119,9 @@ struct WaveformView: View {
             colorFloats = nil
         }
 
-        if let cf = colorFloats {
-            // Colored path: per-bar Path + fill.
-            // Per-bar cost is fine here — .equatable() gate ensures drawBars only fires
-            // on legitimate change (track switch, cue edit, zoom), not 50×/sec.
+        if colorFloats != nil {
+            // Colored path: amplitude-opacity accent color. One fill per bar.
+            // .equatable() gate ensures drawBars only fires on track switch / cue edit, not 50×/sec.
             for rawI in Swift.stride(from: 0, to: peaks.count, by: displayStride) {
                 let displayI  = rawI / displayStride
                 let peak      = peaks[rawI]
@@ -131,12 +130,8 @@ struct WaveformView: View {
                 let gap       = max(0.75, barWidth * 0.15)
                 let rect      = CGRect(x: x + gap, y: midY - barHeight / 2,
                                        width: max(1, barWidth - gap * 2), height: barHeight)
-                let base = rawI * 3
-                ctx.fill(Path(rect), with: .color(Color(
-                    red:   0.5 + Double(cf[base])     * 0.5,
-                    green: 0.5 + Double(cf[base + 1]) * 0.5,
-                    blue:  0.5 + Double(cf[base + 2]) * 0.5
-                )))
+                let alpha = 0.30 + Double(peak) * 0.65
+                ctx.fill(Path(rect), with: .color(Color.accentColor.opacity(alpha)))
             }
         } else {
             // Fast path: single accumulated Path, one fill (unchanged from grey optimization).
