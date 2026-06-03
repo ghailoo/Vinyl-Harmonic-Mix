@@ -54,6 +54,7 @@ struct SetBuilderView: View {
     }
 
     var body: some View {
+        ScrollView {
         VStack(spacing: 0) {
             HStack {
                 Text("Set Builder").font(.headline)
@@ -122,6 +123,7 @@ struct SetBuilderView: View {
             // Collection grid section
             gridControlsRow
             collectionGrid
+        }
         }
         .onAppear {
             rebuildFeaturesLookup()
@@ -573,28 +575,26 @@ struct SetBuilderView: View {
         } else if displayedItems.isEmpty && activeFilter != .all {
             filteredEmptyState
         } else {
-            ScrollView {
-                LazyVGrid(columns: gridColumns, spacing: 20) {
-                    ForEach(displayedItems) { item in
-                        Button {
-                            selectedItem = item
-                        } label: {
-                            CollectionCardView(
-                                item: item,
-                                hasMBID: matchedInstanceIds.contains(item.id),
-                                covered: coverageByInstanceId[item.id]?.covered ?? 0,
-                                total: coverageByInstanceId[item.id]?.total ?? 0,
-                                localCovered: coverageByInstanceId[item.id]?.localCovered ?? 0,
-                                isActive: playingInstanceId == item.id
-                            )
-                        }
-                        .buttonStyle(.plain)
+            LazyVGrid(columns: gridColumns, spacing: 20) {
+                ForEach(displayedItems) { item in
+                    Button {
+                        selectedItem = item
+                    } label: {
+                        CollectionCardView(
+                            item: item,
+                            hasMBID: matchedInstanceIds.contains(item.id),
+                            covered: coverageByInstanceId[item.id]?.covered ?? 0,
+                            total: coverageByInstanceId[item.id]?.total ?? 0,
+                            localCovered: coverageByInstanceId[item.id]?.localCovered ?? 0,
+                            isActive: playingInstanceId == item.id
+                        )
                     }
+                    .buttonStyle(.plain)
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 16)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+            .frame(minHeight: 600)
         }
     }
 
