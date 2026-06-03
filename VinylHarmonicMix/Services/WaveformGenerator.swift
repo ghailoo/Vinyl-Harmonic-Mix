@@ -3,6 +3,7 @@ import Accelerate
 import AudioToolbox
 
 final class CancellationToken: @unchecked Sendable {
+    nonisolated init() {}
     var isCancelled = false
 }
 
@@ -120,7 +121,7 @@ enum WaveformGenerator {
                 // ── 6. Allocate channel buffers ───────────────────────────────
                 // Read 512 buckets per ExtAudioFileRead call (~17–25 MB for stereo
                 // float), reducing decode-API calls from 4,000 to ~8.
-                let chunkBuckets   = 512
+                let chunkBuckets   = 64
                 let framesPerChunk = chunkBuckets * framesPerBucket
 
                 // One Float32 buffer per channel — raw heap allocation so
@@ -260,6 +261,9 @@ enum WaveformGenerator {
                     }
                 }
 
+                if token.isCancelled {
+                    continuation.resume(returning: nil); return
+                }
                 guard !peaks.isEmpty else {
                     continuation.resume(returning: nil); return
                 }
