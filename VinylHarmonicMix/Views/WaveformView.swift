@@ -102,8 +102,9 @@ struct WaveformView: View {
     private func drawBars(ctx: GraphicsContext, size: CGSize) {
         guard !peaks.isEmpty else { return }
 
-        let count = CGFloat(peaks.count)
-        let barWidth = size.width / count
+        let displayStride = 5
+        let displayCount  = CGFloat((peaks.count + displayStride - 1) / displayStride)
+        let barWidth      = size.width / displayCount
         let midY = size.height / 2
 
         // Decode per-bar color floats once. Size mismatch or nil → grey fallback.
@@ -122,13 +123,15 @@ struct WaveformView: View {
             // Colored path: per-bar Path + fill.
             // Per-bar cost is fine here — .equatable() gate ensures drawBars only fires
             // on legitimate change (track switch, cue edit, zoom), not 50×/sec.
-            for (i, peak) in peaks.enumerated() {
-                let x = CGFloat(i) * barWidth
+            for rawI in Swift.stride(from: 0, to: peaks.count, by: displayStride) {
+                let displayI  = rawI / displayStride
+                let peak      = peaks[rawI]
+                let x         = CGFloat(displayI) * barWidth
                 let barHeight = max(2, CGFloat(peak) * size.height * 0.85)
-                let gap = barWidth * 0.12
-                let rect = CGRect(x: x + gap, y: midY - barHeight / 2,
-                                  width: max(1, barWidth - gap * 2), height: barHeight)
-                let base = i * 3
+                let gap       = max(0.75, barWidth * 0.15)
+                let rect      = CGRect(x: x + gap, y: midY - barHeight / 2,
+                                       width: max(1, barWidth - gap * 2), height: barHeight)
+                let base = rawI * 3
                 ctx.fill(Path(rect), with: .color(Color(
                     red:   Double(cf[base]),
                     green: Double(cf[base + 1]),
@@ -139,10 +142,12 @@ struct WaveformView: View {
             // Fast path: single accumulated Path, one fill (unchanged from grey optimization).
             let barShading = GraphicsContext.Shading.color(.secondary.opacity(0.35))
             var barPath = Path()
-            for (i, peak) in peaks.enumerated() {
-                let x = CGFloat(i) * barWidth
+            for rawI in Swift.stride(from: 0, to: peaks.count, by: displayStride) {
+                let displayI  = rawI / displayStride
+                let peak      = peaks[rawI]
+                let x         = CGFloat(displayI) * barWidth
                 let barHeight = max(2, CGFloat(peak) * size.height * 0.85)
-                let gap = barWidth * 0.12
+                let gap       = max(0.75, barWidth * 0.15)
                 barPath.addRect(CGRect(
                     x: x + gap,
                     y: midY - barHeight / 2,
