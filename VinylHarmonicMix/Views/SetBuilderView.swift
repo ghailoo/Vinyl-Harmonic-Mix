@@ -88,7 +88,7 @@ struct SetBuilderView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            .background(.regularMaterial)
+            .background(Color.secondary.opacity(0.05))
             .overlay(alignment: .bottom) {
                 Rectangle()
                     .fill(Color.primary.opacity(0.08))
@@ -556,7 +556,7 @@ struct SetBuilderView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 7)
-        .background(.regularMaterial)
+        .background(Color.secondary.opacity(0.05))
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(Color.primary.opacity(0.08))
