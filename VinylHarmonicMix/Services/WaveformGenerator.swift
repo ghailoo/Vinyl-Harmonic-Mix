@@ -2,6 +2,10 @@ import AVFoundation
 import Accelerate
 import AudioToolbox
 
+final class CancellationToken: @unchecked Sendable {
+    var isCancelled = false
+}
+
 enum WaveformGenerator {
 
     // Dedicated serial GCD queue — completely isolated from the Swift cooperative
@@ -15,9 +19,10 @@ enum WaveformGenerator {
                              // each band independently normalized 0…1
     }
 
-    static func generate(filePath: String, targetBuckets: Int = 4000) async -> Result? {
+    static func generate(filePath: String, targetBuckets: Int = 1000, token: CancellationToken = CancellationToken()) async -> Result? {
         await withCheckedContinuation { (continuation: CheckedContinuation<Result?, Never>) in
             waveformQueue.async {
+                guard !token.isCancelled else { continuation.resume(returning: nil); return }
                 guard FileManager.default.fileExists(atPath: filePath) else {
                     continuation.resume(returning: nil); return
                 }
@@ -151,6 +156,7 @@ enum WaveformGenerator {
 
                 var done = false
                 while !done {
+                    if token.isCancelled { break }
                     // Reset mDataByteSize before each read — ExtAudioFileRead
                     // overwrites it with the actual bytes written.
                     for ch in 0..<channelCount {

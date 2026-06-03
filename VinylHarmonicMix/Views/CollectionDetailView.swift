@@ -38,6 +38,7 @@ struct CollectionDetailView: View {
     @State private var singleEnrichStatus: String? = nil
     // Path of the file currently being Essentia-analyzed after manual assignment; nil = none
     @State private var analyzingTrackPath: String? = nil
+    @State private var prefetchedPaths: [String] = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -53,6 +54,7 @@ struct CollectionDetailView: View {
             loadFeatureEntities()
             prefetchWaveforms()
         }
+        .onDisappear { playback.cancelWaveformLoads(filePaths: prefetchedPaths) }
         .onChange(of: scanCoordinator.enrichmentStatus) { _, newStatus in
             if newStatus == nil {
                 loadTrackEntities()
@@ -1118,6 +1120,7 @@ struct CollectionDetailView: View {
             .filter { $0.fileMatchState == "confident" }
             .compactMap { $0.primaryLocalFilePath }
             .filter { !$0.isEmpty }
+        prefetchedPaths = paths
         for fp in paths {
             playback.loadWaveformIfNeeded(filePath: fp)
         }

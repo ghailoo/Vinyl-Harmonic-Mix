@@ -41,6 +41,8 @@ final class AudioPlaybackController {
     private(set) var waveformColorsCache: [String: Data] = [:]
     private(set) var loadingWaveformPaths: Set<String> = []
     private(set) var failedWaveformPaths: Set<String> = []
+    private var waveformTasks:  [String: Task<Void, Never>] = [:]
+    private var waveformTokens: [String: CancellationToken] = [:]
 
     enum WaveformState {
         case idle, loading, failed
@@ -412,8 +414,16 @@ final class AudioPlaybackController {
         loadingWaveformPaths.insert(filePath)
 
         let container = modelContainer
-        Task { [weak self] in
+        let token = CancellationToken()
+        waveformTokens[filePath] = token
+        let task = Task { [weak self] in
             guard let self else { return }
+            defer {
+                if self.waveformTokens[filePath] === token {
+                    self.waveformTasks[filePath]  = nil
+                    self.waveformTokens[filePath] = nil
+                }
+            }
 
             // 1. Persistent cache — background fetch, no main-thread I/O.
             if let container {
@@ -454,7 +464,7 @@ final class AudioPlaybackController {
             }
 
             // 2. Generate on dedicated GCD queue (not cooperative pool — no UI stall).
-            let result = await WaveformGenerator.generate(filePath: filePath)
+            let result = await WaveformGenerator.generate(filePath: filePath, token: token)
             self.loadingWaveformPaths.remove(filePath)
 
             if let result {
@@ -477,9 +487,19 @@ final class AudioPlaybackController {
                         try? ctx.save()
                     }
                 }
-            } else {
+            } else if !token.isCancelled {
                 self.failedWaveformPaths.insert(filePath)
             }
+        }
+        waveformTasks[filePath] = task
+    }
+
+    func cancelWaveformLoads(filePaths: [String]) {
+        for fp in filePaths {
+            guard waveformCache[fp] == nil else { continue }
+            waveformTokens[fp]?.isCancelled = true
+            waveformTasks[fp]?.cancel()
+            loadingWaveformPaths.remove(fp)
         }
     }
 
