@@ -70,7 +70,7 @@ struct SetBuilderView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            .frame(height: 280)
+            .frame(height: 320)
 
             Divider()
 
