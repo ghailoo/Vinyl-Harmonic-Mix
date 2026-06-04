@@ -12,6 +12,10 @@ struct SetBuilderView: View {
     @Environment(AudioPlaybackController.self) private var playback
     @Environment(CollectionViewModel.self) private var viewModel
     @Environment(CueDetectionCoordinator.self) private var cueCoordinator
+    @Environment(SyncOrchestrator.self) private var syncOrchestrator
+    @Environment(MBIDScanCoordinator.self) private var scanCoordinator
+    @Environment(AudioFeaturesScanCoordinator.self) private var audioFeaturesCoordinator
+    @Environment(FileMatchCoordinator.self) private var fileMatchCoordinator
 
     @Query private var allCollectionEntities: [CollectionItemEntity]
     @Query private var allTrackEntities: [TrackEntity]
@@ -46,6 +50,7 @@ struct SetBuilderView: View {
     @State private var selectedItem: CollectionItem? = nil
     @State private var workingSetTracks: [MixTrack] = []
     @State private var showSaveSetSheet = false
+    @State private var showSyncSheet = false
     @State private var newSetName = ""
 
     private var gridColumns: [GridItem] {
@@ -121,6 +126,10 @@ struct SetBuilderView: View {
             CollectionDetailView(item: item, onPromoteToCurrent: { track in
                 handleTrackPick(track)
             })
+        }
+        .sheet(isPresented: $showSyncSheet) {
+            SyncProgressView()
+                .environment(syncOrchestrator)
         }
         .sheet(isPresented: $showSaveSetSheet) {
             VStack(spacing: 16) {
@@ -205,6 +214,22 @@ struct SetBuilderView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
             }
+            Menu {
+                Button("Sync Discogs Collection") {
+                    syncOrchestrator.startSync()
+                    showSyncSheet = true
+                }
+                Button("Scan for MBID matches") { scanCoordinator.start() }
+                Button("Fetch AcousticBrainz features") { audioFeaturesCoordinator.start() }
+                Button("Match local audio files") { fileMatchCoordinator.startFullScan() }
+                Button("Detect cue points") { cueCoordinator.startDetection(scope: .matched) }
+            } label: {
+                Label("Library", systemImage: "tray.full")
+                    .labelStyle(.titleAndIcon)
+            }
+            .menuStyle(.borderlessButton)
+            .controlSize(.small)
+            .fixedSize()
             Menu {
                 Toggle("Stop playback when changing track", isOn: $stopOnTrackChange)
             } label: {
