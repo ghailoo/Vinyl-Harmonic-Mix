@@ -20,28 +20,23 @@ struct TrackWaveformView: View {
     }
 
     var body: some View {
-        // Deck-aware state resolution — closure avoids @ViewBuilder interpreting switch as View.
-        let deckState: (isActive: Bool, duration: Double, currentTime: Double, isPlaying: Bool) = {
+        // Only stable (non-timer) reads live here. currentTime is isolated to the leaf views
+        // (PlayheadOverlay, PlayheadTimeLabel) so the outer body does not subscribe to the
+        // 25 Hz timer tick and stays idle during steady-state playback at zoom == 1.
+        let isActive: Bool = {
             switch deck {
-            case .A:
-                return (playback.deckADuration > 0, playback.deckADuration,
-                        playback.deckACurrentTime, playback.deckAIsPlaying)
-            case .B:
-                return (playback.deckBDuration > 0, playback.deckBDuration,
-                        playback.deckBCurrentTime, playback.deckBIsPlaying)
-            case nil:
-                let active = playback.currentFilePath == filePath
-                return (active, active ? playback.duration : 0.0,
-                        playback.currentTime, playback.isPlaying)
+            case .A:  return playback.deckADuration > 0
+            case .B:  return playback.deckBDuration > 0
+            case nil: return playback.currentFilePath == filePath
             }
         }()
-        let isActive         = deckState.isActive
-        let playbackDuration = deckState.duration
-        let deckCurrentTime  = deckState.currentTime
-        let deckIsPlaying    = deckState.isPlaying
-        let progress: Double = playbackDuration > 0
-            ? min(1, max(0, deckCurrentTime / playbackDuration))
-            : 0.0
+        let playbackDuration: Double = {
+            switch deck {
+            case .A:  return playback.deckADuration
+            case .B:  return playback.deckBDuration
+            case nil: return isActive ? playback.duration : 0.0
+            }
+        }()
         let duration = playbackDuration > 0 ? playbackDuration : fileDuration
 
         VStack(alignment: .leading, spacing: 4) {
@@ -79,12 +74,27 @@ struct TrackWaveformView: View {
                             .frame(width: canvasWidth > 0 ? canvasWidth : nil, height: 80)
                             .clipShape(RoundedRectangle(cornerRadius: 4))
 
-                            // Invisible anchor for scroll-to-playhead.
-                            // Only created when zoomed — avoids per-tick layout work at 1×.
+                            // Invisible scroll anchor — only at zoom > 1.
+                            // Progress is computed HERE (reads currentTime) so the outer body
+                            // only subscribes to the 25 Hz tick when zoomed. At zoom == 1 this
+                            // branch is never entered and the outer body stays idle.
                             if zoomFactor > 1, canvasWidth > 0 {
+                                let zoomedProgress: Double = {
+                                    switch deck {
+                                    case .A:
+                                        let d = playback.deckADuration
+                                        return d > 0 ? min(1, max(0, playback.deckACurrentTime / d)) : 0
+                                    case .B:
+                                        let d = playback.deckBDuration
+                                        return d > 0 ? min(1, max(0, playback.deckBCurrentTime / d)) : 0
+                                    case nil:
+                                        let d = playback.duration
+                                        return d > 0 ? min(1, max(0, playback.currentTime / d)) : 0
+                                    }
+                                }()
                                 HStack(spacing: 0) {
                                     Color.clear
-                                        .frame(width: max(0, canvasWidth * CGFloat(progress) - 1),
+                                        .frame(width: max(0, canvasWidth * CGFloat(zoomedProgress) - 1),
                                                height: 1)
                                     Color.clear.frame(width: 1, height: 1)
                                         .id("waveformPlayhead")
@@ -95,28 +105,23 @@ struct TrackWaveformView: View {
                         }
                         .frame(width: canvasWidth > 0 ? canvasWidth : nil, height: 80)
                     }
-                    // Playhead line rendered in viewport coordinates.
-                    // MODE 1 (zoom==1): line moves at viewportWidth × progress across the fixed canvas.
-                    // MODE 2 (zoom>1): line is pinned to viewport centre; waveform scrolls under it.
-                    .overlay(alignment: .leading) {
-                        if isActive && viewportWidth > 0 {
-                            let lineX: CGFloat = zoomFactor <= 1
-                                ? viewportWidth * CGFloat(progress)
-                                : viewportWidth / 2
-                            Rectangle()
-                                .fill(Color.red)
-                                .frame(width: 2.5)
-                                .offset(x: lineX - 1.25)
-                                .allowsHitTesting(false)
-                        }
-                    }
-                    // Zoom>1: scroll fires every timer tick (no bucket throttle) so the waveform
-                    // tracks the fixed centre line in real time. withAnimation(.none) = instant jump.
-                    .onChange(of: progress) { _, _ in
-                        guard isActive && deckIsPlaying && zoomFactor > 1 else { return }
-                        withAnimation(.none) {
-                            proxy.scrollTo("waveformPlayhead", anchor: .center)
-                        }
+                    // Playhead line in viewport coordinates.
+                    // PlayheadOverlay owns the currentTime read and the zoom > 1 scroll trigger.
+                    // MODE 1 (zoom==1): line moves at viewportWidth × progress across the canvas.
+                    // MODE 2 (zoom>1): line is pinned to centre; scroll fires via onScrollToPlayhead.
+                    .overlay(alignment: .topLeading) {
+                        PlayheadOverlay(
+                            filePath: filePath,
+                            deck: deck,
+                            viewportWidth: viewportWidth,
+                            zoomFactor: zoomFactor,
+                            fileDuration: fileDuration,
+                            onScrollToPlayhead: {
+                                withAnimation(.none) {
+                                    proxy.scrollTo("waveformPlayhead", anchor: .center)
+                                }
+                            }
+                        )
                     }
                     // On zoom-in: immediately centre the playhead in the new zoomed viewport.
                     .onChange(of: zoomFactor) { _, newZoom in
@@ -126,7 +131,7 @@ struct TrackWaveformView: View {
                         }
                     }
                     // Deck switch: deferred one runloop so SwiftUI commits the updated
-                    // progress layout before scrollTo resolves the anchor position.
+                    // anchor layout before scrollTo resolves the position.
                     .onChange(of: isActive) { _, active in
                         guard active && zoomFactor > 1 else { return }
                         Task { @MainActor in
@@ -158,11 +163,7 @@ struct TrackWaveformView: View {
                     .onAppear { playback.loadWaveformIfNeeded(filePath: filePath) }
             }
 
-            Text(isActive && playbackDuration > 0
-                ? "\(formatTime(deckCurrentTime)) / \(formatTime(playbackDuration))"
-                : " ")
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
+            PlayheadTimeLabel(filePath: filePath, deck: deck, fileDuration: fileDuration)
         }
         .frame(height: 100)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { w in
@@ -202,18 +203,15 @@ struct TrackWaveformView: View {
 
     private func addManualCue(fraction: Double, type: String,
                                energyDirection: String, duration: Double) {
-        // Capture file's stable ID before entering the background task.
         guard let fileID = fileEntity?.persistentModelID, duration > 0 else { return }
         let timeSec   = fraction * duration
         let createdAt = Date.now
 
-        // Instant UI — no main-context changes needed for add (merge delivers the entity later).
         cueMarkers.append(CueMarker(timeSec: timeSec, type: type,
                                     energyDirection: energyDirection,
                                     energyDelta: 0.0, isManual: true))
         cueMarkers.sort { $0.timeSec < $1.timeSec }
 
-        // Insert + save on background context. Main thread never touches disk.
         let container = modelContext.container
         Task.detached(priority: .utility) {
             let ctx = ModelContext(container)
@@ -240,12 +238,9 @@ struct TrackWaveformView: View {
         cueMarkers.removeAll { abs($0.timeSec - timeSec) < 0.01 }
         guard let match = file.cuePoints.first(where: { abs($0.timeSec - timeSec) < 0.01 }) else { return }
 
-        // Capture ID before deletion so the background context can re-fetch it.
         let id = match.persistentModelID
-        // Remove from main context in-memory so file.cuePoints is immediately clean.
         modelContext.delete(match)
 
-        // Delete + save on background context.
         let container = modelContext.container
         Task.detached(priority: .utility) {
             let ctx = ModelContext(container)
@@ -261,12 +256,10 @@ struct TrackWaveformView: View {
               let entity = file.cuePoints.first(where: { abs($0.timeSec - oldTimeSec) < 0.01 })
         else { return }
 
-        // Mutate on main context in-memory so rapid re-drags find the updated timeSec.
         entity.timeSec = newTimeSec
         entity.isManual = true
         let id = entity.persistentModelID
 
-        // Update view array.
         if let idx = cueMarkers.firstIndex(where: { abs($0.timeSec - oldTimeSec) < 0.01 }) {
             let old = cueMarkers[idx]
             cueMarkers[idx] = CueMarker(timeSec: newTimeSec, type: old.type,
@@ -275,7 +268,6 @@ struct TrackWaveformView: View {
             cueMarkers.sort { $0.timeSec < $1.timeSec }
         }
 
-        // Persist on background context.
         let container = modelContext.container
         Task.detached(priority: .utility) {
             let ctx = ModelContext(container)
@@ -285,6 +277,114 @@ struct TrackWaveformView: View {
                 try? ctx.save()
             }
         }
+    }
+}
+
+// MARK: - Playhead leaf views
+
+// Owns the only 25 Hz reads (currentTime). By isolating here, TrackWaveformView.body
+// does not subscribe to the timer tick at zoom == 1, eliminating 25 Hz outer-body re-renders.
+
+private struct PlayheadOverlay: View {
+    let filePath: String
+    let deck: AudioPlaybackController.Deck?
+    let viewportWidth: CGFloat
+    let zoomFactor: Double
+    let fileDuration: Double
+    var onScrollToPlayhead: () -> Void
+
+    @Environment(AudioPlaybackController.self) private var playback
+
+    private var currentTime: Double {
+        switch deck {
+        case .A:  return playback.deckACurrentTime
+        case .B:  return playback.deckBCurrentTime
+        case nil: return playback.currentTime
+        }
+    }
+
+    // deckAFilePath/deckBFilePath are private on AudioPlaybackController;
+    // use duration > 0 as the isActive proxy (matches the original outer-body logic).
+    private var isActive: Bool {
+        switch deck {
+        case .A:  return playback.deckADuration > 0
+        case .B:  return playback.deckBDuration > 0
+        case nil: return playback.currentFilePath == filePath
+        }
+    }
+
+    private var playbackDuration: Double {
+        switch deck {
+        case .A:  return playback.deckADuration
+        case .B:  return playback.deckBDuration
+        case nil: return isActive ? playback.duration : 0.0
+        }
+    }
+
+    private var progress: Double {
+        let dur = playbackDuration > 0 ? playbackDuration : fileDuration
+        guard dur > 0 else { return 0 }
+        return min(1.0, max(0, currentTime / dur))
+    }
+
+    private var lineX: CGFloat {
+        zoomFactor <= 1 ? viewportWidth * CGFloat(progress) : viewportWidth / 2
+    }
+
+    var body: some View {
+        if isActive && viewportWidth > 0 {
+            Rectangle()
+                .fill(Color.red)
+                .frame(width: 2.5)
+                .offset(x: lineX - 1.25)
+                .allowsHitTesting(false)
+                // Drives zoom > 1 scroll. Guard keeps it a no-op at zoom == 1
+                // so the onChange closure cost is negligible in the dominant path.
+                .onChange(of: currentTime) { _, _ in
+                    guard zoomFactor > 1 else { return }
+                    onScrollToPlayhead()
+                }
+        }
+    }
+}
+
+private struct PlayheadTimeLabel: View {
+    let filePath: String
+    let deck: AudioPlaybackController.Deck?
+    let fileDuration: Double
+
+    @Environment(AudioPlaybackController.self) private var playback
+
+    private var currentTime: Double {
+        switch deck {
+        case .A:  return playback.deckACurrentTime
+        case .B:  return playback.deckBCurrentTime
+        case nil: return playback.currentTime
+        }
+    }
+
+    private var isActive: Bool {
+        switch deck {
+        case .A:  return playback.deckADuration > 0
+        case .B:  return playback.deckBDuration > 0
+        case nil: return playback.currentFilePath == filePath
+        }
+    }
+
+    private var playbackDuration: Double {
+        switch deck {
+        case .A:  return playback.deckADuration
+        case .B:  return playback.deckBDuration
+        case nil: return isActive ? playback.duration : 0.0
+        }
+    }
+
+    var body: some View {
+        Text(isActive && playbackDuration > 0
+            ? "\(formatTime(currentTime)) / \(formatTime(playbackDuration))"
+            : " ")
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(.secondary)
     }
 
     private func formatTime(_ seconds: Double) -> String {
