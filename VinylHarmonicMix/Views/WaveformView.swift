@@ -14,6 +14,7 @@ struct WaveformView: View {
 
     var duration: Double = 0      // track duration in seconds (for time→x mapping)
     var colors: Data? = nil       // 4000 × 3 × Float32 [R,G,B] per bucket; nil = grey fallback
+    var compact: Bool = false     // wider stride + brighter base opacity for small inline contexts
     let onSeek: (Double) -> Void
     var onAddCue: ((Double, String, String) -> Void)? = nil   // (fraction, type, energyDirection)
     var onDeleteCue: ((Double) -> Void)? = nil                // timeSec of cue to remove
@@ -102,7 +103,7 @@ struct WaveformView: View {
     private func drawBars(ctx: GraphicsContext, size: CGSize) {
         guard !peaks.isEmpty else { return }
 
-        let displayStride = 5
+        let displayStride = compact ? 8 : 5
         let displayCount  = CGFloat((peaks.count + displayStride - 1) / displayStride)
         let barWidth      = size.width / displayCount
         let midY = size.height / 2
@@ -130,7 +131,8 @@ struct WaveformView: View {
                 let gap       = max(0.75, barWidth * 0.15)
                 let rect      = CGRect(x: x + gap, y: midY - barHeight / 2,
                                        width: max(1, barWidth - gap * 2), height: barHeight)
-                let alpha = 0.30 + Double(peak) * 0.65
+                let baseOpacity = compact ? 0.45 : 0.30
+                let alpha = baseOpacity + Double(peak) * (1.0 - baseOpacity)
                 ctx.fill(Path(rect), with: .color(Color.accentColor.opacity(alpha)))
             }
         } else {
@@ -259,6 +261,7 @@ extension WaveformView: Equatable {
         lhs.peaks == rhs.peaks &&
         lhs.cueMarkers == rhs.cueMarkers &&
         lhs.duration == rhs.duration &&
-        lhs.colors == rhs.colors
+        lhs.colors == rhs.colors &&
+        lhs.compact == rhs.compact
     }
 }

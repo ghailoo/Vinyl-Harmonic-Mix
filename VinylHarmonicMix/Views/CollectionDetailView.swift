@@ -1084,7 +1084,7 @@ struct CollectionDetailView: View {
         } else {
             VStack(alignment: .leading, spacing: 3) {
                 trackWaveformView(filePath: filePath)
-                    .frame(height: 38)
+                    .frame(height: 64)
                 if playback.duration > 0 {
                     Text("\(formatTime(playback.currentTime)) / \(formatTime(playback.duration))")
                         .font(.caption2.monospacedDigit())
@@ -1102,7 +1102,9 @@ struct CollectionDetailView: View {
             : 0.0
         switch playback.waveformState(for: filePath) {
         case .ready(let peaks):
-            WaveformView(peaks: peaks) { fraction in
+            WaveformView(peaks: peaks,
+                         colors: playback.waveformColors(filePath: filePath),
+                         compact: true) { fraction in
                 playback.seek(toFraction: fraction)
             }
             .equatable()
