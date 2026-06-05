@@ -55,6 +55,7 @@ struct CollectionGridView: View {
     @Environment(AudioPlaybackController.self) private var playback
     @Environment(SyncOrchestrator.self) private var syncOrchestrator
     @Environment(CueDetectionCoordinator.self) private var cueCoordinator
+    @Environment(FileMatchCoordinator.self) private var fileMatchCoordinator
     @Environment(\.modelContext) private var modelContext
 
     @Query private var allEntities: [CollectionItemEntity]
@@ -64,7 +65,7 @@ struct CollectionGridView: View {
     private var analyzedLocalFiles: [LocalFileEntity]
 
     @State private var featuresByMBID: [String: RecordingFeaturesEntity] = [:]
-    @State private var coverageByInstanceId: [Int: (covered: Int, total: Int, localCovered: Int)] = [:]
+    @State private var coverageByInstanceId: [Int: (covered: Int, total: Int, localCovered: Int, linkedCovered: Int)] = [:]
     @State private var filePathToInstanceId: [String: Int] = [:]
     @State private var playingInstanceId: Int? = nil
 
@@ -102,11 +103,13 @@ struct CollectionGridView: View {
             rebuildFeaturesLookup()
             rebuildCoverageLookup()
         }
-        .onChange(of: allTrackEntities.count) { _, _ in
-            rebuildCoverageLookup()
-        }
         .onChange(of: analyzedLocalFiles.count) { _, _ in
             rebuildCoverageLookup()
+        }
+        .onChange(of: selectedItem) { oldValue, newValue in
+            if oldValue != nil && newValue == nil {
+                rebuildCoverageLookup()
+            }
         }
         .onChange(of: playback.currentFilePath) { _, newPath in
             playingInstanceId = newPath.flatMap { filePathToInstanceId[$0] }
@@ -357,6 +360,7 @@ struct CollectionGridView: View {
         var totals: [Int: Int] = [:]
         var coveredCounts: [Int: Int] = [:]
         var localCounts: [Int: Int] = [:]
+        var linkedCounts: [Int: Int] = [:]
         var fpToId: [String: Int] = [:]
         fpToId.reserveCapacity(allTrackEntities.count)
         for track in allTrackEntities {
@@ -376,10 +380,14 @@ struct CollectionGridView: View {
             }
             if let fp = track.primaryLocalFilePath, !fp.isEmpty {
                 fpToId[fp] = id
+                if track.fileMatchState == "confident" {
+                    linkedCounts[id, default: 0] += 1
+                }
             }
         }
         coverageByInstanceId = Dictionary(uniqueKeysWithValues: totals.keys.map { id in
-            (id, (covered: coveredCounts[id] ?? 0, total: totals[id]!, localCovered: localCounts[id] ?? 0))
+            (id, (covered: coveredCounts[id] ?? 0, total: totals[id]!,
+                  localCovered: localCounts[id] ?? 0, linkedCovered: linkedCounts[id] ?? 0))
         })
         filePathToInstanceId = fpToId
         playingInstanceId = playback.currentFilePath.flatMap { fpToId[$0] }
@@ -667,6 +675,7 @@ struct CollectionGridView: View {
                             covered: coverageByInstanceId[item.id]?.covered ?? 0,
                             total: coverageByInstanceId[item.id]?.total ?? 0,
                             localCovered: coverageByInstanceId[item.id]?.localCovered ?? 0,
+                            linkedCovered: coverageByInstanceId[item.id]?.linkedCovered ?? 0,
                             isActive: playingInstanceId == item.id
                         )
                     }

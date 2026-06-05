@@ -65,6 +65,7 @@ final class FileMatchCoordinator {
 
     var indexedCount: Int = 0
     var totalTracks: Int = 0
+    var linkVersion: Int = 0
     var processedTracks: Int = 0
     var confidentCount: Int = 0
     var reviewCount: Int = 0
@@ -204,6 +205,7 @@ final class FileMatchCoordinator {
         reviewCandidates.removeValue(forKey: trackMBID)
         verifyStates.removeValue(forKey: trackMBID)
         try? context.save()
+        linkVersion += 1
     }
 
     func unlinkMatch(trackMBID: String) {
@@ -222,6 +224,7 @@ final class FileMatchCoordinator {
         track.fileMatchState = "noMatch"
         track.primaryLocalFilePath = nil
         try? context.save()
+        linkVersion += 1
     }
 
     func skipTrack(trackMBID: String) {
@@ -253,6 +256,7 @@ final class FileMatchCoordinator {
         linkFile(filePath: path, toTrackMBID: trackMBID, score: 1.0, method: "manual")
         reviewCandidates.removeValue(forKey: trackMBID)
         try? context.save()
+        linkVersion += 1
     }
 
     func verifyWithFingerprint(trackMBID: String, recordingMBID: String, filePath: String) async {
@@ -272,6 +276,8 @@ final class FileMatchCoordinator {
                 linkFile(filePath: filePath, toTrackMBID: trackMBID, score: result.topScore, method: "fingerprint")
                 reviewCandidates.removeValue(forKey: trackMBID)
                 try? context.save()
+                linkVersion += 1
+                print("[LINK-BUMP] linkVersion = \(linkVersion) at \(#function)")
             } else {
                 verifyStates[trackMBID] = .conflicted(foundTitle: result.recordingMBIDs.first ?? "unknown recording")
             }

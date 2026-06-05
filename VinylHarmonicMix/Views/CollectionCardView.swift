@@ -6,6 +6,7 @@ struct CollectionCardView: View {
     var covered: Int = 0
     var total: Int = 0
     var localCovered: Int = 0
+    var linkedCovered: Int = 0
     var isActive: Bool = false
 
     @Environment(AudioPlaybackController.self) private var playback
@@ -14,6 +15,7 @@ struct CollectionCardView: View {
     @State private var badgeCovered: Int = 0
     @State private var badgeTotal: Int = 0
     @State private var badgeLocalCovered: Int = 0
+    @State private var badgeLinkedCovered: Int = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -30,10 +32,11 @@ struct CollectionCardView: View {
                 .foregroundStyle(.secondary)
         }
         .contentShape(Rectangle())
-        .task(id: covered &+ total &* 10_000 &+ localCovered &* 100_000) {
-            badgeCovered      = covered
-            badgeTotal        = total
-            badgeLocalCovered = localCovered
+        .task(id: covered &+ total &* 10_000 &+ localCovered &* 100_000 &+ linkedCovered &* 1_000_000_000) {
+            badgeCovered       = covered
+            badgeTotal         = total
+            badgeLocalCovered  = localCovered
+            badgeLinkedCovered = linkedCovered
         }
     }
 
@@ -81,6 +84,7 @@ struct CollectionCardView: View {
                             .background(Capsule().fill(coverageColor))
                             .help("\(badgeCovered) of \(badgeTotal) tracks have BPM and key data")
                     }
+                    if badgeLinkedCovered > 0 { linkPip }
                     if hasMBID { mbidBadge }
                 }
                 .padding(6)
@@ -104,6 +108,16 @@ struct CollectionCardView: View {
         badgeCovered == badgeTotal
             ? Color(red: 0.20, green: 0.65, blue: 0.40)
             : Color(red: 0.95, green: 0.65, blue: 0.20)
+    }
+
+    private var linkPip: some View {
+        Image(systemName: "link")
+            .font(.system(size: 9, weight: .semibold))
+            .foregroundStyle(.white)
+            .padding(4)
+            .background(Circle().fill(Color.accentColor.opacity(0.85)))
+            .shadow(color: .black.opacity(0.25), radius: 1, y: 0.5)
+            .help("Local audio files linked to tracks")
     }
 
     private var mbidBadge: some View {

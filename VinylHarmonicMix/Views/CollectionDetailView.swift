@@ -580,7 +580,7 @@ struct CollectionDetailView: View {
                             Button(role: .destructive) {
                                 showUnlinkConfirmation = true
                             } label: {
-                                Label("Unlink", systemImage: "link.slash")
+                                Label("Unlink", systemImage: "link")
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
