@@ -21,6 +21,8 @@ struct CollectionDetailView: View {
 
     @State private var detail: ReleaseDetail?
     @State private var isLoading = false
+    @State private var galleryURLs: [String] = []
+    @State private var galleryIndex: Int = 0
     @State private var loadError: String?
     @State private var itemEntity: CollectionItemEntity?
     @State private var trackEntities: [TrackEntity] = []
@@ -145,32 +147,74 @@ struct CollectionDetailView: View {
         .padding(.bottom, 16)
     }
 
-    private var coverURL: URL? {
-        if !item.basicInformation.coverImage.isEmpty,
-           let url = URL(string: item.basicInformation.coverImage) { return url }
-        if !item.basicInformation.thumb.isEmpty,
-           let url = URL(string: item.basicInformation.thumb) { return url }
-        return nil
+    private var currentGalleryURL: URL? {
+        guard !galleryURLs.isEmpty else {
+            // Fallback before gallery loads
+            if !item.basicInformation.coverImage.isEmpty { return URL(string: item.basicInformation.coverImage) }
+            if !item.basicInformation.thumb.isEmpty { return URL(string: item.basicInformation.thumb) }
+            return nil
+        }
+        return URL(string: galleryURLs[galleryIndex])
     }
 
     private var coverImage: some View {
-        AsyncImage(url: coverURL) { phase in
-            switch phase {
-            case .success(let img):
-                img.resizable().scaledToFill()
-            default:
-                Rectangle()
-                    .fill(.secondary.opacity(0.15))
-                    .overlay(Image(systemName: "music.note").foregroundStyle(.tertiary))
+        ZStack(alignment: .center) {
+            AsyncImage(url: currentGalleryURL) { phase in
+                switch phase {
+                case .success(let img):
+                    img.resizable().scaledToFill()
+                default:
+                    Rectangle()
+                        .fill(.secondary.opacity(0.15))
+                        .overlay(Image(systemName: "music.note").foregroundStyle(.tertiary))
+                }
+            }
+            .frame(width: 240, height: 240)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            if galleryURLs.count > 1 {
+                HStack {
+                    Button {
+                        galleryIndex = galleryIndex > 0 ? galleryIndex - 1 : galleryURLs.count - 1
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(8)
+                            .background(Circle().fill(.black.opacity(0.5)))
+                    }
+                    .buttonStyle(.plain)
+
+                    Spacer()
+
+                    Button {
+                        galleryIndex = galleryIndex < galleryURLs.count - 1 ? galleryIndex + 1 : 0
+                    } label: {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(8)
+                            .background(Circle().fill(.black.opacity(0.5)))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 8)
+                .frame(width: 240, height: 240)
+
+                VStack {
+                    Spacer()
+                    Text("\(galleryIndex + 1) / \(galleryURLs.count)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(.black.opacity(0.5)))
+                        .padding(.bottom, 8)
+                }
+                .frame(width: 240, height: 240)
             }
         }
-        .frame(width: 240, height: 240)
-        .cornerRadius(8)
-        .clipped()
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.primary.opacity(0.1), lineWidth: 1)
-        )
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.1), lineWidth: 1))
     }
 
     private func infoStack(detail: ReleaseDetail) -> some View {
@@ -1183,7 +1227,17 @@ struct CollectionDetailView: View {
         detail = nil
         defer { isLoading = false }
         do {
-            detail = try await viewModel.loadDetail(for: item)
+            let loaded = try await viewModel.loadDetail(for: item)
+            detail = loaded
+            // Populate gallery from parsed images array, fallback to primary cover
+            if let images = loaded.images, !images.isEmpty {
+                galleryURLs = images.map { $0.uri }
+            } else {
+                let primary = item.basicInformation.coverImage
+                let thumb   = item.basicInformation.thumb
+                galleryURLs = !primary.isEmpty ? [primary] : (!thumb.isEmpty ? [thumb] : [])
+            }
+            galleryIndex = 0
         } catch {
             loadError = error.localizedDescription
         }

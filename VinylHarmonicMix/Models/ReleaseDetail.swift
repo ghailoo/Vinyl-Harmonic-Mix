@@ -1,5 +1,11 @@
 import Foundation
 
+struct DiscogsImage: Codable, Hashable {
+    let uri: String
+    let uri150: String?
+    let type: String?
+}
+
 struct ReleaseDetail: Codable, Hashable {
     let id: Int
     let title: String
@@ -19,11 +25,12 @@ struct ReleaseDetail: Codable, Hashable {
     let masterId: Int?
     let masterUrl: String?
     let dataQuality: String?
+    let images: [DiscogsImage]?
 
     enum CodingKeys: String, CodingKey {
         case id, title, year, country, released, barcode
         case artists, labels, formats, genres, styles, tracklist
-        case extraartists, identifiers, notes
+        case extraartists, identifiers, notes, images
         case masterId = "master_id"
         case masterUrl = "master_url"
         case dataQuality = "data_quality"
