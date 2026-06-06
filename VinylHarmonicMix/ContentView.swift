@@ -20,6 +20,7 @@ struct ContentView: View {
             macSidebar
         } detail: {
             VStack(spacing: 0) {
+                ResumeWaveformBanner()
                 NowPlayingBar()
                 Divider()
                 Group {

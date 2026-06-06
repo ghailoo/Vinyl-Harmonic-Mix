@@ -110,6 +110,12 @@ final class FileMatchCoordinator {
         "mp3": 4, "ogg": 5, "opus": 6, "mp4": 7
     ]
 
+    private static let pendingWaveformsKey = "VinylHarmonicMix.PendingWaveformGenerationPaused"
+
+    static func hasPendingWaveformGeneration() -> Bool {
+        UserDefaults.standard.bool(forKey: pendingWaveformsKey)
+    }
+
     var shouldShowPanel: Bool { phase != .idle }
 
     init(context: ModelContext) {
@@ -167,11 +173,13 @@ final class FileMatchCoordinator {
     func cancel() {
         scanTask?.cancel(); scanTask = nil
         phase = .cancelled
+        UserDefaults.standard.set(false, forKey: Self.pendingWaveformsKey)
     }
 
     func pauseWaveformGeneration() {
         guard phase == .generatingWaveforms else { return }
         waveformsPausing = true
+        UserDefaults.standard.set(true, forKey: Self.pendingWaveformsKey)
         print("[WAVEFORM-PRECOMPUTE] Pause requested — finishing current item")
     }
 
@@ -179,7 +187,30 @@ final class FileMatchCoordinator {
         guard phase == .generatingWaveformsPaused else { return }
         phase = .generatingWaveforms
         waveformsPausing = false
+        UserDefaults.standard.set(false, forKey: Self.pendingWaveformsKey)
         print("[WAVEFORM-PRECOMPUTE] Resumed")
+    }
+
+    func resumeWaveformGenerationOnly() {
+        guard phase == .idle || phase == .completed || phase == .cancelled else { return }
+        showPanel = true
+        scanTask = Task { [weak self] in
+            guard let self else { return }
+            await self.generateWaveformsForConfidentTracks()
+            self.phase = .completed
+        }
+    }
+
+    func countPendingWaveforms() -> Int {
+        let descriptor = FetchDescriptor<TrackEntity>(
+            predicate: #Predicate<TrackEntity> { $0.fileMatchState == "confident" }
+        )
+        guard let allConfident = try? context.fetch(descriptor) else { return 0 }
+        return allConfident.filter { track in
+            guard let fp = track.primaryLocalFilePath,
+                  let lf = track.localFiles.first(where: { $0.filePath == fp }) else { return false }
+            return lf.waveformPeaks == nil || lf.waveformPeaks!.isEmpty
+        }.count
     }
 
     func dismissPanel() {
@@ -390,6 +421,7 @@ final class FileMatchCoordinator {
             }
         }
 
+        UserDefaults.standard.set(false, forKey: Self.pendingWaveformsKey)
         print("[WAVEFORM-PRECOMPUTE] Batch complete: \(waveformsGenerated) generated, \(waveformGenerationFailed) failed")
     }
 
