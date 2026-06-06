@@ -41,6 +41,16 @@ struct FileMatchPanelView: View {
                     .font(.system(size: 12).monospacedDigit())
             }
 
+            if coordinator.phase == .generatingWaveforms || coordinator.phase == .generatingWaveformsPaused {
+                if coordinator.waveformsTotal > 0 {
+                    ProgressView(value: Double(coordinator.waveformsGenerated),
+                                 total: Double(coordinator.waveformsTotal))
+                    Text("\(coordinator.waveformsGenerated) / \(coordinator.waveformsTotal) waveforms")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
             if let err = coordinator.lastError {
                 Label(err, systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.red).font(.caption)
@@ -53,6 +63,18 @@ struct FileMatchPanelView: View {
                 if coordinator.phase == .paused {
                     Button("Resume") { coordinator.resume() }
                         .buttonStyle(.borderedProminent).controlSize(.small)
+                }
+                if coordinator.phase == .generatingWaveforms && !coordinator.waveformsPausing {
+                    Button { coordinator.pauseWaveformGeneration() } label: {
+                        Label("Pause", systemImage: "pause.fill")
+                    }.controlSize(.small)
+                } else if coordinator.phase == .generatingWaveforms && coordinator.waveformsPausing {
+                    Button {} label: { Label("Pausing…", systemImage: "pause.fill") }
+                        .controlSize(.small).disabled(true)
+                } else if coordinator.phase == .generatingWaveformsPaused {
+                    Button { coordinator.resumeWaveformGeneration() } label: {
+                        Label("Resume", systemImage: "play.fill")
+                    }.buttonStyle(.borderedProminent).controlSize(.small)
                 }
                 Button("Cancel") { coordinator.cancel() }
                     .controlSize(.small).foregroundStyle(.red)
@@ -71,8 +93,9 @@ struct FileMatchPanelView: View {
         switch coordinator.phase {
         case .completed: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
         case .cancelled: Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
-        case .paused:    Image(systemName: "pause.circle.fill").foregroundStyle(.orange)
-        default:         ProgressView().controlSize(.small)
+        case .paused:                    Image(systemName: "pause.circle.fill").foregroundStyle(.orange)
+        case .generatingWaveformsPaused: Image(systemName: "pause.circle.fill").foregroundStyle(.orange)
+        default:                         ProgressView().controlSize(.small)
         }
     }
 
@@ -84,7 +107,8 @@ struct FileMatchPanelView: View {
         case .paused:              return "Paused"
         case .completed:           return "Match complete"
         case .cancelled:           return "Cancelled"
-        case .generatingWaveforms: return "Generating waveforms…"
+        case .generatingWaveforms:       return coordinator.waveformsPausing ? "Pausing…" : "Generating waveforms…"
+        case .generatingWaveformsPaused: return "Paused"
         }
     }
 

@@ -49,7 +49,7 @@ struct ScoredCandidate: Sendable {
 @Observable
 final class FileMatchCoordinator {
 
-    enum Phase { case idle, indexing, matching, paused, completed, cancelled, generatingWaveforms }
+    enum Phase { case idle, indexing, matching, paused, completed, cancelled, generatingWaveforms, generatingWaveformsPaused }
 
     enum VerifyState {
         case running
@@ -69,6 +69,7 @@ final class FileMatchCoordinator {
     var waveformsGenerated: Int = 0
     var waveformsTotal: Int = 0
     var waveformGenerationFailed: Int = 0
+    var waveformsPausing: Bool = false
     var processedTracks: Int = 0
     var confidentCount: Int = 0
     var reviewCount: Int = 0
@@ -166,6 +167,19 @@ final class FileMatchCoordinator {
     func cancel() {
         scanTask?.cancel(); scanTask = nil
         phase = .cancelled
+    }
+
+    func pauseWaveformGeneration() {
+        guard phase == .generatingWaveforms else { return }
+        waveformsPausing = true
+        print("[WAVEFORM-PRECOMPUTE] Pause requested — finishing current item")
+    }
+
+    func resumeWaveformGeneration() {
+        guard phase == .generatingWaveformsPaused else { return }
+        phase = .generatingWaveforms
+        waveformsPausing = false
+        print("[WAVEFORM-PRECOMPUTE] Resumed")
     }
 
     func dismissPanel() {
@@ -333,6 +347,20 @@ final class FileMatchCoordinator {
                 token.isCancelled = true
                 print("[WAVEFORM-PRECOMPUTE] Cancelled mid-batch at \(waveformsGenerated)/\(waveformsTotal)")
                 return
+            }
+
+            if waveformsPausing {
+                phase = .generatingWaveformsPaused
+                waveformsPausing = false
+                print("[WAVEFORM-PRECOMPUTE] Paused at \(waveformsGenerated)/\(waveformsTotal)")
+                while phase == .generatingWaveformsPaused && !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                }
+                if Task.isCancelled {
+                    token.isCancelled = true
+                    print("[WAVEFORM-PRECOMPUTE] Cancelled from paused state")
+                    return
+                }
             }
 
             guard let result = await WaveformGenerator.generate(filePath: item.filePath, token: token) else {
