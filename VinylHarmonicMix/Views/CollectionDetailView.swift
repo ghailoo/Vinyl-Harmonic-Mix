@@ -667,6 +667,10 @@ struct CollectionDetailView: View {
                         TextField("e.g. 550e8400-e29b-41d4-a716-446655440000", text: $manualReleaseMBID)
                             .textFieldStyle(.roundedBorder)
                             .font(.system(.caption, design: .monospaced))
+                            .onChange(of: manualReleaseMBID) { _, newValue in
+                                let normalized = normalizeMBIDInput(newValue)
+                                if normalized != newValue { manualReleaseMBID = normalized }
+                            }
                         Button("Fetch") {
                             let trimmed = manualReleaseMBID.trimmingCharacters(in: .whitespaces)
                             guard isValidMBID(trimmed) else {
@@ -788,6 +792,20 @@ struct CollectionDetailView: View {
     private func isValidMBID(_ s: String) -> Bool {
         let pattern = "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
         return s.range(of: pattern, options: .regularExpression) != nil
+    }
+
+    private func normalizeMBIDInput(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isValidMBID(trimmed) { return trimmed }
+        if let url = URL(string: trimmed), let last = url.pathComponents.last {
+            let candidate = last.trimmingCharacters(in: .whitespacesAndNewlines)
+            if isValidMBID(candidate) { return candidate }
+        }
+        let pattern = #"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"#
+        if let range = trimmed.range(of: pattern, options: .regularExpression) {
+            return String(trimmed[range])
+        }
+        return trimmed
     }
 
     // MARK: - Per-track file link
