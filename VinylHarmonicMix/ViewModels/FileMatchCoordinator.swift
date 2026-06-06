@@ -49,7 +49,7 @@ struct ScoredCandidate: Sendable {
 @Observable
 final class FileMatchCoordinator {
 
-    enum Phase { case idle, indexing, matching, paused, completed, cancelled }
+    enum Phase { case idle, indexing, matching, paused, completed, cancelled, generatingWaveforms }
 
     enum VerifyState {
         case running
@@ -66,6 +66,9 @@ final class FileMatchCoordinator {
     var indexedCount: Int = 0
     var totalTracks: Int = 0
     var linkVersion: Int = 0
+    var waveformsGenerated: Int = 0
+    var waveformsTotal: Int = 0
+    var waveformGenerationFailed: Int = 0
     var processedTracks: Int = 0
     var confidentCount: Int = 0
     var reviewCount: Int = 0
@@ -288,6 +291,80 @@ final class FileMatchCoordinator {
 
     // MARK: - Internal scan driver
 
+    // MARK: - Phase 5: Waveform precompute
+
+    private func generateWaveformsForConfidentTracks() async {
+        var descriptor = FetchDescriptor<TrackEntity>(
+            predicate: #Predicate<TrackEntity> { $0.fileMatchState == "confident" }
+        )
+        descriptor.propertiesToFetch = [\TrackEntity.primaryLocalFilePath, \TrackEntity.fileMatchState]
+
+        let allConfident: [TrackEntity]
+        do {
+            allConfident = try context.fetch(descriptor)
+        } catch {
+            print("[WAVEFORM-PRECOMPUTE] Failed to fetch confident tracks: \(error)")
+            return
+        }
+
+        // Filter to tracks that have a linked file with no waveform yet
+        let tracks = allConfident.compactMap { track -> (track: TrackEntity, filePath: String, localFile: LocalFileEntity)? in
+            guard let fp = track.primaryLocalFilePath,
+                  let lf = track.localFiles.first(where: { $0.filePath == fp }) else { return nil }
+            guard lf.waveformPeaks == nil || lf.waveformPeaks!.isEmpty else { return nil }
+            return (track, fp, lf)
+        }
+
+        guard !tracks.isEmpty else {
+            print("[WAVEFORM-PRECOMPUTE] No tracks need waveforms — skipping")
+            return
+        }
+
+        waveformsTotal     = tracks.count
+        waveformsGenerated = 0
+        waveformGenerationFailed = 0
+        phase = .generatingWaveforms
+        print("[WAVEFORM-PRECOMPUTE] Starting batch: \(tracks.count) tracks")
+
+        let token = CancellationToken()
+
+        for item in tracks {
+            if Task.isCancelled {
+                token.isCancelled = true
+                print("[WAVEFORM-PRECOMPUTE] Cancelled mid-batch at \(waveformsGenerated)/\(waveformsTotal)")
+                return
+            }
+
+            guard let result = await WaveformGenerator.generate(filePath: item.filePath, token: token) else {
+                print("[WAVEFORM-PRECOMPUTE] Generation failed for \(item.filePath)")
+                waveformGenerationFailed += 1
+                continue
+            }
+
+            let fp        = item.filePath
+            let peaksData = result.peaks.withUnsafeBytes { Data($0) }
+            let colorData = result.colors
+            let container = context.container
+
+            await Task.detached(priority: .utility) {
+                let ctx = ModelContext(container)
+                var fd  = FetchDescriptor<LocalFileEntity>(predicate: #Predicate { $0.filePath == fp })
+                fd.fetchLimit = 1
+                guard let entity = try? ctx.fetch(fd).first else { return }
+                entity.waveformPeaks  = peaksData
+                entity.waveformColors = colorData
+                try? ctx.save()
+            }.value
+
+            waveformsGenerated += 1
+            if waveformsGenerated % 10 == 0 {
+                print("[WAVEFORM-PRECOMPUTE] Progress: \(waveformsGenerated)/\(waveformsTotal)")
+            }
+        }
+
+        print("[WAVEFORM-PRECOMPUTE] Batch complete: \(waveformsGenerated) generated, \(waveformGenerationFailed) failed")
+    }
+
     private func beginScan(limit: Int?) {
         pendingLimit = limit
         showPanel = true
@@ -308,6 +385,8 @@ final class FileMatchCoordinator {
             await self.runPhase2(limit: limit)
             if Task.isCancelled { return }
             if limit == nil { self.reportOrphanSweepOutcome() }
+            if Task.isCancelled { return }
+            if limit == nil { await self.generateWaveformsForConfidentTracks() }
             try? self.context.save()
             self.phase = .completed
         }

@@ -78,12 +78,13 @@ struct FileMatchPanelView: View {
 
     private var phaseLabel: String {
         switch coordinator.phase {
-        case .idle:      return "Idle"
-        case .indexing:  return "Indexing local library…"
-        case .matching:  return "Matching tracks…"
-        case .paused:    return "Paused"
-        case .completed: return "Match complete"
-        case .cancelled: return "Cancelled"
+        case .idle:                return "Idle"
+        case .indexing:            return "Indexing local library…"
+        case .matching:            return "Matching tracks…"
+        case .paused:              return "Paused"
+        case .completed:           return "Match complete"
+        case .cancelled:           return "Cancelled"
+        case .generatingWaveforms: return "Generating waveforms…"
         }
     }
 
