@@ -111,6 +111,7 @@ final class FileMatchCoordinator {
     ]
 
     private static let pendingWaveformsKey = "VinylHarmonicMix.PendingWaveformGenerationPaused"
+    private static let audioExtensions: Set<String> = ["flac", "mp3", "m4a", "aif", "aiff", "wav", "aac", "ogg", "opus", "mp4"]
 
     static func hasPendingWaveformGeneration() -> Bool {
         UserDefaults.standard.bool(forKey: pendingWaveformsKey)
@@ -209,6 +210,8 @@ final class FileMatchCoordinator {
         return allConfident.filter { track in
             guard let fp = track.primaryLocalFilePath,
                   let lf = track.localFiles.first(where: { $0.filePath == fp }) else { return false }
+            let ext = (fp as NSString).pathExtension.lowercased()
+            guard Self.audioExtensions.contains(ext) else { return false }
             return lf.waveformPeaks == nil || lf.waveformPeaks!.isEmpty
         }.count
     }
@@ -357,6 +360,8 @@ final class FileMatchCoordinator {
             guard let fp = track.primaryLocalFilePath,
                   let lf = track.localFiles.first(where: { $0.filePath == fp }) else { return nil }
             guard lf.waveformPeaks == nil || lf.waveformPeaks!.isEmpty else { return nil }
+            let ext = (fp as NSString).pathExtension.lowercased()
+            guard Self.audioExtensions.contains(ext) else { return nil }
             return (track, fp, lf)
         }
 
