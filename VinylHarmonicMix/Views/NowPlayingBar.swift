@@ -16,6 +16,27 @@ struct NowPlayingBar: View {
             .opacity(playback.currentFilePath != nil ? 1 : 0)
 
             if let path = playback.currentFilePath {
+                if !playback.playingSetItems.isEmpty {
+                    Button {
+                        playback.previousTrack()
+                    } label: {
+                        Image(systemName: "backward.end.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(playback.playingSetIndex == 0)
+                    .help("Previous track in set")
+                }
+
+                Button {
+                    playback.skipBackward10()
+                } label: {
+                    Image(systemName: "gobackward.10")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .help("Skip back 10 seconds")
+
                 Button {
                     playback.play(filePath: path)
                 } label: {
@@ -36,6 +57,27 @@ struct NowPlayingBar: View {
                 }
                 .buttonStyle(.plain)
                 .help("Stop")
+
+                Button {
+                    playback.skipForward10()
+                } label: {
+                    Image(systemName: "goforward.10")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .help("Skip forward 10 seconds")
+
+                if !playback.playingSetItems.isEmpty {
+                    Button {
+                        playback.nextTrack()
+                    } label: {
+                        Image(systemName: "forward.end.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(playback.playingSetIndex >= playback.playingSetItems.count - 1)
+                    .help("Next track in set")
+                }
 
                 Divider().frame(height: 14)
 

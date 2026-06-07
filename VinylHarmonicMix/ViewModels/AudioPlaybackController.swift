@@ -19,6 +19,10 @@ final class AudioPlaybackController {
     private(set) var playbackErrors: [String: String] = [:]
     private(set) var playbackFinishedCount: Int = 0
 
+    // Set-playback state — empty playingSetItems means no set is active
+    private(set) var playingSetItems: [SetlistItemEntity] = []
+    private(set) var playingSetIndex: Int = 0
+
     // Mix-mode deck state — both decks observable simultaneously
     private(set) var deckACurrentTime: Double = 0
     private(set) var deckBCurrentTime: Double = 0
@@ -215,6 +219,9 @@ final class AudioPlaybackController {
         currentTime     = 0
         duration        = 0
         activeSource    = .single
+        // Stop = "I'm done" — exit set-playback mode
+        playingSetItems = []
+        playingSetIndex = 0
     }
 
     func seek(toFraction fraction: Double) {
@@ -222,6 +229,57 @@ final class AudioPlaybackController {
         let clamped = max(0, min(1, fraction))
         p.currentTime = clamped * p.duration
         currentTime   = p.currentTime
+    }
+
+    func seek(to time: Double) {
+        guard let p = activePlayer, duration > 0 else { return }
+        p.currentTime = max(0, min(time, duration))
+        currentTime   = p.currentTime
+    }
+
+    func skip(seconds: Double) { seek(to: currentTime + seconds) }
+    func skipBackward10()      { skip(seconds: -10) }
+    func skipForward10()       { skip(seconds:  10) }
+
+    // MARK: - Set playback
+
+    func startSet(_ items: [SetlistItemEntity]) {
+        stop()
+        guard let firstIdx = items.firstIndex(where: { !$0.filePath.isEmpty }) else { return }
+        playingSetItems = items
+        playingSetIndex = firstIdx
+        play(filePath: items[firstIdx].filePath)
+    }
+
+    func stopSet() {
+        playingSetItems = []
+        playingSetIndex = 0
+    }
+
+    func nextTrack() {
+        guard !playingSetItems.isEmpty else { return }
+        var next = playingSetIndex + 1
+        while next < playingSetItems.count && playingSetItems[next].filePath.isEmpty {
+            next += 1
+        }
+        if next >= playingSetItems.count {
+            stopSet()
+            stop()
+            return
+        }
+        playingSetIndex = next
+        play(filePath: playingSetItems[next].filePath)
+    }
+
+    func previousTrack() {
+        guard !playingSetItems.isEmpty else { return }
+        var prev = playingSetIndex - 1
+        while prev >= 0 && playingSetItems[prev].filePath.isEmpty {
+            prev -= 1
+        }
+        guard prev >= 0 else { return }
+        playingSetIndex = prev
+        play(filePath: playingSetItems[prev].filePath)
     }
 
     // MARK: - Deck management (Mix mode)
@@ -548,6 +606,10 @@ final class AudioPlaybackController {
         }
         if !anyPlayerActive { stopTimer() }
         playbackFinishedCount += 1
+
+        if !playingSetItems.isEmpty {
+            nextTrack()
+        }
     }
 
     func handleDecodeError(_ message: String) {

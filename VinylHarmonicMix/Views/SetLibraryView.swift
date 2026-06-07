@@ -8,9 +8,10 @@ struct SetLibraryView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(AudioPlaybackController.self) private var playback
 
-    @State private var isPlayingThrough: Bool = false
-    @State private var playThroughIndex: Int = 0
     @State private var showCopiedFeedback: Bool = false
+
+    private var isPlayingThrough: Bool { !playback.playingSetItems.isEmpty }
+    private var playThroughIndex: Int  { playback.playingSetIndex }
 
     // MARK: - Computed
 
@@ -41,10 +42,6 @@ struct SetLibraryView: View {
                 trackList
             }
         }
-        .onChange(of: playback.playbackFinishedCount) { _, _ in
-            guard isPlayingThrough else { return }
-            advancePlayThrough()
-        }
     }
 
     // MARK: - Header bar
@@ -61,7 +58,7 @@ struct SetLibraryView: View {
                     .lineLimit(2)
             }
             Spacer()
-            Button(action: isPlayingThrough ? stopPlayThrough : startPlayThrough) {
+            Button(action: isPlayingThrough ? { playback.stopSet(); playback.pause() } : { playback.startSet(sortedItems) }) {
                 Label(isPlayingThrough ? "Stop" : "Play Set",
                       systemImage: isPlayingThrough ? "stop.fill" : "play.fill")
             }
@@ -183,41 +180,6 @@ struct SetLibraryView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    // MARK: - Play-through
-
-    private func startPlayThrough() {
-        guard !sortedItems.isEmpty else { return }
-        playThroughIndex = 0
-        isPlayingThrough = true
-        playItemAt(0)
-    }
-
-    private func stopPlayThrough() {
-        isPlayingThrough = false
-        playback.pause()
-    }
-
-    private func advancePlayThrough() {
-        let items = sortedItems
-        var next = playThroughIndex + 1
-        while next < items.count && items[next].filePath.isEmpty {
-            next += 1
-        }
-        if next < items.count {
-            playThroughIndex = next
-            playItemAt(next)
-        } else {
-            isPlayingThrough = false
-            playThroughIndex = 0
-        }
-    }
-
-    private func playItemAt(_ idx: Int) {
-        let items = sortedItems
-        guard idx < items.count, !items[idx].filePath.isEmpty else { return }
-        playback.play(filePath: items[idx].filePath)
-    }
-
     // MARK: - Reorder + Remove
 
     private func reorderItems(from source: IndexSet, to destination: Int) {
@@ -227,7 +189,7 @@ struct SetLibraryView: View {
             item.position = newPos
         }
         try? modelContext.save()
-        if isPlayingThrough { stopPlayThrough() }
+        if isPlayingThrough { playback.stopSet(); playback.pause() }
     }
 
     private func removeItem(_ item: SetlistItemEntity) {
@@ -237,7 +199,7 @@ struct SetLibraryView: View {
             track.position = newPos
         }
         try? modelContext.save()
-        if isPlayingThrough && remaining.isEmpty { stopPlayThrough() }
+        if isPlayingThrough && remaining.isEmpty { playback.stopSet(); playback.pause() }
     }
 
     // MARK: - Text export
