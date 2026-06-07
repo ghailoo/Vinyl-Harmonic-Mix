@@ -10,22 +10,111 @@ struct UnifiedTopBar: View {
     var body: some View {
         HStack(spacing: 16) {
             HStack(spacing: 8) {
-                libraryBubble(title: "Sync",          icon: "arrow.triangle.2.circlepath") { syncOrchestrator.startSync() }
-                libraryBubble(title: "MBID",          icon: "magnifyingglass.circle")       { scanCoordinator.start() }
-                libraryBubble(title: "AcousticBrainz",icon: "waveform.circle")             { audioFeaturesCoordinator.start() }
-                libraryBubble(title: "Match Audio",   icon: "link.circle")                 { fileMatchCoordinator.startFullScan() }
-                libraryBubble(title: "Cues",          icon: "scope")                       { cueCoordinator.startDetection(scope: .matched) }
+                libraryBubble(title: "Sync",           icon: "arrow.triangle.2.circlepath") { syncOrchestrator.startSync() }
+                libraryBubble(title: "MBID",           icon: "magnifyingglass.circle")       { scanCoordinator.start() }
+                libraryBubble(title: "AcousticBrainz", icon: "waveform.circle")             { audioFeaturesCoordinator.start() }
+                libraryBubble(title: "Match Audio",    icon: "link.circle")                 { fileMatchCoordinator.startFullScan() }
+                libraryBubble(title: "Cues",           icon: "scope")                       { cueCoordinator.startDetection(scope: .matched) }
             }
 
             NowPlayingBar()
                 .frame(maxWidth: .infinity)
 
-            WaveformStatusBubble()
+            // Force @Observable tracking for all coordinator state we read in activeOperations
+            let _ = syncOrchestrator.isSyncing
+            let _ = syncOrchestrator.syncStatus
+            let _ = scanCoordinator.scanned
+            let _ = audioFeaturesCoordinator.batchesProcessed
+            let _ = fileMatchCoordinator.phase
+            let _ = fileMatchCoordinator.waveformsPausing
+            let _ = cueCoordinator.phase
+
+            HStack(spacing: 8) {
+                ForEach(activeOperations, id: \.name) { status in
+                    OperationStatusBubble(status: status)
+                }
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(.regularMaterial)
         .overlay(alignment: .bottom) { Divider() }
+    }
+
+    private var activeOperations: [OperationStatus] {
+        var result: [OperationStatus] = []
+
+        if syncOrchestrator.isSyncing {
+            result.append(.simple(
+                name: "Sync",
+                icon: "arrow.triangle.2.circlepath",
+                isRunning: true,
+                statusText: syncOrchestrator.syncStatus.isEmpty ? nil : syncOrchestrator.syncStatus
+            ))
+        }
+
+        if case .scanning = scanCoordinator.phase {
+            result.append(.simple(
+                name: "MBID Scan",
+                icon: "magnifyingglass",
+                isRunning: true,
+                count: scanCoordinator.scanned,
+                total: scanCoordinator.total
+            ))
+        }
+
+        if case .scanning = audioFeaturesCoordinator.phase {
+            result.append(.simple(
+                name: "AcousticBrainz",
+                icon: "waveform.circle",
+                isRunning: true,
+                count: audioFeaturesCoordinator.batchesProcessed,
+                total: audioFeaturesCoordinator.batchesTotal
+            ))
+        }
+
+        if let fileMatch = fileMatchStatus() {
+            result.append(fileMatch)
+        }
+
+        if cueCoordinator.phase == .detecting {
+            result.append(.simple(
+                name: "Cue Detection",
+                icon: "scope",
+                isRunning: true,
+                count: cueCoordinator.processedCount,
+                total: cueCoordinator.totalCount
+            ))
+        }
+
+        return result
+    }
+
+    private func fileMatchStatus() -> OperationStatus? {
+        let c = fileMatchCoordinator
+        switch c.phase {
+        case .indexing:
+            return .simple(name: "Match Audio", icon: "link", isRunning: true,
+                           statusText: "Indexing… \(c.indexedCount)")
+        case .matching:
+            return .simple(name: "Match Audio", icon: "link", isRunning: true,
+                           count: c.processedTracks, total: c.totalTracks)
+        case .generatingWaveforms, .generatingWaveformsPaused:
+            return OperationStatus(
+                name: "Waveforms",
+                icon: "waveform",
+                isRunning: true,
+                count: c.waveformsGenerated,
+                total: c.waveformsTotal,
+                statusText: nil,
+                pauseAction: { c.pauseWaveformGeneration() },
+                resumeAction: { c.resumeWaveformGeneration() },
+                isPaused: c.phase == .generatingWaveformsPaused,
+                isPausing: c.waveformsPausing
+            )
+        default:
+            return nil
+        }
     }
 
     @ViewBuilder
@@ -47,89 +136,5 @@ struct UnifiedTopBar: View {
         }
         .buttonStyle(.plain)
         .help(title)
-    }
-}
-
-struct WaveformStatusBubble: View {
-    @Environment(FileMatchCoordinator.self) private var coordinator
-    @State private var pendingCount: Int = 0
-
-    var body: some View {
-        let _ = coordinator.phase  // force @Observable tracking in body
-
-        Group {
-            if shouldShow {
-                HStack(spacing: 8) {
-                    progressContent
-                    actionButton
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(
-                    Capsule()
-                        .fill(Color.accentColor.opacity(0.12))
-                        .overlay(Capsule().stroke(Color.accentColor.opacity(0.3), lineWidth: 0.5))
-                )
-            }
-        }
-        .task(id: coordinator.phase) {
-            pendingCount = coordinator.countPendingWaveforms()
-        }
-        .task {
-            pendingCount = coordinator.countPendingWaveforms()
-        }
-    }
-
-    private var shouldShow: Bool {
-        if coordinator.phase == .generatingWaveforms { return true }
-        if coordinator.phase == .generatingWaveformsPaused { return true }
-        return FileMatchCoordinator.hasPendingWaveformGeneration() && pendingCount > 0
-    }
-
-    @ViewBuilder
-    private var progressContent: some View {
-        switch coordinator.phase {
-        case .generatingWaveforms, .generatingWaveformsPaused:
-            HStack(spacing: 6) {
-                Image(systemName: coordinator.phase == .generatingWaveformsPaused ? "pause.circle.fill" : "waveform")
-                    .font(.system(size: 12, weight: .medium))
-                Text("\(coordinator.waveformsGenerated) / \(coordinator.waveformsTotal)")
-                    .font(.system(size: 11, weight: .medium).monospacedDigit())
-            }
-        default:
-            HStack(spacing: 6) {
-                Image(systemName: "waveform.path.badge.plus")
-                    .font(.system(size: 12, weight: .medium))
-                Text("\(pendingCount) pending")
-                    .font(.system(size: 11, weight: .medium))
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var actionButton: some View {
-        if coordinator.phase == .generatingWaveforms && !coordinator.waveformsPausing {
-            Button { coordinator.pauseWaveformGeneration() } label: {
-                Image(systemName: "pause.fill").font(.system(size: 10, weight: .bold))
-            }
-            .buttonStyle(.plain)
-            .help("Pause waveform generation")
-        } else if coordinator.phase == .generatingWaveforms && coordinator.waveformsPausing {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 10, weight: .bold))
-                .opacity(0.5)
-        } else if coordinator.phase == .generatingWaveformsPaused {
-            Button { coordinator.resumeWaveformGeneration() } label: {
-                Image(systemName: "play.fill").font(.system(size: 10, weight: .bold))
-            }
-            .buttonStyle(.plain)
-            .help("Resume waveform generation")
-        } else {
-            Button { coordinator.resumeWaveformGenerationOnly() } label: {
-                Image(systemName: "play.fill").font(.system(size: 10, weight: .bold))
-            }
-            .buttonStyle(.plain)
-            .help("Resume waveform generation")
-        }
     }
 }

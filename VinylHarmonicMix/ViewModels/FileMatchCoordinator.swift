@@ -121,7 +121,7 @@ final class FileMatchCoordinator {
 
     init(context: ModelContext) {
         self.context = context
-        // Defer hydration so it doesn't block app startup; runs after first runloop turn.
+        UserDefaults.standard.set(false, forKey: Self.pendingWaveformsKey)
         Task { @MainActor [weak self] in self?.hydrateReviewCandidatesIfNeeded() }
     }
 
