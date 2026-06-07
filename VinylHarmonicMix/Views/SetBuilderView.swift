@@ -215,22 +215,6 @@ struct SetBuilderView: View {
                 .controlSize(.small)
             }
             Menu {
-                Button("Sync Discogs Collection") {
-                    syncOrchestrator.startSync()
-                    showSyncSheet = true
-                }
-                Button("Scan for MBID matches") { scanCoordinator.start() }
-                Button("Fetch AcousticBrainz features") { audioFeaturesCoordinator.start() }
-                Button("Match local audio files") { fileMatchCoordinator.startFullScan() }
-                Button("Detect cue points") { cueCoordinator.startDetection(scope: .matched) }
-            } label: {
-                Label("Library", systemImage: "tray.full")
-                    .labelStyle(.titleAndIcon)
-            }
-            .menuStyle(.borderlessButton)
-            .controlSize(.small)
-            .fixedSize()
-            Menu {
                 Toggle("Stop playback when changing track", isOn: $stopOnTrackChange)
             } label: {
                 Image(systemName: "gearshape")
