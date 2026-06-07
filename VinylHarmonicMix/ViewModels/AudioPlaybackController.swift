@@ -12,6 +12,7 @@ final class AudioPlaybackController {
     // keep working with zero changes.
 
     private(set) var currentFilePath: String? = nil
+    private(set) var loadedFilePath: String? = nil
     private(set) var isPlaying: Bool = false
     private(set) var currentTime: Double = 0
     private(set) var duration: Double = 0
@@ -125,6 +126,7 @@ final class AudioPlaybackController {
             pauseCurrentActive()          // pauses other source, holds its position
             activeSource    = .deckA
             currentFilePath = filePath
+            loadedFilePath  = filePath
             duration        = deckA.duration
             currentTime     = deckA.currentTime   // resume from held position
             deckA.volume    = Float(volume)
@@ -140,6 +142,7 @@ final class AudioPlaybackController {
             pauseCurrentActive()
             activeSource    = .deckB
             currentFilePath = filePath
+            loadedFilePath  = filePath
             duration        = deckB.duration
             currentTime     = deckB.currentTime
             deckB.volume    = Float(volume)
@@ -156,6 +159,7 @@ final class AudioPlaybackController {
         activeSource = .single
         stopSinglePlayer()
         currentFilePath = filePath
+        loadedFilePath  = filePath
         playbackErrors.removeValue(forKey: filePath)
 
         let url = URL(fileURLWithPath: filePath)
@@ -195,6 +199,10 @@ final class AudioPlaybackController {
         isPlaying = false
     }
 
+    func setLoadedFile(_ path: String?) {
+        loadedFilePath = path
+    }
+
     func stop() {
         stopSinglePlayer()
         // Pause deck players so they hold their positions.
@@ -203,6 +211,7 @@ final class AudioPlaybackController {
         stopTimer()
         isPlaying       = false
         currentFilePath = nil
+        loadedFilePath  = nil
         currentTime     = 0
         duration        = 0
         activeSource    = .single

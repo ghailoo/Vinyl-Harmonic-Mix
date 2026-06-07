@@ -108,6 +108,12 @@ struct SetBuilderView: View {
                 activeSet = allSets.first { $0.id == activeSetID }
                 if activeSet == nil { activeSetID = "" }
             }
+            // Restore hero if we navigated away while a track was loaded.
+            // loadedFilePath covers load-without-play; currentFilePath covers played-then-paused.
+            if currentTrack == nil {
+                let fp = playback.loadedFilePath ?? playback.currentFilePath
+                if let fp { currentTrack = pool.first(where: { $0.filePath == fp }) }
+            }
         }
         .onChange(of: allFeatures.count) { _, _ in
             rebuildFeaturesLookup()
@@ -161,6 +167,7 @@ struct SetBuilderView: View {
     private func handleTrackPick(_ track: MixTrack) {
         if stopOnTrackChange { playback.pause() }
         currentTrack = track
+        playback.setLoadedFile(track.filePath)
         if workingSetTracks.last?.id != track.id {
             workingSetTracks.append(track)
         }
@@ -188,6 +195,7 @@ struct SetBuilderView: View {
             try modelContext.save()
             workingSetTracks = []
             currentTrack = nil
+            playback.setLoadedFile(nil)
             showSaveSetSheet = false
             newSetName = ""
         } catch {
@@ -213,6 +221,7 @@ struct SetBuilderView: View {
                 Button("Clear") {
                     workingSetTracks = []
                     currentTrack = nil
+                    playback.setLoadedFile(nil)
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -400,6 +409,7 @@ struct SetBuilderView: View {
                             .lineLimit(1)
                         Button {
                             currentTrack = nil
+                            playback.setLoadedFile(nil)
                         } label: {
                             Image(systemName: "arrow.triangle.2.circlepath")
                                 .font(.system(size: 11, weight: .semibold))
