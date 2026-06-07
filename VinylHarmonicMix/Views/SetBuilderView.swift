@@ -41,8 +41,11 @@ struct SetBuilderView: View {
     @State private var filePathToInstanceId: [String: Int] = [:]
     @State private var playingInstanceId: Int? = nil
     @State private var searchQuery = ""
-    @State private var activeFilter: CollectionFilter = .all
-    @State private var activeSort: CollectionSort = .yearDesc
+    @AppStorage("setBuilderFilter") private var activeFilterRaw: String = CollectionFilter.all.rawValue
+    @AppStorage("setBuilderSort")   private var activeSortRaw: String   = CollectionSort.yearDesc.rawValue
+
+    private var activeFilter: CollectionFilter { CollectionFilter(rawValue: activeFilterRaw) ?? .all }
+    private var activeSort: CollectionSort     { CollectionSort(rawValue: activeSortRaw) ?? .yearDesc }
     @AppStorage("collectionGridCardSize") private var cardSize: Double = 0.25
     @State private var thumbURLs: [String: URL] = [:]
 
@@ -624,7 +627,7 @@ struct SetBuilderView: View {
     private var sortButton: some View {
         Menu {
             ForEach(CollectionSort.allCases) { sort in
-                Button { activeSort = sort } label: {
+                Button { activeSortRaw = sort.rawValue } label: {
                     HStack {
                         Image(systemName: sort.icon)
                         Text(sort.rawValue)
@@ -654,7 +657,7 @@ struct SetBuilderView: View {
     private var filterButton: some View {
         Menu {
             ForEach(CollectionFilter.allCases) { filter in
-                Button { activeFilter = filter } label: {
+                Button { activeFilterRaw = filter.rawValue } label: {
                     HStack {
                         Image(systemName: filter.icon)
                         Text(filter.rawValue)
@@ -689,7 +692,7 @@ struct SetBuilderView: View {
             Image(systemName: "line.3.horizontal.decrease.circle")
                 .font(.system(size: 48)).foregroundStyle(.secondary)
             Text("No releases match the current filter.").foregroundStyle(.secondary)
-            Button("Clear filter") { activeFilter = .all }.buttonStyle(.bordered)
+            Button("Clear filter") { activeFilterRaw = CollectionFilter.all.rawValue }.buttonStyle(.bordered)
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

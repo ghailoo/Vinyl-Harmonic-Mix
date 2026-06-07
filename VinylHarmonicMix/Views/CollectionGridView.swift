@@ -75,8 +75,11 @@ struct CollectionGridView: View {
     @State private var showRefetchAlert = false
     @State private var showRescanAudioAlert = false
     @State private var showSyncSheet = false
-    @State private var activeFilter: CollectionFilter = .all
-    @State private var activeSort: CollectionSort = .yearDesc
+    @AppStorage("collectionGridFilter") private var activeFilterRaw: String = CollectionFilter.all.rawValue
+    @AppStorage("collectionGridSort")   private var activeSortRaw: String   = CollectionSort.yearDesc.rawValue
+
+    private var activeFilter: CollectionFilter { CollectionFilter(rawValue: activeFilterRaw) ?? .all }
+    private var activeSort: CollectionSort     { CollectionSort(rawValue: activeSortRaw) ?? .yearDesc }
 
     // 0 → 120pt minimum (many small cards), 1 → 280pt (few large cards).
     // Default 0.25 reproduces the previous 160pt minimum.
@@ -218,7 +221,7 @@ struct CollectionGridView: View {
                 MBIDScanResultsView(
                     coordinator: scanCoordinator,
                     onFilterSelect: { filter in
-                        activeFilter = filter
+                        activeFilterRaw = filter.rawValue
                         scanCoordinator.dismissPanel()
                     },
                     onOpenItem: { instanceId in
@@ -258,7 +261,7 @@ struct CollectionGridView: View {
         Menu {
             ForEach(CollectionSort.allCases) { sort in
                 Button {
-                    activeSort = sort
+                    activeSortRaw = sort.rawValue
                 } label: {
                     HStack {
                         Image(systemName: sort.icon)
@@ -294,7 +297,7 @@ struct CollectionGridView: View {
         Menu {
             ForEach(CollectionFilter.allCases) { filter in
                 Button {
-                    activeFilter = filter
+                    activeFilterRaw = filter.rawValue
                 } label: {
                     HStack {
                         Image(systemName: filter.icon)
@@ -772,7 +775,7 @@ struct CollectionGridView: View {
             Text("No releases match the current filter.")
                 .foregroundStyle(.secondary)
             Button("Clear filter") {
-                activeFilter = .all
+                activeFilterRaw = CollectionFilter.all.rawValue
             }
             .buttonStyle(.bordered)
             Spacer()
