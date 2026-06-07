@@ -117,8 +117,20 @@ struct UnifiedTopBar: View {
         }
     }
 
+    private func bubbleColor(for title: String) -> Color {
+        switch title {
+        case "Sync":           return .blue
+        case "MBID":           return .purple
+        case "AcousticBrainz": return .teal
+        case "Match Audio":    return .orange
+        case "Cues":           return .pink
+        default:               return .accentColor
+        }
+    }
+
     @ViewBuilder
     private func libraryBubble(title: String, icon: String, action: @escaping () -> Void) -> some View {
+        let tint = bubbleColor(for: title)
         Button(action: action) {
             HStack(spacing: 6) {
                 Image(systemName: icon)
@@ -126,15 +138,38 @@ struct UnifiedTopBar: View {
                 Text(title)
                     .font(.system(size: 12, weight: .medium))
             }
+            .foregroundStyle(tint)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             .background(
                 Capsule()
-                    .fill(.regularMaterial)
-                    .overlay(Capsule().stroke(Color.primary.opacity(0.08), lineWidth: 0.5))
+                    .fill(tint.opacity(0.15))
+                    .overlay(
+                        Capsule()
+                            .stroke(tint.opacity(0.4), lineWidth: 0.5)
+                    )
             )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(LibraryBubbleButtonStyle(tint: tint))
         .help(title)
+    }
+}
+
+struct LibraryBubbleButtonStyle: ButtonStyle {
+    let tint: Color
+    @State private var isHovering = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                Capsule()
+                    .fill(isHovering ? tint.opacity(0.22) : Color.clear)
+                    .animation(.easeInOut(duration: 0.15), value: isHovering)
+            )
+            .scaleEffect(configuration.isPressed ? 0.96 : 1.0)
+            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
+            .onHover { hovering in
+                isHovering = hovering
+            }
     }
 }
