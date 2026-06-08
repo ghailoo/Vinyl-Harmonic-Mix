@@ -328,7 +328,6 @@ final class FileMatchCoordinator {
                 reviewCandidates.removeValue(forKey: trackMBID)
                 try? context.save()
                 linkVersion += 1
-                print("[LINK-BUMP] linkVersion = \(linkVersion) at \(#function)")
             } else {
                 verifyStates[trackMBID] = .conflicted(foundTitle: result.recordingMBIDs.first ?? "unknown recording")
             }
