@@ -135,20 +135,13 @@ struct UnifiedTopBar: View {
             HStack(spacing: 6) {
                 Image(systemName: icon)
                     .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(tint)
                 Text(title)
                     .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.primary)
             }
-            .foregroundStyle(tint)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(
-                Capsule()
-                    .fill(tint.opacity(0.15))
-                    .overlay(
-                        Capsule()
-                            .stroke(tint.opacity(0.4), lineWidth: 0.5)
-                    )
-            )
         }
         .buttonStyle(LibraryBubbleButtonStyle(tint: tint))
         .help(title)
@@ -162,9 +155,18 @@ struct LibraryBubbleButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .background(
-                Capsule()
-                    .fill(isHovering ? tint.opacity(0.22) : Color.clear)
-                    .animation(.easeInOut(duration: 0.15), value: isHovering)
+                ZStack {
+                    Capsule().fill(.regularMaterial)
+                    Capsule()
+                        .fill(tint.opacity(isHovering ? 0.18 : 0))
+                        .animation(.easeInOut(duration: 0.15), value: isHovering)
+                    Capsule()
+                        .stroke(
+                            isHovering ? tint.opacity(0.4) : Color.primary.opacity(0.08),
+                            lineWidth: 0.5
+                        )
+                        .animation(.easeInOut(duration: 0.15), value: isHovering)
+                }
             )
             .scaleEffect(configuration.isPressed ? 0.96 : 1.0)
             .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
