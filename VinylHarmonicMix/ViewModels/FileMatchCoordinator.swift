@@ -1,6 +1,7 @@
 import Foundation
 import SwiftData
 import AVFoundation
+import AudioToolbox
 #if os(macOS)
 import AppKit
 #endif
@@ -737,7 +738,7 @@ final class FileMatchCoordinator {
             let chunk = Array(stubs[offset ..< min(offset + chunkSize, stubs.count)])
             currentTrackLabel = "Reading durations… (\(offset)/\(stubs.count))"
 
-            // Parallel AVAsset header reads — each task creates + discards its own asset instance.
+            // Parallel duration reads via AudioToolbox — avoids Core Media FigFile spam on M4A/MP4.
             let pairs: [(PersistentIdentifier, Int)] = await withTaskGroup(
                 of: (PersistentIdentifier, Int).self
             ) { group in
@@ -745,10 +746,18 @@ final class FileMatchCoordinator {
                     let path = stub.path
                     let id   = stub.id
                     group.addTask {
-                        let asset = AVURLAsset(url: URL(fileURLWithPath: path))
-                        let cm    = try? await asset.load(.duration)
-                        let ms    = cm.map { Int(CMTimeGetSeconds($0) * 1000) } ?? 0
-                        return (id, ms)
+                        let url = URL(fileURLWithPath: path)
+                        var ref: ExtAudioFileRef?
+                        guard ExtAudioFileOpenURL(url as CFURL, &ref) == noErr, let ref else { return (id, 0) }
+                        defer { ExtAudioFileDispose(ref) }
+                        var fmt = AudioStreamBasicDescription()
+                        var sz  = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+                        ExtAudioFileGetProperty(ref, kExtAudioFileProperty_FileDataFormat, &sz, &fmt)
+                        var frames: Int64 = 0
+                        var fsz = UInt32(MemoryLayout<Int64>.size)
+                        ExtAudioFileGetProperty(ref, kExtAudioFileProperty_FileLengthFrames, &fsz, &frames)
+                        let sr = fmt.mSampleRate > 0 ? fmt.mSampleRate : 44100
+                        return (id, frames > 0 ? Int(Double(frames) / sr * 1000) : 0)
                     }
                 }
                 var out: [(PersistentIdentifier, Int)] = []

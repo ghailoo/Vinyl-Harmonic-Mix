@@ -43,65 +43,62 @@ struct CollectionCardView: View {
     // MARK: - Cover image
 
     private var coverImage: some View {
-        GeometryReader { geo in
-            AsyncImage(url: URL(string: item.basicInformation.coverImage)) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable()
-                         .aspectRatio(contentMode: .fill)
-                case .failure, .empty:
-                    ZStack {
-                        Color.secondary.opacity(0.15)
-                        Image(systemName: "music.note")
-                            .font(.system(size: 28))
-                            .foregroundStyle(.secondary)
-                    }
-                @unknown default:
+        AsyncImage(url: URL(string: item.basicInformation.coverImage)) { phase in
+            switch phase {
+            case .success(let image):
+                image.resizable()
+                     .aspectRatio(contentMode: .fill)
+            case .failure, .empty:
+                ZStack {
                     Color.secondary.opacity(0.15)
+                    Image(systemName: "music.note")
+                        .font(.system(size: 28))
+                        .foregroundStyle(.secondary)
                 }
-            }
-            .frame(width: geo.size.width, height: geo.size.width)
-            .clipped()
-            .cornerRadius(8)
-            .overlay(alignment: .topTrailing) {
-                HStack(spacing: 4) {
-                    if badgeLocalCovered > 0 {
-                        Text("ES")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 3)
-                            .background(Capsule().fill(Color(red: 0.15, green: 0.55, blue: 0.30)))
-                            .help("\(badgeLocalCovered) of \(badgeTotal) tracks analyzed from local audio files")
-                    }
-                    if badgeCovered > 0 && badgeTotal > 0 {
-                        Text("\(badgeCovered)/\(badgeTotal)")
-                            .font(.system(size: 9, weight: .bold, design: .rounded))
-                            .monospacedDigit()
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(Capsule().fill(coverageColor))
-                            .help("\(badgeCovered) of \(badgeTotal) tracks have BPM and key data")
-                    }
-                    if badgeLinkedCovered > 0 { linkPip }
-                    if hasMBID { mbidBadge }
-                }
-                .padding(6)
-            }
-            .overlay(alignment: .bottomLeading) {
-                if isActive {
-                    SpinningRecordView(
-                        isPlaying: playback.isPlaying,
-                        coverArtURL: URL(string: item.basicInformation.thumb),
-                        diameter: 24
-                    )
-                    .padding(6)
-                    .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 1)
-                }
+            @unknown default:
+                Color.secondary.opacity(0.15)
             }
         }
         .aspectRatio(1, contentMode: .fit)
+        .clipped()
+        .cornerRadius(8)
+        .overlay(alignment: .topTrailing) {
+            HStack(spacing: 4) {
+                if badgeLocalCovered > 0 {
+                    Text("ES")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color(red: 0.15, green: 0.55, blue: 0.30)))
+                        .help("\(badgeLocalCovered) of \(badgeTotal) tracks analyzed from local audio files")
+                }
+                if badgeCovered > 0 && badgeTotal > 0 {
+                    Text("\(badgeCovered)/\(badgeTotal)")
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(coverageColor))
+                        .help("\(badgeCovered) of \(badgeTotal) tracks have BPM and key data")
+                }
+                if badgeLinkedCovered > 0 { linkPip }
+                if hasMBID { mbidBadge }
+            }
+            .padding(6)
+        }
+        .overlay(alignment: .bottomLeading) {
+            if isActive {
+                SpinningRecordView(
+                    isPlaying: playback.isPlaying,
+                    coverArtURL: URL(string: item.basicInformation.thumb),
+                    diameter: 24
+                )
+                .padding(6)
+                .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 1)
+            }
+        }
     }
 
     private var coverageColor: Color {
