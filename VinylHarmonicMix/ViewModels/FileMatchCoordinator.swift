@@ -1245,10 +1245,9 @@ final class FileMatchCoordinator {
         track.fileMatchState = state
     }
 
-    // TEMPORARY — Phase 1 debug invocation. Remove in Phase 2 when proper UI ships.
-    // Writes the full library + sets to ~/Desktop/rekordbox-test.xml.
-    // No UI trigger currently wired — invoke manually from a debugger or hijack a button.
-    func DEBUG_exportRekordboxXML() {
+    /// Exports the current library as a Rekordbox XML string.
+    /// Returns (xml, trackCount, setCount) for the caller to write + display.
+    func generateRekordboxXML() -> (xml: String, trackCount: Int, setCount: Int)? {
         let trackDescriptor = FetchDescriptor<TrackEntity>(
             predicate: #Predicate<TrackEntity> { $0.fileMatchState == "confident" }
         )
@@ -1257,22 +1256,10 @@ final class FileMatchCoordinator {
         guard let tracks   = try? context.fetch(trackDescriptor),
               let setlists = try? context.fetch(setlistDescriptor) else {
             print("[REKORDBOX-EXPORT] Failed to fetch entities")
-            return
+            return nil
         }
 
         let exporter = RekordboxXMLExporter(tracks: tracks, setlists: setlists)
-        let xml      = exporter.generate()
-
-        let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
-        let url     = desktop.appendingPathComponent("rekordbox-test.xml")
-
-        do {
-            try xml.write(to: url, atomically: true, encoding: .utf8)
-            print("[REKORDBOX-EXPORT] Wrote \(tracks.count) tracks + \(setlists.count) sets → \(url.path)")
-            print("[REKORDBOX-EXPORT] First 500 chars:")
-            print(String(xml.prefix(500)))
-        } catch {
-            print("[REKORDBOX-EXPORT] Write failed: \(error)")
-        }
+        return (exporter.generate(), tracks.count, setlists.count)
     }
 }

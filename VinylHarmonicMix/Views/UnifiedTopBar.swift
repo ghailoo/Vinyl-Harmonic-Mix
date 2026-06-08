@@ -1,4 +1,6 @@
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 
 struct UnifiedTopBar: View {
     @Environment(SyncOrchestrator.self) private var syncOrchestrator
@@ -6,6 +8,9 @@ struct UnifiedTopBar: View {
     @Environment(AudioFeaturesScanCoordinator.self) private var audioFeaturesCoordinator
     @Environment(FileMatchCoordinator.self) private var fileMatchCoordinator
     @Environment(CueDetectionCoordinator.self) private var cueCoordinator
+
+    @State private var showExportSuccessAlert = false
+    @State private var lastExportSummary: String = ""
 
     var body: some View {
         HStack(spacing: 16) {
@@ -15,6 +20,7 @@ struct UnifiedTopBar: View {
                 libraryBubble(title: "AcousticBrainz", icon: "waveform.circle")             { audioFeaturesCoordinator.start() }
                 libraryBubble(title: "Match Audio",    icon: "link.circle")                 { fileMatchCoordinator.startFullScan() }
                 libraryBubble(title: "Cues",           icon: "scope")                       { cueCoordinator.startDetection(scope: .matched) }
+                libraryBubble(title: "Export",         icon: "music.note.list")             { triggerExport() }
             }
 
             NowPlayingBar()
@@ -39,6 +45,34 @@ struct UnifiedTopBar: View {
         .padding(.vertical, 8)
         .background(.regularMaterial)
         .overlay(alignment: .bottom) { Divider() }
+        .alert("Rekordbox Export", isPresented: $showExportSuccessAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(lastExportSummary)
+        }
+    }
+
+    private func triggerExport() {
+        guard let result = fileMatchCoordinator.generateRekordboxXML() else { return }
+
+        let panel = NSSavePanel()
+        panel.title = "Export Rekordbox XML Library"
+        panel.nameFieldStringValue = "VinylHarmonicMix-Library.xml"
+        panel.allowedContentTypes = [.xml]
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                try result.xml.write(to: url, atomically: true, encoding: .utf8)
+                lastExportSummary = "Exported \(result.trackCount) tracks and \(result.setCount) sets to \(url.lastPathComponent)."
+            } catch {
+                print("[REKORDBOX-EXPORT] Write failed: \(error)")
+                lastExportSummary = "Export failed: \(error.localizedDescription)"
+            }
+            showExportSuccessAlert = true
+        }
     }
 
     private var activeOperations: [OperationStatus] {
@@ -124,6 +158,7 @@ struct UnifiedTopBar: View {
         case "AcousticBrainz": return .teal
         case "Match Audio":    return .orange
         case "Cues":           return .pink
+        case "Export":         return .cyan
         default:               return .accentColor
         }
     }
