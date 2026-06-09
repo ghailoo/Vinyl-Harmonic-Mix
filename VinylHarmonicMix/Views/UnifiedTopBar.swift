@@ -8,6 +8,7 @@ struct UnifiedTopBar: View {
     @Environment(AudioFeaturesScanCoordinator.self) private var audioFeaturesCoordinator
     @Environment(FileMatchCoordinator.self) private var fileMatchCoordinator
     @Environment(CueDetectionCoordinator.self) private var cueCoordinator
+    @Environment(DriveMonitor.self) private var driveMonitor
 
     @State private var showExportSuccessAlert = false
     @State private var lastExportSummary: String = ""
@@ -18,8 +19,10 @@ struct UnifiedTopBar: View {
                 libraryBubble(title: "Sync",           icon: "arrow.triangle.2.circlepath") { syncOrchestrator.startSync() }
                 libraryBubble(title: "MBID",           icon: "magnifyingglass.circle")       { scanCoordinator.start() }
                 libraryBubble(title: "AcousticBrainz", icon: "waveform.circle")             { audioFeaturesCoordinator.start() }
-                libraryBubble(title: "Match Audio",    icon: "link.circle")                 { fileMatchCoordinator.startFullScan() }
-                libraryBubble(title: "Cues",           icon: "scope")                       { cueCoordinator.startDetection(scope: .matched) }
+                libraryBubble(title: "Match Audio",    icon: "link.circle",
+                              disabled: !driveMonitor.isAvailable)                          { fileMatchCoordinator.startFullScan() }
+                libraryBubble(title: "Cues",           icon: "scope",
+                              disabled: !driveMonitor.isAvailable)                          { cueCoordinator.startDetection(scope: .matched) }
                 libraryBubble(title: "Export",         icon: "music.note.list")             { triggerExport() }
             }
 
@@ -27,6 +30,7 @@ struct UnifiedTopBar: View {
                 .frame(maxWidth: .infinity)
 
             // Force @Observable tracking for all coordinator state we read in activeOperations
+            let _ = driveMonitor.isAvailable
             let _ = syncOrchestrator.isSyncing
             let _ = syncOrchestrator.syncStatus
             let _ = scanCoordinator.scanned
@@ -164,22 +168,24 @@ struct UnifiedTopBar: View {
     }
 
     @ViewBuilder
-    private func libraryBubble(title: String, icon: String, action: @escaping () -> Void) -> some View {
+    private func libraryBubble(title: String, icon: String, disabled: Bool = false, action: @escaping () -> Void) -> some View {
         let tint = bubbleColor(for: title)
         Button(action: action) {
             HStack(spacing: 6) {
                 Image(systemName: icon)
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(tint)
+                    .foregroundStyle(disabled ? Color.secondary : tint)
                 Text(title)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(disabled ? Color.secondary : Color.primary)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
         }
         .buttonStyle(LibraryBubbleButtonStyle(tint: tint))
-        .help(title)
+        .disabled(disabled)
+        .opacity(disabled ? 0.5 : 1.0)
+        .help(disabled ? "\(title) (unavailable — drive not connected)" : title)
     }
 }
 

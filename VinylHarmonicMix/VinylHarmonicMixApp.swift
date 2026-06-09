@@ -16,6 +16,7 @@ struct VinylHarmonicMixApp: App {
     @State private var cueDetectionCoordinator: CueDetectionCoordinator
     @State private var audioPlaybackController: AudioPlaybackController
     @State private var syncOrchestrator: SyncOrchestrator
+    @State private var driveMonitor: DriveMonitor
 
     init() {
         do {
@@ -61,19 +62,21 @@ struct VinylHarmonicMixApp: App {
             UserDefaults.standard.set(true, forKey: wipeKey)
         }
 
-        let cv    = CollectionViewModel(context: ctx)
-        let scan  = MBIDScanCoordinator(context: ctx)
-        let recs  = RecordingsScanCoordinator(context: ctx)
-        let audio = AudioFeaturesScanCoordinator(context: ctx)
-        let files = FileMatchCoordinator(context: ctx)
-        let local = LocalAnalysisCoordinator(context: ctx)
-        let cue   = CueDetectionCoordinator(context: ctx)
+        let cv      = CollectionViewModel(context: ctx)
+        let scan    = MBIDScanCoordinator(context: ctx)
+        let recs    = RecordingsScanCoordinator(context: ctx)
+        let audio   = AudioFeaturesScanCoordinator(context: ctx)
+        let monitor = DriveMonitor()
+        let files   = FileMatchCoordinator(context: ctx, driveMonitor: monitor)
+        let local   = LocalAnalysisCoordinator(context: ctx)
+        let cue     = CueDetectionCoordinator(context: ctx)
 
         _collectionViewModel        = State(initialValue: cv)
         _scanCoordinator            = State(initialValue: scan)
         _cacheCoordinator           = State(initialValue: DetailCacheCoordinator(context: ctx))
         _recordingsCoordinator      = State(initialValue: recs)
         _audioFeaturesCoordinator   = State(initialValue: audio)
+        _driveMonitor               = State(initialValue: monitor)
         _fileMatchCoordinator       = State(initialValue: files)
         _fingerprintCoordinator     = State(initialValue: FingerprintScanCoordinator(context: ctx))
         _localAnalysisCoordinator   = State(initialValue: local)
@@ -105,6 +108,7 @@ struct VinylHarmonicMixApp: App {
                 .environment(cueDetectionCoordinator)
                 .environment(audioPlaybackController)
                 .environment(syncOrchestrator)
+                .environment(driveMonitor)
                 .task {
                     recordingsCoordinator.backfillOrphanReleaseTracks()
                     recordingsCoordinator.backfillMBIDReleaseTracks()

@@ -84,6 +84,7 @@ final class FileMatchCoordinator {
     var verifyStates: [String: VerifyState] = [:]
 
     private let context: ModelContext
+    private let driveMonitor: DriveMonitor
     private var scanTask: Task<Void, Never>?
     private var pendingLimit: Int? = nil
 
@@ -120,8 +121,9 @@ final class FileMatchCoordinator {
 
     var shouldShowPanel: Bool { phase != .idle }
 
-    init(context: ModelContext) {
+    init(context: ModelContext, driveMonitor: DriveMonitor) {
         self.context = context
+        self.driveMonitor = driveMonitor
         UserDefaults.standard.set(false, forKey: Self.pendingWaveformsKey)
         Task { @MainActor [weak self] in self?.hydrateReviewCandidatesIfNeeded() }
     }
@@ -466,6 +468,13 @@ final class FileMatchCoordinator {
     ///          staleConfidentRecords for the post-Phase-2 outcome report.
     /// SAFETY: never touches files that DO exist; never clears a confident track whose file is present.
     private func runPhase0() async {
+        guard driveMonitor.verifyAccessible() else {
+            print("[PHASE 0] ABORTED — drive not verified accessible. Refusing to sweep orphans.")
+            print("[PHASE 0] If this is incorrect, ensure the music library is mounted and reachable, then re-run.")
+            return
+        }
+        print("[PHASE 0] Drive verified accessible. Proceeding with orphan sweep.")
+
         orphanSweepSummary = nil
         staleConfidentRecords = []
         currentTrackLabel = "Checking for moved/deleted files…"

@@ -21,6 +21,7 @@ struct ContentView: View {
         } detail: {
             VStack(spacing: 0) {
                 UnifiedTopBar()
+                DriveUnavailableBanner()
                 Group {
                     switch sidebarSelection {
                     case .sets:

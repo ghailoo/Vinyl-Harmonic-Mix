@@ -40,6 +40,7 @@ struct SetBuilderView: View {
     @State private var coverageByInstanceId: [Int: (covered: Int, total: Int, localCovered: Int)] = [:]
     @State private var filePathToInstanceId: [String: Int] = [:]
     @State private var playingInstanceId: Int? = nil
+    @State private var highlightedItemId: Int? = nil
     @State private var searchQuery = ""
     @AppStorage("setBuilderFilter") private var activeFilterRaw: String = CollectionFilter.all.rawValue
     @AppStorage("setBuilderSort")   private var activeSortRaw: String   = CollectionSort.yearDesc.rawValue
@@ -62,6 +63,7 @@ struct SetBuilderView: View {
     }
 
     var body: some View {
+        ScrollViewReader { proxy in
         ScrollView {
         LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
             Section {
@@ -70,7 +72,7 @@ struct SetBuilderView: View {
             // Current Track section
             VStack(spacing: 0) {
                 if let track = currentTrack {
-                    currentTrackHero(track: track)
+                    currentTrackHero(track: track, proxy: proxy)
                 } else {
                     Text("Tap a track in your collection below to begin")
                         .font(.subheadline)
@@ -160,6 +162,14 @@ struct SetBuilderView: View {
             .padding(28)
             .frame(width: 360, height: 200)
         }
+        .onChange(of: highlightedItemId) { _, newVal in
+            guard newVal != nil else { return }
+            Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                await MainActor.run { highlightedItemId = nil }
+            }
+        }
+        } // ScrollViewReader
     }
 
     // MARK: - Track pick handler
@@ -375,26 +385,37 @@ struct SetBuilderView: View {
     // MARK: - Current Track hero
 
     @ViewBuilder
-    private func currentTrackHero(track: MixTrack) -> some View {
+    private func currentTrackHero(track: MixTrack, proxy: ScrollViewProxy) -> some View {
         VStack(spacing: 0) {
             // Top row: cover + info (~180pt)
             HStack(alignment: .top, spacing: 16) {
-                AsyncImage(url: thumbURLs[track.filePath ?? ""]) { phase in
-                    switch phase {
-                    case .success(let img):
-                        img.resizable().aspectRatio(contentMode: .fill)
-                    default:
-                        ZStack {
-                            Color.secondary.opacity(0.10)
-                            Image(systemName: "music.note")
-                                .font(.system(size: 36))
-                                .foregroundStyle(.secondary)
+                Button {
+                    guard let instanceId = filePathToInstanceId[track.filePath ?? ""] else { return }
+                    activeFilterRaw = CollectionFilter.all.rawValue
+                    highlightedItemId = instanceId
+                    withAnimation(.easeInOut(duration: 0.4)) {
+                        proxy.scrollTo(instanceId, anchor: .center)
+                    }
+                } label: {
+                    AsyncImage(url: thumbURLs[track.filePath ?? ""]) { phase in
+                        switch phase {
+                        case .success(let img):
+                            img.resizable().aspectRatio(contentMode: .fill)
+                        default:
+                            ZStack {
+                                Color.secondary.opacity(0.10)
+                                Image(systemName: "music.note")
+                                    .font(.system(size: 36))
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
+                    .frame(width: 180, height: 180)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .shadow(color: .black.opacity(0.20), radius: 8, x: 0, y: 4)
                 }
-                .frame(width: 180, height: 180)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .shadow(color: .black.opacity(0.20), radius: 8, x: 0, y: 4)
+                .buttonStyle(.plain)
+                .help("Show in Collection")
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text(track.displayTitle)
@@ -620,10 +641,12 @@ struct SetBuilderView: View {
                             covered: coverageByInstanceId[item.id]?.covered ?? 0,
                             total: coverageByInstanceId[item.id]?.total ?? 0,
                             localCovered: coverageByInstanceId[item.id]?.localCovered ?? 0,
-                            isActive: playingInstanceId == item.id
+                            isActive: playingInstanceId == item.id,
+                            isHighlighted: item.id == highlightedItemId
                         )
                     }
                     .buttonStyle(.plain)
+                    .id(item.id)
                 }
             }
             .padding(.horizontal, 20)

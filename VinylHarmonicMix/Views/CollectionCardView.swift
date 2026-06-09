@@ -8,6 +8,7 @@ struct CollectionCardView: View {
     var localCovered: Int = 0
     var linkedCovered: Int = 0
     var isActive: Bool = false
+    var isHighlighted: Bool = false
 
     @Environment(AudioPlaybackController.self) private var playback
 
@@ -32,6 +33,12 @@ struct CollectionCardView: View {
                 .foregroundStyle(.secondary)
         }
         .contentShape(Rectangle())
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.accentColor, lineWidth: 2)
+                .opacity(isHighlighted ? 1 : 0)
+                .animation(.easeOut(duration: 0.6), value: isHighlighted)
+        )
         .task(id: covered &+ total &* 10_000 &+ localCovered &* 100_000 &+ linkedCovered &* 1_000_000_000) {
             badgeCovered       = covered
             badgeTotal         = total
