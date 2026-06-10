@@ -625,34 +625,75 @@ struct SetBuilderView: View {
 
     @ViewBuilder
     private var collectionGrid: some View {
+        let allItems     = displayedItems
+        let albums       = allItems.filter { !$0.isCompilation }
+        let compilations = allItems.filter {  $0.isCompilation }
+
         if viewModel.items.isEmpty {
             emptyState
-        } else if displayedItems.isEmpty && activeFilter != .all {
+        } else if albums.isEmpty && compilations.isEmpty && activeFilter != .all {
             filteredEmptyState
         } else {
-            LazyVGrid(columns: gridColumns, spacing: 20) {
-                ForEach(displayedItems) { item in
-                    Button {
-                        selectedItem = item
-                    } label: {
-                        CollectionCardView(
-                            item: item,
-                            hasMBID: matchedInstanceIds.contains(item.id),
-                            covered: coverageByInstanceId[item.id]?.covered ?? 0,
-                            total: coverageByInstanceId[item.id]?.total ?? 0,
-                            localCovered: coverageByInstanceId[item.id]?.localCovered ?? 0,
-                            isActive: playingInstanceId == item.id,
-                            isHighlighted: item.id == highlightedItemId
-                        )
+            VStack(spacing: 24) {
+                if !albums.isEmpty {
+                    sectionHeader(title: "12\" Maxi-Singles", count: albums.count)
+                    LazyVGrid(columns: gridColumns, spacing: 20) {
+                        ForEach(albums) { item in
+                            cardButton(for: item)
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .id(item.id)
+                }
+
+                if !compilations.isEmpty {
+                    sectionHeader(title: "Compilations", count: compilations.count)
+                    LazyVGrid(columns: gridColumns, spacing: 20) {
+                        ForEach(compilations) { item in
+                            cardButton(for: item)
+                        }
+                    }
                 }
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
-            .frame(minHeight: 600)
+            .frame(maxWidth: .infinity, minHeight: 600, alignment: .top)
         }
+    }
+
+    @ViewBuilder
+    private func cardButton(for item: CollectionItem) -> some View {
+        Button { selectedItem = item } label: {
+            CollectionCardView(
+                item: item,
+                hasMBID: matchedInstanceIds.contains(item.id),
+                covered: coverageByInstanceId[item.id]?.covered ?? 0,
+                total: coverageByInstanceId[item.id]?.total ?? 0,
+                localCovered: coverageByInstanceId[item.id]?.localCovered ?? 0,
+                isActive: playingInstanceId == item.id,
+                isHighlighted: item.id == highlightedItemId
+            )
+        }
+        .buttonStyle(.plain)
+        .id(item.id)
+    }
+
+    @ViewBuilder
+    private func sectionHeader(title: String, count: Int) -> some View {
+        HStack(spacing: 10) {
+            Text(title)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.primary)
+
+            Text("\(count)")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 2)
+                .background(Color.secondary.opacity(0.15))
+                .clipShape(Capsule())
+
+            Spacer()
+        }
+        .padding(.bottom, 4)
     }
 
     // MARK: - Sort button
@@ -864,4 +905,10 @@ struct SetBuilderView: View {
 
     private func artistKey(_ item: CollectionItem) -> String { item.basicInformation.artists.first?.name ?? "" }
     private func labelKey(_ item: CollectionItem) -> String  { item.basicInformation.labels.first?.name ?? "" }
+}
+
+private extension CollectionItem {
+    var isCompilation: Bool {
+        basicInformation.artists.first?.name.lowercased() == "various"
+    }
 }
