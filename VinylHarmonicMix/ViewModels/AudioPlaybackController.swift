@@ -34,6 +34,17 @@ final class AudioPlaybackController {
     /// Anti-repeat tracking within a single smart extension run.
     private var smartPlayedFilePaths: Set<String> = []
 
+    // MARK: - Pre-load (Phase 2)
+
+    /// Player initialized in advance for the predicted next track. Nil when no preload is ready.
+    private var preloadedPlayer: AVAudioPlayer? = nil
+
+    /// File path the preloaded player corresponds to. Used to verify the preload is still relevant.
+    private var preloadedFilePath: String? = nil
+
+    /// True while a preload task is in flight, prevents duplicate firing.
+    private var isPreloadInFlight: Bool = false
+
     // Mix-mode deck state — both decks observable simultaneously
     private(set) var deckACurrentTime: Double = 0
     private(set) var deckBCurrentTime: Double = 0
@@ -120,6 +131,14 @@ final class AudioPlaybackController {
     // MARK: - Controls
 
     func play(filePath: String) {
+
+        // ── Preload invalidation ─────────────────────────────────────────────
+        // Any explicit user-initiated play for a different file makes the preload stale.
+        if preloadedFilePath != filePath {
+            preloadedPlayer?.stop()
+            preloadedPlayer    = nil
+            preloadedFilePath  = nil
+        }
 
         // ── Toggle: same file is already the active track ────────────────────
         if currentFilePath == filePath {
@@ -258,11 +277,15 @@ final class AudioPlaybackController {
         currentTime     = 0
         duration        = 0
         activeSource    = .single
-        // Stop = "I'm done" — exit set-playback and smart-extension modes
+        // Stop = "I'm done" — exit set-playback, smart-extension, and preload modes
         playingSetItems = []
         playingSetIndex = 0
         isSmartExtensionActive = false
         smartPlayedFilePaths.removeAll()
+        preloadedPlayer?.stop()
+        preloadedPlayer   = nil
+        preloadedFilePath = nil
+        isPreloadInFlight = false
     }
 
     func seek(toFraction fraction: Double) {
@@ -311,7 +334,7 @@ final class AudioPlaybackController {
             if let next = pickNextHarmonicTrack(after: currentPath),
                let nextPath = next.filePath {
                 smartPlayedFilePaths.insert(nextPath)
-                play(filePath: nextPath)
+                playUsingPreloadIfAvailable(filePath: nextPath)
             } else {
                 isSmartExtensionActive = false
                 smartPlayedFilePaths.removeAll()
@@ -335,7 +358,7 @@ final class AudioPlaybackController {
                 smartPlayedFilePaths.insert(lastAnchorPath)
                 smartPlayedFilePaths.insert(extensionPath)
                 stopSet()
-                play(filePath: extensionPath)
+                playUsingPreloadIfAvailable(filePath: extensionPath)
                 return
             }
             stopSet()
@@ -343,7 +366,105 @@ final class AudioPlaybackController {
             return
         }
         playingSetIndex = next
-        play(filePath: playingSetItems[next].filePath)
+        playUsingPreloadIfAvailable(filePath: playingSetItems[next].filePath)
+    }
+
+    private func predictedNextFilePath() -> String? {
+        if !playingSetItems.isEmpty {
+            var next = playingSetIndex + 1
+            while next < playingSetItems.count && playingSetItems[next].filePath.isEmpty {
+                next += 1
+            }
+            if next < playingSetItems.count {
+                return playingSetItems[next].filePath
+            }
+            // Last track of set — predict the smart extension target.
+            guard let currentPath = currentFilePath else { return nil }
+            return pickNextHarmonicTrack(after: currentPath)?.filePath
+        }
+
+        if isSmartExtensionActive, let currentPath = currentFilePath {
+            return pickNextHarmonicTrack(after: currentPath)?.filePath
+        }
+
+        return nil
+    }
+
+    private func maybeTriggerPreload() {
+        guard duration > 0 else { return }
+        guard !isPreloadInFlight else { return }
+        guard preloadedPlayer == nil else { return }
+        guard duration - currentTime <= 30 else { return }
+
+        guard let nextPath = predictedNextFilePath() else { return }
+        guard nextPath != currentFilePath else { return }
+
+        isPreloadInFlight = true
+        let url           = URL(fileURLWithPath: nextPath)
+        let intendedPath  = nextPath
+
+        Task.detached(priority: .utility) { [weak self] in
+            let result: Result<AVAudioPlayer, Error> = Result {
+                let p = try AVAudioPlayer(contentsOf: url)
+                p.prepareToPlay()
+                return p
+            }
+
+            await MainActor.run {
+                guard let self else { return }
+                self.isPreloadInFlight = false
+
+                guard self.predictedNextFilePath() == intendedPath else {
+                    print("[PRELOAD] Stale — predicted next changed, discarding \(url.lastPathComponent)")
+                    return
+                }
+
+                switch result {
+                case .success(let p):
+                    self.preloadedPlayer   = p
+                    self.preloadedFilePath = intendedPath
+                    print("[PRELOAD] Ready: \(url.lastPathComponent)")
+                case .failure(let error):
+                    print("[PRELOAD] Failed: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    private func playUsingPreloadIfAvailable(filePath: String) {
+        if let p = preloadedPlayer, preloadedFilePath == filePath {
+            let claimed   = p
+            preloadedPlayer   = nil
+            preloadedFilePath = nil
+
+            pauseCurrentActive()
+            activeSource = .single
+            stopSinglePlayer()
+
+            let delegate   = PlayerDelegate()
+            delegate.owner = self
+            claimed.delegate = delegate
+            claimed.volume   = Float(volume)
+            claimed.play()
+
+            player          = claimed
+            playerDelegate  = delegate
+            duration        = claimed.duration
+            currentTime     = 0
+            isPlaying       = true
+            currentFilePath = filePath
+            loadedFilePath  = filePath
+            playbackErrors.removeValue(forKey: filePath)
+            startTimer()
+
+            loadWaveformIfNeeded(filePath: filePath)
+            startRAMLoad(filePath: filePath, url: URL(fileURLWithPath: filePath))
+
+            print("[PRELOAD] Used preloaded player for \(URL(fileURLWithPath: filePath).lastPathComponent)")
+            return
+        }
+
+        play(filePath: filePath)
     }
 
     private func pickNextHarmonicTrack(after anchorPath: String) -> MixTrack? {
@@ -720,7 +841,7 @@ final class AudioPlaybackController {
             if let next = pickNextHarmonicTrack(after: currentPath),
                let nextPath = next.filePath {
                 smartPlayedFilePaths.insert(nextPath)
-                play(filePath: nextPath)
+                playUsingPreloadIfAvailable(filePath: nextPath)
             } else {
                 isSmartExtensionActive = false
                 smartPlayedFilePaths.removeAll()
@@ -851,6 +972,7 @@ final class AudioPlaybackController {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.currentTime = self.activePlayer?.currentTime ?? self.currentTime
+                self.maybeTriggerPreload()
                 if let a = self.deckAPlayer {
                     self.deckACurrentTime = a.currentTime
                     self.deckAIsPlaying   = a.isPlaying
