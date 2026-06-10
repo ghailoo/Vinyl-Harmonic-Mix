@@ -23,6 +23,17 @@ final class AudioPlaybackController {
     private(set) var playingSetItems: [SetlistItemEntity] = []
     private(set) var playingSetIndex: Int = 0
 
+    // MARK: - Smart extension (whole-library auto-advance after set ends)
+
+    /// Pool of confident-matched tracks with Camelot+BPM data. Set externally when library changes.
+    var smartAdvancePool: [MixTrack] = []
+
+    /// True when nextTrack() has fallen off the end of a saved set and is now extending via library.
+    private(set) var isSmartExtensionActive: Bool = false
+
+    /// Anti-repeat tracking within a single smart extension run.
+    private var smartPlayedFilePaths: Set<String> = []
+
     // Mix-mode deck state — both decks observable simultaneously
     private(set) var deckACurrentTime: Double = 0
     private(set) var deckBCurrentTime: Double = 0
@@ -157,44 +168,72 @@ final class AudioPlaybackController {
             return
         }
 
-        // ── New file not in either deck — existing single-player behaviour ────
+        // ── New file not in either deck — background-init to avoid main-thread block ─
+        // AVAudioPlayer(contentsOf:) + prepareToPlay() can block 3-6s on NAS files.
         // Deck players keep their positions (paused, not stopped).
         pauseCurrentActive()
         activeSource = .single
         stopSinglePlayer()
-        currentFilePath = filePath
-        loadedFilePath  = filePath
-        playbackErrors.removeValue(forKey: filePath)
 
-        let url = URL(fileURLWithPath: filePath)
+        // Optimistic UI state: claim the path immediately so the toggle-check at top
+        // works on the next call, and so race-protection in the Task can compare against it.
+        let url          = URL(fileURLWithPath: filePath)
+        let intendedPath = filePath
+        currentFilePath  = filePath
+        loadedFilePath   = filePath
+        isPlaying        = false
+        duration         = 0
+        currentTime      = 0
+        playbackErrors.removeValue(forKey: filePath)
 
         // Fast path: Track B was fully preloaded and this new file matches it.
         // (Handles the case where loadDeck(.B) completed but deckBFilePath check
         //  above missed because deckBPlayer was nil when loadDeck started.)
         // — deliberately not repeated here; covered by the deckB check above.
 
-        do {
-            let p = try AVAudioPlayer(contentsOf: url)
-            let delegate = PlayerDelegate()
-            delegate.owner = self
-            p.delegate  = delegate
-            p.volume    = Float(volume)
-            p.prepareToPlay()
-            p.play()
-            player         = p
-            playerDelegate = delegate
-            duration       = p.duration
-            currentTime    = 0
-            isPlaying      = true
-            startTimer()
-        } catch {
-            playbackErrors[filePath] = error.localizedDescription
-            player = nil; playerDelegate = nil
-            isPlaying = false; duration = 0; currentTime = 0
-        }
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let result: Result<AVAudioPlayer, Error> = Result {
+                let p = try AVAudioPlayer(contentsOf: url)
+                p.prepareToPlay()
+                return p
+            }
 
-        loadWaveformIfNeeded(filePath: filePath)
-        startRAMLoad(filePath: filePath, url: url)
+            await MainActor.run {
+                guard let self else { return }
+
+                // Race-protection: if another track was requested while we were loading,
+                // discard this stale result rather than clobbering the newer track.
+                guard self.currentFilePath == intendedPath else {
+                    print("[PLAY] Stale load for \(url.lastPathComponent), discarding")
+                    return
+                }
+
+                switch result {
+                case .success(let p):
+                    let delegate   = PlayerDelegate()
+                    delegate.owner = self
+                    p.delegate     = delegate
+                    p.volume       = Float(self.volume)
+                    p.play()
+                    self.player         = p
+                    self.playerDelegate = delegate
+                    self.duration       = p.duration
+                    self.currentTime    = 0
+                    self.isPlaying      = true
+                    self.startTimer()
+                    self.loadWaveformIfNeeded(filePath: intendedPath)
+                    self.startRAMLoad(filePath: intendedPath, url: url)
+
+                case .failure(let error):
+                    self.playbackErrors[intendedPath] = error.localizedDescription
+                    self.player         = nil
+                    self.playerDelegate = nil
+                    self.isPlaying      = false
+                    self.duration       = 0
+                    self.currentTime    = 0
+                }
+            }
+        }
     }
 
     func pause() {
@@ -219,9 +258,11 @@ final class AudioPlaybackController {
         currentTime     = 0
         duration        = 0
         activeSource    = .single
-        // Stop = "I'm done" — exit set-playback mode
+        // Stop = "I'm done" — exit set-playback and smart-extension modes
         playingSetItems = []
         playingSetIndex = 0
+        isSmartExtensionActive = false
+        smartPlayedFilePaths.removeAll()
     }
 
     func seek(toFraction fraction: Double) {
@@ -252,23 +293,85 @@ final class AudioPlaybackController {
     }
 
     func stopSet() {
+        // NOTE: do NOT reset smart-extension state here — stopSet() is called internally
+        // during the handoff from set mode into extension mode.
         playingSetItems = []
         playingSetIndex = 0
     }
 
     func nextTrack() {
+        // Smart-extension skip: advance to the next harmonic match from the current track.
+        if isSmartExtensionActive {
+            guard let currentPath = currentFilePath else {
+                isSmartExtensionActive = false
+                smartPlayedFilePaths.removeAll()
+                stop()
+                return
+            }
+            if let next = pickNextHarmonicTrack(after: currentPath),
+               let nextPath = next.filePath {
+                smartPlayedFilePaths.insert(nextPath)
+                play(filePath: nextPath)
+            } else {
+                isSmartExtensionActive = false
+                smartPlayedFilePaths.removeAll()
+                stop()
+            }
+            return
+        }
+
         guard !playingSetItems.isEmpty else { return }
         var next = playingSetIndex + 1
         while next < playingSetItems.count && playingSetItems[next].filePath.isEmpty {
             next += 1
         }
         if next >= playingSetItems.count {
+            // End of set — try to extend via smart pool.
+            let lastAnchorPath = playingSetItems[playingSetIndex].filePath
+            if !lastAnchorPath.isEmpty,
+               let extensionTrack = pickNextHarmonicTrack(after: lastAnchorPath),
+               let extensionPath = extensionTrack.filePath {
+                isSmartExtensionActive = true
+                smartPlayedFilePaths.insert(lastAnchorPath)
+                smartPlayedFilePaths.insert(extensionPath)
+                stopSet()
+                play(filePath: extensionPath)
+                return
+            }
             stopSet()
             stop()
             return
         }
         playingSetIndex = next
         play(filePath: playingSetItems[next].filePath)
+    }
+
+    private func pickNextHarmonicTrack(after anchorPath: String) -> MixTrack? {
+        guard let anchor = smartAdvancePool.first(where: { $0.filePath == anchorPath }),
+              !smartAdvancePool.isEmpty else { return nil }
+
+        let excluded = smartPlayedFilePaths.union([anchorPath])
+        let candidates = smartAdvancePool.filter {
+            guard let path = $0.filePath else { return false }
+            return !excluded.contains(path)
+        }
+        guard !candidates.isEmpty else { return nil }
+
+        // 3-pass BPM constraint relaxation — always harmonic, no camelot fallback.
+        let tolerances: [Double] = [0.06, 0.10, 0.15]
+        for pct in tolerances {
+            let absTolerance = anchor.bpm * pct
+            let groups = HarmonicCompatibility.compatibleGroups(
+                for: anchor, in: candidates, bpmTolerance: absTolerance
+            )
+            // Priority order: perfectMatch → moodSwitch → energyBoost → energyDrop
+            for group in [HarmonicGroup.perfectMatch, .moodSwitch, .energyBoost, .energyDrop] {
+                if let match = groups[group]?.first {
+                    return match.track
+                }
+            }
+        }
+        return nil
     }
 
     func previousTrack() {
@@ -594,6 +697,10 @@ final class AudioPlaybackController {
     // MARK: - Delegate callbacks
 
     func handlePlaybackFinished(player finishedPlayer: AVAudioPlayer? = nil) {
+        // Track which player finished so smart extension only fires for single-player completions.
+        let isSinglePlayer = finishedPlayer == nil ||
+            (finishedPlayer !== deckAPlayer && finishedPlayer !== deckBPlayer)
+
         if finishedPlayer != nil && finishedPlayer === deckAPlayer {
             deckAIsPlaying   = false
             deckACurrentTime = deckADuration
@@ -609,6 +716,16 @@ final class AudioPlaybackController {
 
         if !playingSetItems.isEmpty {
             nextTrack()
+        } else if isSinglePlayer && isSmartExtensionActive, let currentPath = currentFilePath {
+            if let next = pickNextHarmonicTrack(after: currentPath),
+               let nextPath = next.filePath {
+                smartPlayedFilePaths.insert(nextPath)
+                play(filePath: nextPath)
+            } else {
+                isSmartExtensionActive = false
+                smartPlayedFilePaths.removeAll()
+                stop()
+            }
         }
     }
 

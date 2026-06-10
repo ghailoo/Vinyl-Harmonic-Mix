@@ -116,6 +116,7 @@ struct SetBuilderView: View {
                 let fp = playback.loadedFilePath ?? playback.currentFilePath
                 if let fp { currentTrack = pool.first(where: { $0.filePath == fp }) }
             }
+            playback.smartAdvancePool = MixTrackPool.confident(from: Array(allTrackEntities))
         }
         .onChange(of: allFeatures.count) { _, _ in
             rebuildFeaturesLookup()
@@ -124,6 +125,7 @@ struct SetBuilderView: View {
         .onChange(of: allTrackEntities.count) { _, _ in
             rebuildCoverageLookup()
             rebuildThumbURLs()
+            playback.smartAdvancePool = MixTrackPool.confident(from: Array(allTrackEntities))
         }
         .onChange(of: playback.currentFilePath) { _, newPath in
             playingInstanceId = newPath.flatMap { filePathToInstanceId[$0] }

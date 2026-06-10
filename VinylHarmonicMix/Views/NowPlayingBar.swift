@@ -67,7 +67,7 @@ struct NowPlayingBar: View {
                 .buttonStyle(.plain)
                 .help("Skip forward 10 seconds")
 
-                if !playback.playingSetItems.isEmpty {
+                if !playback.playingSetItems.isEmpty || playback.isSmartExtensionActive {
                     Button {
                         playback.nextTrack()
                     } label: {
@@ -75,8 +75,12 @@ struct NowPlayingBar: View {
                             .font(.system(size: 11, weight: .semibold))
                     }
                     .buttonStyle(.plain)
-                    .disabled(playback.playingSetIndex >= playback.playingSetItems.count - 1)
-                    .help("Next track in set")
+                    .disabled(
+                        playback.isSmartExtensionActive
+                            ? false
+                            : playback.playingSetIndex >= playback.playingSetItems.count - 1
+                    )
+                    .help(playback.isSmartExtensionActive ? "Skip to next harmonic match" : "Next track in set")
                 }
 
                 Divider().frame(height: 14)
@@ -87,7 +91,15 @@ struct NowPlayingBar: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .frame(maxWidth: 240, alignment: .leading)
-                    if playback.duration > 0 {
+                    if playback.isSmartExtensionActive {
+                        HStack(spacing: 4) {
+                            Image(systemName: "waveform.path")
+                                .font(.system(size: 9))
+                            Text("⇝ Library")
+                                .font(.system(size: 10))
+                        }
+                        .foregroundStyle(.secondary)
+                    } else if playback.duration > 0 {
                         Text("\(formatTime(playback.currentTime)) / \(formatTime(playback.duration))")
                             .font(.system(size: 10).monospacedDigit())
                             .foregroundStyle(.secondary)
