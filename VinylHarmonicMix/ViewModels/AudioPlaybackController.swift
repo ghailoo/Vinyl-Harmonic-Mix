@@ -45,6 +45,23 @@ final class AudioPlaybackController {
     /// True while a preload task is in flight, prevents duplicate firing.
     private var isPreloadInFlight: Bool = false
 
+    // MARK: - Crossfade (Phase 3)
+
+    /// The fading-out player during a crossfade. Held alive at decreasing volume while the new player ramps up.
+    private var crossfadeOutgoingPlayer: AVAudioPlayer? = nil
+
+    /// Strong reference to the outgoing player's delegate (to avoid premature deallocation).
+    private var crossfadeOutgoingDelegate: PlayerDelegate? = nil
+
+    /// 0.0 → 1.0 across the fade duration. Drives both volumes inversely.
+    private var crossfadeProgress: Double = 0.0
+
+    /// True while an automatic crossfade is in progress.
+    private(set) var isCrossfadeActive: Bool = false
+
+    /// Fade duration in seconds. Linear ramp.
+    private let crossfadeDuration: TimeInterval = 5.0
+
     // Mix-mode deck state — both decks observable simultaneously
     private(set) var deckACurrentTime: Double = 0
     private(set) var deckBCurrentTime: Double = 0
@@ -140,17 +157,31 @@ final class AudioPlaybackController {
             preloadedFilePath  = nil
         }
 
+        // ── Crossfade abort — explicit user play of a DIFFERENT track aborts fade ─
+        // Same-path calls (pause/resume toggle) reach the toggle check below, where
+        // crossfadeOutgoingPlayer is also paused/resumed to keep the ramp consistent.
+        if isCrossfadeActive, filePath != currentFilePath {
+            crossfadeOutgoingPlayer?.stop()
+            crossfadeOutgoingPlayer   = nil
+            crossfadeOutgoingDelegate = nil
+            crossfadeProgress = 0.0
+            isCrossfadeActive = false
+            print("[CROSSFADE] Aborted by explicit play()")
+        }
+
         // ── Toggle: same file is already the active track ────────────────────
         if currentFilePath == filePath {
             if isPlaying {
                 activePlayer?.pause()
                 stopTimer()
                 isPlaying = false
+                crossfadeOutgoingPlayer?.pause()
             } else {
                 activePlayer?.play()
                 startTimer()
                 isPlaying = true
                 playbackErrors.removeValue(forKey: filePath)
+                if isCrossfadeActive { crossfadeOutgoingPlayer?.play() }
             }
             return
         }
@@ -259,6 +290,7 @@ final class AudioPlaybackController {
         activePlayer?.pause()
         stopTimer()
         isPlaying = false
+        if isCrossfadeActive { crossfadeOutgoingPlayer?.pause() }
     }
 
     func setLoadedFile(_ path: String?) {
@@ -286,6 +318,11 @@ final class AudioPlaybackController {
         preloadedPlayer   = nil
         preloadedFilePath = nil
         isPreloadInFlight = false
+        crossfadeOutgoingPlayer?.stop()
+        crossfadeOutgoingPlayer   = nil
+        crossfadeOutgoingDelegate = nil
+        crossfadeProgress = 0.0
+        isCrossfadeActive = false
     }
 
     func seek(toFraction fraction: Double) {
@@ -323,6 +360,16 @@ final class AudioPlaybackController {
     }
 
     func nextTrack() {
+        // Abort any active crossfade — user skip overrides the auto-transition.
+        if isCrossfadeActive {
+            crossfadeOutgoingPlayer?.stop()
+            crossfadeOutgoingPlayer   = nil
+            crossfadeOutgoingDelegate = nil
+            crossfadeProgress = 0.0
+            isCrossfadeActive = false
+            print("[CROSSFADE] Aborted by skip")
+        }
+
         // Smart-extension skip: advance to the next harmonic match from the current track.
         if isSmartExtensionActive {
             guard let currentPath = currentFilePath else {
@@ -465,6 +512,68 @@ final class AudioPlaybackController {
         }
 
         play(filePath: filePath)
+    }
+
+    private func maybeTriggerCrossfade() {
+        guard duration > 0 else { return }
+        guard !isCrossfadeActive else { return }
+        guard let incoming = preloadedPlayer, let incomingPath = preloadedFilePath else { return }
+        guard duration - currentTime <= crossfadeDuration else { return }
+
+        // Claim the preload — it's becoming the new active player.
+        preloadedPlayer   = nil
+        preloadedFilePath = nil
+
+        // Move current player into the outgoing slot.
+        crossfadeOutgoingPlayer   = player
+        crossfadeOutgoingDelegate = playerDelegate
+
+        // Promote incoming to active — UI switches to the new track immediately.
+        let delegate   = PlayerDelegate()
+        delegate.owner = self
+        incoming.delegate = delegate
+        incoming.volume   = 0   // starts silent
+        incoming.play()
+
+        player          = incoming
+        playerDelegate  = delegate
+        duration        = incoming.duration
+        currentTime     = 0
+        isPlaying       = true
+        currentFilePath = incomingPath
+        loadedFilePath  = incomingPath
+        playbackErrors.removeValue(forKey: incomingPath)
+
+        loadWaveformIfNeeded(filePath: incomingPath)
+        startRAMLoad(filePath: incomingPath, url: URL(fileURLWithPath: incomingPath))
+
+        crossfadeProgress = 0.0
+        isCrossfadeActive = true
+
+        print("[CROSSFADE] Started: \(URL(fileURLWithPath: incomingPath).lastPathComponent)")
+    }
+
+    private func tickCrossfade() {
+        guard isCrossfadeActive else { return }
+
+        let increment = (1.0 / 25.0) / crossfadeDuration
+        crossfadeProgress = min(1.0, crossfadeProgress + increment)
+
+        let outVol = Float(volume) * Float(1.0 - crossfadeProgress)
+        let inVol  = Float(volume) * Float(crossfadeProgress)
+
+        crossfadeOutgoingPlayer?.volume = outVol
+        player?.volume                  = inVol
+
+        if crossfadeProgress >= 1.0 {
+            crossfadeOutgoingPlayer?.stop()
+            crossfadeOutgoingPlayer   = nil
+            crossfadeOutgoingDelegate = nil
+            crossfadeProgress         = 0.0
+            isCrossfadeActive         = false
+            player?.volume            = Float(volume)
+            print("[CROSSFADE] Complete")
+        }
     }
 
     private func pickNextHarmonicTrack(after anchorPath: String) -> MixTrack? {
@@ -818,6 +927,15 @@ final class AudioPlaybackController {
     // MARK: - Delegate callbacks
 
     func handlePlaybackFinished(player finishedPlayer: AVAudioPlayer? = nil) {
+        // Outgoing player finished mid-crossfade — its audio is already inaudible; just clean up.
+        // Do NOT trigger nextTrack or smart extension — the incoming player has already taken over.
+        if let finished = finishedPlayer, finished === crossfadeOutgoingPlayer {
+            crossfadeOutgoingPlayer?.stop()
+            crossfadeOutgoingPlayer   = nil
+            crossfadeOutgoingDelegate = nil
+            return
+        }
+
         // Track which player finished so smart extension only fires for single-player completions.
         let isSinglePlayer = finishedPlayer == nil ||
             (finishedPlayer !== deckAPlayer && finishedPlayer !== deckBPlayer)
@@ -973,6 +1091,8 @@ final class AudioPlaybackController {
                 guard let self else { return }
                 self.currentTime = self.activePlayer?.currentTime ?? self.currentTime
                 self.maybeTriggerPreload()
+                self.maybeTriggerCrossfade()
+                self.tickCrossfade()
                 if let a = self.deckAPlayer {
                     self.deckACurrentTime = a.currentTime
                     self.deckAIsPlaying   = a.isPlaying
