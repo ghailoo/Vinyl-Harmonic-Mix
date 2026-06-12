@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
+import SwiftData
 
 struct UnifiedTopBar: View {
     @Environment(SyncOrchestrator.self) private var syncOrchestrator
@@ -9,9 +10,12 @@ struct UnifiedTopBar: View {
     @Environment(FileMatchCoordinator.self) private var fileMatchCoordinator
     @Environment(CueDetectionCoordinator.self) private var cueCoordinator
     @Environment(DriveMonitor.self) private var driveMonitor
+    @Environment(\.modelContext) private var modelContext
 
     @State private var showExportSuccessAlert = false
     @State private var lastExportSummary: String = ""
+    @State private var showBackupAlert = false
+    @State private var lastBackupSummary: String = ""
 
     var body: some View {
         HStack(spacing: 16) {
@@ -24,6 +28,7 @@ struct UnifiedTopBar: View {
                 libraryBubble(title: "Cues",           icon: "scope",
                               disabled: !driveMonitor.isAvailable)                          { cueCoordinator.startDetection(scope: .matched) }
                 libraryBubble(title: "Export",         icon: "music.note.list")             { triggerExport() }
+                libraryBubble(title: "Backup",         icon: "externaldrive.badge.timemachine") { runBackupExport() }
             }
 
             NowPlayingBar()
@@ -54,6 +59,11 @@ struct UnifiedTopBar: View {
         } message: {
             Text(lastExportSummary)
         }
+        .alert("Matches Backup", isPresented: $showBackupAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(lastBackupSummary)
+        }
     }
 
     private func triggerExport() {
@@ -76,6 +86,39 @@ struct UnifiedTopBar: View {
                 lastExportSummary = "Export failed: \(error.localizedDescription)"
             }
             showExportSuccessAlert = true
+        }
+    }
+
+    private func runBackupExport() {
+        let panel = NSSavePanel()
+        panel.title = "Backup Matches"
+        panel.nameFieldStringValue = "VinylHarmonicMix-Matches-Backup.json"
+        panel.allowedContentTypes = [.json]
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor in
+                do {
+                    let backup = try MatchesBackupService.collectBackup(modelContext: modelContext)
+                    try MatchesBackupService.writeBackup(backup, to: url)
+
+                    // Persist security-scoped bookmark for Phase 2 (launch detection) and Phase 3 (auto-update).
+                    if let bookmark = try? url.bookmarkData(
+                        options: .withSecurityScope,
+                        includingResourceValuesForKeys: nil,
+                        relativeTo: nil
+                    ) {
+                        UserDefaults.standard.set(bookmark, forKey: UserDefaults.matchesBackupBookmarkKey)
+                    }
+
+                    lastBackupSummary = "Saved \(backup.totalEntries) confident matches to \(url.lastPathComponent)."
+                } catch {
+                    lastBackupSummary = "Backup failed: \(error.localizedDescription)"
+                }
+                showBackupAlert = true
+            }
         }
     }
 
@@ -163,6 +206,7 @@ struct UnifiedTopBar: View {
         case "Match Audio":    return .orange
         case "Cues":           return .pink
         case "Export":         return .cyan
+        case "Backup":         return .brown
         default:               return .accentColor
         }
     }
