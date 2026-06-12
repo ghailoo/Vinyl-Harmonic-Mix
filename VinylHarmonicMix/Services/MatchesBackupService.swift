@@ -88,3 +88,127 @@ final class MatchesBackupService {
         try data.write(to: url, options: .atomic)
     }
 }
+
+// MARK: - Restore result
+
+struct RestoreResult {
+    let restored: Int
+    let skippedAlreadyMatched: Int
+    let skippedFileMissing: Int
+    let skippedTrackMissing: Int
+    let totalInBackup: Int
+}
+
+// MARK: - Import / restore
+
+extension MatchesBackupService {
+
+    /// Reads and parses a backup JSON file. Throws on parse failure or unsupported schema version.
+    static func readBackup(from url: URL) throws -> MatchesBackup {
+        let data = try Data(contentsOf: url)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let backup = try decoder.decode(MatchesBackup.self, from: data)
+        guard backup.schemaVersion == 1 else {
+            throw NSError(domain: "MatchesBackupService", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "Unsupported backup schema version \(backup.schemaVersion). Expected version 1."
+            ])
+        }
+        return backup
+    }
+
+    /// Applies a backup to the current SwiftData store using an additive-only policy:
+    /// - TrackEntity already confident → skipped (preserve user intent)
+    /// - LocalFileEntity not found by fileName → skipped (file missing from library)
+    /// - TrackEntity not found by (instanceId, position) → skipped (library changed)
+    /// - All others → match written
+    static func applyBackup(_ backup: MatchesBackup, modelContext: ModelContext) throws -> RestoreResult {
+        var restored = 0
+        var skippedAlreadyMatched = 0
+        var skippedFileMissing = 0
+        var skippedTrackMissing = 0
+
+        for entry in backup.entries {
+            let instanceId = entry.instanceId
+            let position = entry.position
+
+            let collectionItemDescriptor = FetchDescriptor<CollectionItemEntity>(
+                predicate: #Predicate { $0.instanceId == instanceId }
+            )
+            guard let collectionItem = try modelContext.fetch(collectionItemDescriptor).first else {
+                skippedTrackMissing += 1
+                continue
+            }
+            guard let track = collectionItem.tracks.first(where: { $0.position == position }) else {
+                skippedTrackMissing += 1
+                continue
+            }
+
+            if track.fileMatchState == "confident" {
+                skippedAlreadyMatched += 1
+                continue
+            }
+
+            let targetFileName = entry.fileName
+            let fileDescriptor = FetchDescriptor<LocalFileEntity>(
+                predicate: #Predicate { $0.fileName == targetFileName }
+            )
+            let candidates = try modelContext.fetch(fileDescriptor)
+
+            guard !candidates.isEmpty else {
+                skippedFileMissing += 1
+                continue
+            }
+
+            let localFile: LocalFileEntity
+            if candidates.count == 1 {
+                localFile = candidates[0]
+            } else if let unmatched = candidates.first(where: { $0.track == nil }) {
+                localFile = unmatched
+            } else {
+                print("[RESTORE] Skipping ambiguous filename: \(targetFileName) (\(candidates.count) candidates, all already matched)")
+                skippedFileMissing += 1
+                continue
+            }
+
+            localFile.track = track
+            localFile.matchMethod = entry.matchMethod
+            localFile.matchScore = entry.matchScore
+            track.fileMatchState = "confident"
+            track.primaryLocalFilePath = localFile.filePath
+
+            restored += 1
+        }
+
+        try modelContext.save()
+
+        return RestoreResult(
+            restored: restored,
+            skippedAlreadyMatched: skippedAlreadyMatched,
+            skippedFileMissing: skippedFileMissing,
+            skippedTrackMissing: skippedTrackMissing,
+            totalInBackup: backup.totalEntries
+        )
+    }
+
+    /// Resolves the stored security-scoped bookmark to a URL.
+    /// Returns nil if no bookmark stored, resolution fails, or file no longer exists.
+    static func storedBackupURL() -> URL? {
+        guard let bookmark = UserDefaults.standard.data(forKey: UserDefaults.matchesBackupBookmarkKey) else {
+            return nil
+        }
+        var isStale = false
+        guard let url = try? URL(
+            resolvingBookmarkData: bookmark,
+            options: .withSecurityScope,
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        ) else {
+            return nil
+        }
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return nil
+        }
+        return url
+    }
+}

@@ -16,6 +16,8 @@ struct UnifiedTopBar: View {
     @State private var lastExportSummary: String = ""
     @State private var showBackupAlert = false
     @State private var lastBackupSummary: String = ""
+    @State private var showRestoreAlert = false
+    @State private var lastRestoreSummary: String = ""
 
     var body: some View {
         HStack(spacing: 16) {
@@ -29,6 +31,7 @@ struct UnifiedTopBar: View {
                               disabled: !driveMonitor.isAvailable)                          { cueCoordinator.startDetection(scope: .matched) }
                 libraryBubble(title: "Export",         icon: "music.note.list")             { triggerExport() }
                 libraryBubble(title: "Backup",         icon: "externaldrive.badge.timemachine") { runBackupExport() }
+                libraryBubble(title: "Restore",        icon: "arrow.clockwise.icloud")          { runBackupImport() }
             }
 
             NowPlayingBar()
@@ -63,6 +66,11 @@ struct UnifiedTopBar: View {
             Button("OK", role: .cancel) { }
         } message: {
             Text(lastBackupSummary)
+        }
+        .alert("Matches Restore", isPresented: $showRestoreAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(lastRestoreSummary)
         }
     }
 
@@ -118,6 +126,44 @@ struct UnifiedTopBar: View {
                     lastBackupSummary = "Backup failed: \(error.localizedDescription)"
                 }
                 showBackupAlert = true
+            }
+        }
+    }
+
+    private func runBackupImport() {
+        let panel = NSOpenPanel()
+        panel.title = "Restore Matches from Backup"
+        panel.allowedContentTypes = [.json]
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor in
+                do {
+                    let backup = try MatchesBackupService.readBackup(from: url)
+                    let result = try MatchesBackupService.applyBackup(backup, modelContext: modelContext)
+
+                    if let bookmark = try? url.bookmarkData(
+                        options: .withSecurityScope,
+                        includingResourceValuesForKeys: nil,
+                        relativeTo: nil
+                    ) {
+                        UserDefaults.standard.set(bookmark, forKey: UserDefaults.matchesBackupBookmarkKey)
+                    }
+
+                    lastRestoreSummary = """
+                    Restored \(result.restored) matches from \(url.lastPathComponent).
+                    Skipped \(result.skippedAlreadyMatched) (already matched).
+                    Skipped \(result.skippedFileMissing) (file not found in library).
+                    Skipped \(result.skippedTrackMissing) (track not found in library).
+                    Total in backup: \(result.totalInBackup).
+                    """
+                } catch {
+                    lastRestoreSummary = "Restore failed: \(error.localizedDescription)"
+                }
+                showRestoreAlert = true
             }
         }
     }
@@ -207,6 +253,7 @@ struct UnifiedTopBar: View {
         case "Cues":           return .pink
         case "Export":         return .cyan
         case "Backup":         return .brown
+        case "Restore":        return .indigo
         default:               return .accentColor
         }
     }

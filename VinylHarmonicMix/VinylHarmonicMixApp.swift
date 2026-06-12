@@ -17,6 +17,9 @@ struct VinylHarmonicMixApp: App {
     @State private var audioPlaybackController: AudioPlaybackController
     @State private var syncOrchestrator: SyncOrchestrator
     @State private var driveMonitor: DriveMonitor
+    @State private var showLaunchRestorePrompt = false
+    @State private var launchBackupURL: URL?
+    @State private var launchBackupEntries: Int = 0
 
     init() {
         do {
@@ -129,6 +132,17 @@ struct VinylHarmonicMixApp: App {
                     let states = Dictionary(grouping: allItems, by: \.mbidScanState).mapValues(\.count)
                     print("📊 mbidScanState distribution: \(states)")
 #endif
+                    await checkForRestorePrompt()
+                }
+                .alert("Restore Matches from Backup?", isPresented: $showLaunchRestorePrompt) {
+                    Button("Restore Now") {
+                        Task { @MainActor in
+                            await performLaunchRestore()
+                        }
+                    }
+                    Button("Later", role: .cancel) { }
+                } message: {
+                    Text("No confident matches found in the current library, but a backup file with \(launchBackupEntries) entries was found. Restore from backup?")
                 }
         }
         .modelContainer(container)
@@ -143,5 +157,34 @@ struct VinylHarmonicMixApp: App {
             .environment(localAnalysisCoordinator)
         }
 #endif
+    }
+
+    @MainActor
+    private func checkForRestorePrompt() async {
+        let descriptor = FetchDescriptor<TrackEntity>(
+            predicate: #Predicate { $0.fileMatchState == "confident" }
+        )
+        let ctx = container.mainContext
+        guard let confidentCount = try? ctx.fetchCount(descriptor) else { return }
+        guard confidentCount == 0 else { return }
+        guard let backupURL = MatchesBackupService.storedBackupURL() else { return }
+        guard let backup = try? MatchesBackupService.readBackup(from: backupURL) else { return }
+        guard backup.totalEntries > 0 else { return }
+        launchBackupURL = backupURL
+        launchBackupEntries = backup.totalEntries
+        showLaunchRestorePrompt = true
+    }
+
+    @MainActor
+    private func performLaunchRestore() async {
+        guard let url = launchBackupURL else { return }
+        guard let backup = try? MatchesBackupService.readBackup(from: url) else { return }
+        let ctx = container.mainContext
+        do {
+            let result = try MatchesBackupService.applyBackup(backup, modelContext: ctx)
+            print("[RESTORE] Launch restore: \(result.restored) restored, \(result.skippedFileMissing) skipped (file missing), \(result.skippedTrackMissing) skipped (track missing)")
+        } catch {
+            print("[RESTORE] Launch restore failed: \(error.localizedDescription)")
+        }
     }
 }
