@@ -78,6 +78,7 @@ final class FileMatchCoordinator {
     var currentTrackLabel: String = ""
     var lastError: String? = nil
     var orphanSweepSummary: String? = nil
+    var onScanCompleted: (() -> Void)? = nil
 
     // In-memory candidates for review rows (transient — repopulated each scan run)
     var reviewCandidates: [String: [ScoredCandidate]] = [:]
@@ -162,6 +163,7 @@ final class FileMatchCoordinator {
         reportOrphanSweepOutcome()
         try? context.save()
         phase = .completed
+        onScanCompleted?()
     }
 
     func pause() {
@@ -202,6 +204,7 @@ final class FileMatchCoordinator {
             guard let self else { return }
             await self.generateWaveformsForConfidentTracks()
             self.phase = .completed
+            self.onScanCompleted?()
         }
     }
 
@@ -456,6 +459,7 @@ final class FileMatchCoordinator {
             if limit == nil { await self.generateWaveformsForConfidentTracks() }
             try? self.context.save()
             self.phase = .completed
+            self.onScanCompleted?()
         }
     }
 

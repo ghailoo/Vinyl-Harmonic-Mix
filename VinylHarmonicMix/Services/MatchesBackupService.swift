@@ -191,6 +191,24 @@ extension MatchesBackupService {
         )
     }
 
+    /// Silently refreshes the bookmarked backup file with current confident matches.
+    /// No-ops if no bookmark stored, bookmark resolution fails, file missing, or write fails.
+    /// Designed to be called from FileMatchCoordinator.onScanCompleted — quiet failure semantics only.
+    @MainActor
+    static func autoUpdateBackupIfPossible(modelContext: ModelContext) {
+        guard let url = storedBackupURL() else {
+            print("[AUTO-BACKUP] No stored backup path, skipping auto-update")
+            return
+        }
+        do {
+            let backup = try collectBackup(modelContext: modelContext)
+            try writeBackup(backup, to: url)
+            print("[AUTO-BACKUP] Refreshed: \(backup.totalEntries) confident matches to \(url.lastPathComponent)")
+        } catch {
+            print("[AUTO-BACKUP] Failed silently: \(error.localizedDescription)")
+        }
+    }
+
     /// Resolves the stored security-scoped bookmark to a URL.
     /// Returns nil if no bookmark stored, resolution fails, or file no longer exists.
     static func storedBackupURL() -> URL? {

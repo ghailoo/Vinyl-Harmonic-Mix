@@ -113,6 +113,11 @@ struct VinylHarmonicMixApp: App {
                 .environment(syncOrchestrator)
                 .environment(driveMonitor)
                 .task {
+                    fileMatchCoordinator.onScanCompleted = {
+                        Task { @MainActor in
+                            MatchesBackupService.autoUpdateBackupIfPossible(modelContext: container.mainContext)
+                        }
+                    }
                     recordingsCoordinator.backfillOrphanReleaseTracks()
                     recordingsCoordinator.backfillMBIDReleaseTracks()
 #if DEBUG
