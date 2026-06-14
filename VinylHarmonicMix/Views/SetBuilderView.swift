@@ -91,6 +91,9 @@ struct SetBuilderView: View {
             }
             .frame(height: 280)
 
+            // Suggestions panel — only when draft is non-empty
+            suggestionsPanel
+
             Divider()
 
             // Collection grid section
@@ -382,6 +385,101 @@ struct SetBuilderView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Suggestions panel
+
+    @ViewBuilder
+    private var suggestionsPanel: some View {
+        if !workingSetTracks.isEmpty, let anchor = workingSetTracks.last {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 10) {
+                    Image(systemName: "wand.and.stars")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.tint)
+                    Text("Next in Set")
+                        .font(.system(size: 14, weight: .semibold))
+                    Text("\(workingSetTracks.count) so far · anchored to '\(anchor.displayTitle)'")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Spacer()
+                }
+                .padding(.horizontal, 20)
+
+                suggestionsContent(anchor: anchor)
+            }
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.secondary.opacity(0.04))
+                    .padding(.horizontal, 12)
+            )
+            .padding(.bottom, 8)
+        }
+    }
+
+    @ViewBuilder
+    private func suggestionsContent(anchor: MixTrack) -> some View {
+        if anchor.camelot.isEmpty || anchor.bpm <= 0 {
+            Text("Last track has no harmonic data — no suggestions available.")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 8)
+        } else {
+            let candidates = rankedSuggestions(for: anchor, limit: 10)
+            if candidates.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("No compatible tracks at ±\(Int(bpmTolerancePct))% BPM tolerance.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        Button("Widen to ±10%") { bpmTolerancePct = 10 }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        Button("Widen to ±20%") { bpmTolerancePct = 20 }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 8)
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(candidates, id: \.track.filePath) { item in
+                            Button {
+                                handleTrackPick(item.track)
+                            } label: {
+                                TransitionBubbleView(anchor: anchor, candidate: item.track)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+    }
+
+    private func rankedSuggestions(for anchor: MixTrack, limit: Int) -> [CompatibleItem] {
+        let absoluteTolerance = anchor.bpm * (bpmTolerancePct / 100.0)
+        let groups = HarmonicCompatibility.compatibleGroups(
+            for: anchor, in: pool, bpmTolerance: absoluteTolerance)
+        let excludedPaths = Set(workingSetTracks.compactMap { $0.filePath })
+        let groupOrder: [HarmonicGroup] = [.perfectMatch, .moodSwitch, .energyBoost, .energyDrop]
+        var ranked: [CompatibleItem] = []
+        for group in groupOrder {
+            guard let items = groups[group] else { continue }
+            for item in items {
+                guard let path = item.track.filePath, !excludedPaths.contains(path) else { continue }
+                ranked.append(item)
+                if ranked.count >= limit { return ranked }
+            }
+        }
+        return ranked
     }
 
     // MARK: - Current Track hero
