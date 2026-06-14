@@ -529,8 +529,14 @@ struct SetBuilderView: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                         Button {
-                            currentTrack = nil
-                            playback.setLoadedFile(nil)
+                            // Pop from draft only when the hero is the last-added entry
+                            // (guards against clearing the draft while just browsing)
+                            if let hero = currentTrack,
+                               workingSetTracks.last == hero {
+                                workingSetTracks.removeLast()
+                            }
+                            currentTrack = workingSetTracks.last
+                            playback.setLoadedFile(workingSetTracks.last?.filePath)
                         } label: {
                             Image(systemName: "arrow.triangle.2.circlepath")
                                 .font(.system(size: 11, weight: .semibold))
