@@ -32,6 +32,7 @@ struct SetBuilderView: View {
     // Harmonic strip controls
     @AppStorage("setBuilderBpmTolerancePct") private var bpmTolerancePct: Double = 5.0
     @AppStorage("setBuilderStopOnTrackChange") private var stopOnTrackChange: Bool = true
+    @AppStorage("setBuilderAutoPlayOnPick")    private var autoPlayOnPick: Bool = true
     @State private var visibleGroups: Set<HarmonicGroup> = Set(HarmonicGroup.allCases)
     @State private var sliderDragValue: Double = 5.0
 
@@ -182,9 +183,13 @@ struct SetBuilderView: View {
     private func handleTrackPick(_ track: MixTrack) {
         if stopOnTrackChange { playback.pause() }
         currentTrack = track
-        playback.setLoadedFile(track.filePath)
         if workingSetTracks.last?.id != track.id {
             workingSetTracks.append(track)
+        }
+        if autoPlayOnPick, let fp = track.filePath {
+            playback.play(filePath: fp)
+        } else {
+            playback.setLoadedFile(track.filePath)
         }
     }
 
@@ -242,6 +247,7 @@ struct SetBuilderView: View {
                 .controlSize(.small)
             }
             Menu {
+                Toggle("Auto-play on pick", isOn: $autoPlayOnPick)
                 Toggle("Stop playback when changing track", isOn: $stopOnTrackChange)
             } label: {
                 Image(systemName: "gearshape")
