@@ -97,6 +97,7 @@ struct SettingsView: View {
     @State private var showResetSheet = false
     @State private var resetCompletion: ResetService.Summary?
     @State private var resetErrorMessage: String?
+    @State private var resetFailure: ResetService.ResetError?
     @State private var lastBackup = ResetService.mostRecentBackup()
 
     var body: some View {
@@ -498,6 +499,23 @@ struct SettingsView: View {
                 Text("All data was cleared. A safety backup (\(resetCompletion.matchesBackedUp) matches) was saved to:\n\(resetCompletion.backupFolder.path)")
             }
         }
+        .alert("Reset Failed — Data Was NOT Deleted", isPresented: Binding(
+            get: { resetFailure != nil },
+            set: { if !$0 { resetFailure = nil } }
+        )) {
+            Button("OK") { }
+#if os(macOS)
+            Button("Show Backup in Finder") {
+                if case .deletionFailed(let folder, _) = resetFailure {
+                    NSWorkspace.shared.activateFileViewerSelecting([folder])
+                }
+            }
+#endif
+        } message: {
+            if let resetFailure {
+                Text(resetFailure.errorDescription ?? "Reset failed.")
+            }
+        }
     }
 
     private func performReset() {
@@ -506,8 +524,12 @@ struct SettingsView: View {
             resetErrorMessage = nil
             lastBackup = (summary.backupFolder, .now)
             resetCompletion = summary
+        } catch let error as ResetService.ResetError {
+            // Deletion failed after the backup was already written — the data is untouched.
+            resetErrorMessage = nil
+            resetFailure = error
         } catch {
-            resetErrorMessage = "Reset failed: \(error.localizedDescription)"
+            resetErrorMessage = "Reset failed before any backup was completed: \(error.localizedDescription)"
         }
     }
 

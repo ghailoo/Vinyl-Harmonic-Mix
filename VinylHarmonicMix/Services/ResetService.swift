@@ -10,6 +10,19 @@ enum ResetService {
         let matchesBackedUp: Int
     }
 
+    /// Thrown only once the safety backup is already written to disk, so callers can tell
+    /// the user their data is untouched and exactly where the backup lives.
+    enum ResetError: LocalizedError {
+        case deletionFailed(backupFolder: URL, underlying: Error)
+
+        var errorDescription: String? {
+            switch self {
+            case .deletionFailed(let backupFolder, let underlying):
+                return "Nothing was deleted — the reset failed partway through, but your data is untouched. A safety backup was already saved to:\n\(backupFolder.path)\n\nError: \(underlying.localizedDescription)"
+            }
+        }
+    }
+
     static var backupsRootDirectory: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/VinylHarmonicMix/Backups")
@@ -38,7 +51,11 @@ enum ResetService {
     /// SwiftData entity, and clears UserDefaults except the keys needed to keep the user's
     /// Discogs/AcoustID credentials and library folder selection intact.
     static func performReset(modelContext: ModelContext) throws -> Summary {
-        let stamp = ISO8601DateFormatter().string(from: .now).replacingOccurrences(of: ":", with: "-")
+        // Fractional seconds so two resets within the same second (e.g. an immediate retry
+        // after a failure) still land in distinct folders instead of overwriting one another.
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let stamp = formatter.string(from: .now).replacingOccurrences(of: ":", with: "-")
         let folder = backupsRootDirectory.appendingPathComponent("reset-\(stamp)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
 
@@ -47,7 +64,14 @@ enum ResetService {
         let backup = try MatchesBackupService.collectBackup(modelContext: modelContext)
         try MatchesBackupService.writeBackup(backup, to: folder.appendingPathComponent("matches-backup.json"))
 
-        try deleteAllEntities(modelContext)
+        // From here on the backup is safely on disk — a failure below must tell the caller
+        // that data is intact rather than reporting a generic error.
+        do {
+            try deleteAllEntities(modelContext)
+        } catch {
+            throw ResetError.deletionFailed(backupFolder: folder, underlying: error)
+        }
+
         clearUserDefaults()
 
         return Summary(backupFolder: folder, matchesBackedUp: backup.totalEntries)
@@ -64,22 +88,38 @@ enum ResetService {
         }
     }
 
-    /// Deletes children before parents so cascade rules don't race explicit deletes of the
-    /// same rows; harmless either way since every type in the schema is wiped regardless.
+    /// SwiftData's batch `context.delete(model:)` can't evaluate relationship rules and trips
+    /// a "mandatory nullify inverse" constraint trigger the moment a cascade/nullify rule is
+    /// involved (e.g. LocalFileEntity.cuePoints → CuePointEntity.localFile). Object-level
+    /// deletes honour those rules, so fetch every row of a type and delete it individually.
+    private static func deleteAll<T: PersistentModel>(_ type: T.Type, in context: ModelContext) throws {
+        for object in try context.fetch(FetchDescriptor<T>()) {
+            context.delete(object)
+        }
+    }
+
+    /// Delete the three cascade roots first — CollectionItemEntity cascades to
+    /// BasicInformationEntity (→ artists/labels/formats) and TrackEntity; LocalFileEntity
+    /// cascades to CuePointEntity; SetlistEntity cascades to SetlistItemEntity (see the
+    /// @Relationship(deleteRule:) declarations in Models/*.swift). Whatever those cascades
+    /// don't reach (orphan rows with no parent) is cleaned up explicitly afterwards, in any
+    /// order, then a single save commits everything atomically.
     private static func deleteAllEntities(_ context: ModelContext) throws {
-        try context.delete(model: CuePointEntity.self)
-        try context.delete(model: LocalAudioFeaturesEntity.self)
-        try context.delete(model: LocalFileEntity.self)
-        try context.delete(model: SetlistItemEntity.self)
-        try context.delete(model: SetlistEntity.self)
-        try context.delete(model: RecordingFeaturesEntity.self)
-        try context.delete(model: TrackEntity.self)
-        try context.delete(model: ArtistCreditEntity.self)
-        try context.delete(model: LabelCreditEntity.self)
-        try context.delete(model: FormatEntity.self)
-        try context.delete(model: BasicInformationEntity.self)
-        try context.delete(model: ReleaseDetailEntity.self)
-        try context.delete(model: CollectionItemEntity.self)
+        try deleteAll(CollectionItemEntity.self, in: context)
+        try deleteAll(LocalFileEntity.self, in: context)
+        try deleteAll(SetlistEntity.self, in: context)
+
+        try deleteAll(TrackEntity.self, in: context)
+        try deleteAll(BasicInformationEntity.self, in: context)
+        try deleteAll(ArtistCreditEntity.self, in: context)
+        try deleteAll(LabelCreditEntity.self, in: context)
+        try deleteAll(FormatEntity.self, in: context)
+        try deleteAll(ReleaseDetailEntity.self, in: context)
+        try deleteAll(RecordingFeaturesEntity.self, in: context)
+        try deleteAll(LocalAudioFeaturesEntity.self, in: context)
+        try deleteAll(CuePointEntity.self, in: context)
+        try deleteAll(SetlistItemEntity.self, in: context)
+
         try context.save()
     }
 
