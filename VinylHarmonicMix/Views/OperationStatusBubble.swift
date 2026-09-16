@@ -34,7 +34,8 @@ struct OperationStatusBubble: View {
                 Text(label)
                     .font(.system(size: 11, weight: .medium).monospacedDigit())
                     .lineLimit(1)
-                    .truncationMode(.middle)
+                    .truncationMode(.tail)
+                    .fixedSize()
 
                 if let pauseAction = status.pauseAction, !status.isPaused, !status.isPausing {
                     Button(action: pauseAction) {

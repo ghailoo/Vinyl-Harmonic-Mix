@@ -23,6 +23,9 @@ struct UnifiedTopBar: View {
         HStack(spacing: 16) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
+                    // Clears the sidebar toggle button, which overlaps this row's own
+                    // leading padding and otherwise clips the "Sync" bubble.
+                    Color.clear.frame(width: 32, height: 1)
                     libraryBubble(title: "Sync",           icon: "arrow.triangle.2.circlepath") { syncOrchestrator.startSync() }
                     libraryBubble(title: "MBID",           icon: "magnifyingglass.circle")       { scanCoordinator.start() }
                     libraryBubble(title: "AcousticBrainz", icon: "waveform.circle")             { audioFeaturesCoordinator.start() }
@@ -233,7 +236,7 @@ struct UnifiedTopBar: View {
         switch c.phase {
         case .indexing:
             return .simple(name: "Match Audio", icon: "link", isRunning: true,
-                           statusText: "Indexing… \(c.indexedCount)")
+                           statusText: "Indexing \(c.indexedCount.formatted())")
         case .matching:
             return .simple(name: "Match Audio", icon: "link", isRunning: true,
                            count: c.processedTracks, total: c.totalTracks)
