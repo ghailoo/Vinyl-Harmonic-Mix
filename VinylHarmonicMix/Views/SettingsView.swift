@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 #if os(macOS)
 import AppKit
 #endif
@@ -44,14 +45,59 @@ private struct LibraryScanProgressPanel: View {
     }
 }
 
+private struct ResetConfirmationSheet: View {
+    let onConfirm: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirmationText = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label("Reset All Data", systemImage: "exclamationmark.triangle.fill")
+                .font(.title2.bold())
+                .foregroundStyle(.red)
+
+            Text("This permanently deletes your entire synced collection, MusicBrainz/AcousticBrainz data, local file matches, sets, and cue points from this app. A safety copy of the current data is saved to disk first, but this action cannot be undone from within the app.")
+
+            Text("Your Discogs credentials, AcoustID key, and library folder selection are kept — you will not need to re-enter them.")
+                .foregroundStyle(.secondary)
+
+            Text("Type RESET to confirm:")
+                .font(.headline)
+            TextField("RESET", text: $confirmationText)
+                .textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled()
+#if os(iOS)
+                .textInputAutocapitalization(.characters)
+#endif
+
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                Button("Reset All Data", role: .destructive) {
+                    onConfirm()
+                    dismiss()
+                }
+                .disabled(confirmationText != "RESET")
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 420)
+    }
+}
+
 struct SettingsView: View {
     @Environment(SettingsViewModel.self) private var settings
     @Environment(FileMatchCoordinator.self) private var fileMatchCoordinator
     @Environment(FingerprintScanCoordinator.self) private var fingerprintCoordinator
     @Environment(LocalAnalysisCoordinator.self) private var localAnalysisCoordinator
+    @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
     @State private var mbSavedConfirmation = false
+    @State private var showResetSheet = false
+    @State private var resetCompletion: ResetService.Summary?
+    @State private var resetErrorMessage: String?
+    @State private var lastBackup = ResetService.mostRecentBackup()
 
     var body: some View {
         @Bindable var settings = settings
@@ -391,6 +437,28 @@ struct SettingsView: View {
                     FingerprintScanPanelView(coordinator: fingerprintCoordinator)
                 }
             }
+
+            // MARK: Danger Zone
+            Section("Danger Zone") {
+                if let lastBackup {
+                    Label(
+                        "Last safety backup: \(lastBackup.url.lastPathComponent) (\(lastBackup.date.formatted(date: .abbreviated, time: .shortened)))",
+                        systemImage: "checkmark.circle.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+
+                Button("Reset All Data…", role: .destructive) {
+                    showResetSheet = true
+                }
+
+                if let error = resetErrorMessage {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                        .font(.caption)
+                }
+            }
         }
         .navigationTitle("Settings")
 #if os(macOS)
@@ -410,6 +478,37 @@ struct SettingsView: View {
                 .allowsHitTesting(false)
         }
 #endif
+        .sheet(isPresented: $showResetSheet) {
+            ResetConfirmationSheet(onConfirm: performReset)
+        }
+        .alert("Reset Complete", isPresented: Binding(
+            get: { resetCompletion != nil },
+            set: { if !$0 { resetCompletion = nil } }
+        )) {
+            Button("OK") { }
+#if os(macOS)
+            Button("Show in Finder") {
+                if let folder = resetCompletion?.backupFolder {
+                    NSWorkspace.shared.activateFileViewerSelecting([folder])
+                }
+            }
+#endif
+        } message: {
+            if let resetCompletion {
+                Text("All data was cleared. A safety backup (\(resetCompletion.matchesBackedUp) matches) was saved to:\n\(resetCompletion.backupFolder.path)")
+            }
+        }
+    }
+
+    private func performReset() {
+        do {
+            let summary = try ResetService.performReset(modelContext: modelContext)
+            resetErrorMessage = nil
+            lastBackup = (summary.backupFolder, .now)
+            resetCompletion = summary
+        } catch {
+            resetErrorMessage = "Reset failed: \(error.localizedDescription)"
+        }
     }
 
     // MARK: - Essentia provisioning UI
