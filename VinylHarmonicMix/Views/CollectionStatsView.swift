@@ -593,9 +593,12 @@ struct CollectionStatsView: View {
 
     private var localAnalysisCard: some View {
         let confident = localAnalysisCoordinator.confidentCount
-        let analyzed  = localFeatureEntities.count
+        // Only count features whose owning track is still confident-matched — a track can
+        // fall out of "confident" (re-match, manual unlink) after being analyzed, leaving a
+        // stale LocalAudioFeaturesEntity row that no longer belongs in this ratio.
+        let analyzed  = localFeatureEntities.filter { $0.track?.fileMatchState == "confident" }.count
         let remaining = max(0, confident - analyzed)
-        let pct = confident > 0 ? min(100, analyzed * 100 / max(confident, 1)) : 0
+        let pct = confident > 0 ? analyzed * 100 / confident : 0
         let isRunning = localAnalysisCoordinator.phase == .analyzing
                      || localAnalysisCoordinator.phase == .paused
         let fileTotal      = localAnalysisCoordinator.inScopeFileCount
