@@ -57,6 +57,7 @@ struct SetBuilderView: View {
     @State private var showSaveSetSheet = false
     @State private var showSyncSheet = false
     @State private var newSetName = ""
+    @State private var showClearConfirmation = false
 
     private var gridColumns: [GridItem] {
         let minWidth = 120.0 + cardSize * 160.0
@@ -238,12 +239,28 @@ struct SetBuilderView: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                 Button("Clear") {
-                    workingSetTracks = []
-                    currentTrack = nil
-                    playback.setLoadedFile(nil)
+                    if workingSetTracks.count >= 2 {
+                        showClearConfirmation = true
+                    } else {
+                        workingSetTracks = []
+                        currentTrack = nil
+                        playback.setLoadedFile(nil)
+                    }
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
+                .confirmationDialog(
+                    "Clear \(workingSetTracks.count) tracks from this set?",
+                    isPresented: $showClearConfirmation,
+                    titleVisibility: .visible
+                ) {
+                    Button("Clear \(workingSetTracks.count) Tracks", role: .destructive) {
+                        workingSetTracks = []
+                        currentTrack = nil
+                        playback.setLoadedFile(nil)
+                    }
+                    Button("Cancel", role: .cancel) { }
+                }
             }
             Menu {
                 Toggle("Auto-play on pick", isOn: $autoPlayOnPick)
