@@ -283,6 +283,7 @@ struct UnifiedTopBar: View {
         .disabled(disabled)
         .opacity(disabled ? 0.5 : 1.0)
         .help(disabled ? "\(title) (unavailable — drive not connected)" : title)
+        .accessibilityLabel(disabled ? "\(title) (unavailable — drive not connected)" : title)
     }
 }
 

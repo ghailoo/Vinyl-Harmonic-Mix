@@ -79,6 +79,8 @@ struct CollectionDetailView: View {
             }
             .buttonStyle(.plain)
             .keyboardShortcut(.cancelAction)
+            .help("Close")
+            .accessibilityLabel("Close")
             Spacer()
         }
         .padding(.horizontal, 20)
@@ -184,6 +186,8 @@ struct CollectionDetailView: View {
                             .background(Circle().fill(.black.opacity(0.5)))
                     }
                     .buttonStyle(.plain)
+                    .help("Previous photo")
+                    .accessibilityLabel("Previous photo")
 
                     Spacer()
 
@@ -197,6 +201,8 @@ struct CollectionDetailView: View {
                             .background(Circle().fill(.black.opacity(0.5)))
                     }
                     .buttonStyle(.plain)
+                    .help("Next photo")
+                    .accessibilityLabel("Next photo")
                 }
                 .padding(.horizontal, 8)
                 .frame(width: 240, height: 240)
@@ -379,6 +385,7 @@ struct CollectionDetailView: View {
                             }
                             .buttonStyle(.plain)
                             .help("Set or correct the recording MBID for this track")
+                            .accessibilityLabel("Set or correct the recording MBID for this track")
                             .padding(.trailing, 4)
                         }
                         if let fp = filePath {
@@ -392,6 +399,7 @@ struct CollectionDetailView: View {
                             }
                             .buttonStyle(.plain)
                             .help(isPlaying ? "Pause" : "Play")
+                            .accessibilityLabel(isPlaying ? "Pause" : "Play")
                             .padding(.trailing, 6)
                         }
                         if onPromoteToCurrent != nil,
@@ -423,6 +431,7 @@ struct CollectionDetailView: View {
                             }
                             .buttonStyle(.plain)
                             .help("Set as Current Track in Set Builder")
+                            .accessibilityLabel("Set as Current Track in Set Builder")
                             .padding(.trailing, 6)
                         }
                         Text(track.duration.isEmpty ? "—" : track.duration)
@@ -629,6 +638,7 @@ struct CollectionDetailView: View {
                             .buttonStyle(.bordered)
                             .controlSize(.small)
                             .help("Remove this MusicBrainz match and clear track recordings")
+                            .accessibilityLabel("Remove this MusicBrainz match and clear track recordings")
                         }
                     }
                     if entity.scanState == .matchedViaSearch {
@@ -636,6 +646,7 @@ struct CollectionDetailView: View {
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                             .help("This match was found via indexed search rather than a direct Discogs↔MusicBrainz URL relationship. Verify it matches your pressing.")
+                            .accessibilityLabel("This match was found via indexed search rather than a direct Discogs↔MusicBrainz URL relationship. Verify it matches your pressing.")
                     } else if entity.scanState == .matchedManually {
                         Text("Set manually")
                             .font(.caption)
@@ -1015,6 +1026,7 @@ struct CollectionDetailView: View {
                     .padding(.vertical, 2)
                     .background(Capsule().fill(Color(red: 0.15, green: 0.55, blue: 0.30)))
                     .help("BPM & key analyzed from your local audio file")
+                    .accessibilityLabel("BPM & key analyzed from your local audio file")
                 Text("\(Int(bpm)) BPM")
                     .font(.system(size: 12, weight: .semibold).monospacedDigit())
                     .foregroundStyle(.primary)
@@ -1083,6 +1095,7 @@ struct CollectionDetailView: View {
                         .padding(.vertical, 2)
                         .background(Capsule().fill(Color(red: 0.15, green: 0.55, blue: 0.30)))
                         .help("BPM & key analyzed from your local audio file")
+                        .accessibilityLabel("BPM & key analyzed from your local audio file")
                 } else if source == .ab {
                     Text("AB")
                         .font(.system(size: 9, weight: .bold))
@@ -1091,6 +1104,7 @@ struct CollectionDetailView: View {
                         .padding(.vertical, 2)
                         .background(Capsule().fill(Color(red: 0.35, green: 0.45, blue: 0.65)))
                         .help("BPM & key from the AcousticBrainz database")
+                        .accessibilityLabel("BPM & key from the AcousticBrainz database")
                 }
 
                 // BPM — right side, prominent

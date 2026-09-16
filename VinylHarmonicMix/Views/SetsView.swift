@@ -46,6 +46,7 @@ struct SetsView: View {
                     Label("New Set", systemImage: "plus")
                 }
                 .help("Create new set")
+                .accessibilityLabel("Create new set")
             }
         }
         .navigationTitle("Sets")

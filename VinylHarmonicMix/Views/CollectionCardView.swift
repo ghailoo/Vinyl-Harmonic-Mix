@@ -79,6 +79,7 @@ struct CollectionCardView: View {
                         .padding(.vertical, 3)
                         .background(Capsule().fill(Color(red: 0.15, green: 0.55, blue: 0.30)))
                         .help("\(badgeLocalCovered) of \(badgeTotal) tracks analyzed from local audio files")
+                        .accessibilityLabel("\(badgeLocalCovered) of \(badgeTotal) tracks analyzed from local audio files")
                 }
                 if badgeCovered > 0 && badgeTotal > 0 {
                     Text("\(badgeCovered)/\(badgeTotal)")
@@ -89,6 +90,7 @@ struct CollectionCardView: View {
                         .padding(.vertical, 3)
                         .background(Capsule().fill(coverageColor))
                         .help("\(badgeCovered) of \(badgeTotal) tracks have BPM and key data")
+                        .accessibilityLabel("\(badgeCovered) of \(badgeTotal) tracks have BPM and key data")
                 }
                 if badgeLinkedCovered > 0 { linkPip }
                 if hasMBID { mbidBadge }
@@ -122,6 +124,7 @@ struct CollectionCardView: View {
             .background(Circle().fill(Color.accentColor.opacity(0.85)))
             .shadow(color: .black.opacity(0.25), radius: 1, y: 0.5)
             .help("Local audio files linked to tracks")
+            .accessibilityLabel("Local audio files linked to tracks")
     }
 
     private var mbidBadge: some View {
@@ -148,5 +151,6 @@ struct CollectionCardView: View {
             )
             .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
             .help("Matched to MusicBrainz")
+            .accessibilityLabel("Matched to MusicBrainz")
     }
 }

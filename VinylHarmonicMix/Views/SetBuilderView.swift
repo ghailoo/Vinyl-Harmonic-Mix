@@ -257,6 +257,7 @@ struct SetBuilderView: View {
             .menuIndicator(.hidden)
             .frame(width: 28)
             .help("Set Builder settings")
+            .accessibilityLabel("Set Builder settings")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -534,6 +535,7 @@ struct SetBuilderView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Show in Collection")
+                .accessibilityLabel("Show in Collection")
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text(track.displayTitle)
@@ -564,6 +566,7 @@ struct SetBuilderView: View {
                         }
                         .buttonStyle(.plain)
                         .help("Change current track")
+                        .accessibilityLabel("Change current track")
                     }
 
                     let labelYear: String = {
@@ -639,6 +642,7 @@ struct SetBuilderView: View {
                     }
                     .buttonStyle(.plain)
                     .help("Scan cue points for this track")
+                    .accessibilityLabel("Scan cue points for this track")
                     .disabled(cueCoordinator.phase == .detecting)
                 }
                 .padding(.horizontal, 16)
@@ -681,6 +685,7 @@ struct SetBuilderView: View {
                 .padding(.horizontal, 6).padding(.vertical, 3)
                 .background(Capsule().fill(Color(red: 0.15, green: 0.55, blue: 0.30)))
                 .help("BPM & key analyzed from your local audio file (Essentia)")
+                .accessibilityLabel("BPM & key analyzed from your local audio file (Essentia)")
         case .ab:
             Text("AB")
                 .font(.system(size: 10, weight: .bold))
@@ -688,6 +693,7 @@ struct SetBuilderView: View {
                 .padding(.horizontal, 6).padding(.vertical, 3)
                 .background(Capsule().fill(Color(red: 0.35, green: 0.45, blue: 0.65)))
                 .help("BPM & key from AcousticBrainz")
+                .accessibilityLabel("BPM & key from AcousticBrainz")
         case .none:
             EmptyView()
         }
@@ -711,6 +717,8 @@ struct SetBuilderView: View {
                             .foregroundStyle(Color.secondary.opacity(0.6))
                     }
                     .buttonStyle(.plain)
+                    .help("Clear search")
+                    .accessibilityLabel("Clear search")
                 }
             }
             .padding(.horizontal, 8)

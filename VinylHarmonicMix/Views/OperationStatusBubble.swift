@@ -42,6 +42,7 @@ struct OperationStatusBubble: View {
                     }
                     .buttonStyle(.plain)
                     .help("Pause")
+                    .accessibilityLabel("Pause")
                 } else if status.isPausing {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 10, weight: .bold))
@@ -52,6 +53,7 @@ struct OperationStatusBubble: View {
                     }
                     .buttonStyle(.plain)
                     .help("Resume")
+                    .accessibilityLabel("Resume")
                 }
             }
             .padding(.horizontal, 12)

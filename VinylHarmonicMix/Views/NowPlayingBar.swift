@@ -26,6 +26,7 @@ struct NowPlayingBar: View {
                     .buttonStyle(.plain)
                     .disabled(playback.playingSetIndex == 0)
                     .help("Previous track in set")
+                    .accessibilityLabel("Previous track in set")
                 }
 
                 Button {
@@ -36,6 +37,7 @@ struct NowPlayingBar: View {
                 }
                 .buttonStyle(.plain)
                 .help("Skip back 10 seconds")
+                .accessibilityLabel("Skip back 10 seconds")
 
                 Button {
                     playback.play(filePath: path)
@@ -47,6 +49,7 @@ struct NowPlayingBar: View {
                 }
                 .buttonStyle(.plain)
                 .help(playback.isPlaying ? "Pause" : "Resume")
+                .accessibilityLabel(playback.isPlaying ? "Pause" : "Resume")
 
                 Button {
                     playback.stop()
@@ -57,6 +60,7 @@ struct NowPlayingBar: View {
                 }
                 .buttonStyle(.plain)
                 .help("Stop")
+                .accessibilityLabel("Stop")
 
                 Button {
                     playback.skipForward10()
@@ -66,6 +70,7 @@ struct NowPlayingBar: View {
                 }
                 .buttonStyle(.plain)
                 .help("Skip forward 10 seconds")
+                .accessibilityLabel("Skip forward 10 seconds")
 
                 if !playback.playingSetItems.isEmpty || playback.isSmartExtensionActive {
                     Button {
@@ -81,6 +86,7 @@ struct NowPlayingBar: View {
                             : playback.playingSetIndex >= playback.playingSetItems.count - 1
                     )
                     .help(playback.isSmartExtensionActive ? "Skip to next harmonic match" : "Next track in set")
+                    .accessibilityLabel(playback.isSmartExtensionActive ? "Skip to next harmonic match" : "Next track in set")
                 }
 
                 Divider().frame(height: 14)

@@ -100,6 +100,7 @@ struct AudioFeaturesScanResultsView: View {
             }
             .buttonStyle(.plain)
             .help(isExpanded ? "Collapse panel" : "Expand panel")
+            .accessibilityLabel(isExpanded ? "Collapse panel" : "Expand panel")
         }
         .padding(.horizontal, 16)
         .padding(.top, 4)
@@ -141,6 +142,7 @@ struct AudioFeaturesScanResultsView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Expand panel")
+                .accessibilityLabel("Expand panel")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)

@@ -70,6 +70,7 @@ struct LocalAnalysisPanelView: View {
         case .paused:         Image(systemName: "pause.circle.fill").foregroundStyle(.orange)
         case .failed(let m):  Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red)
             .help(m)
+            .accessibilityLabel(m)
         default:              ProgressView().controlSize(.small)
         }
     }

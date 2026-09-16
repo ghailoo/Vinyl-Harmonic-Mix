@@ -143,6 +143,7 @@ struct SetLibraryView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Remove from set")
+                .accessibilityLabel("Remove from set")
             }
             .padding(.vertical, 4)
 

@@ -152,6 +152,8 @@ struct DeckAReleasePicker: View {
                             .foregroundStyle(Color.secondary.opacity(0.6))
                     }
                     .buttonStyle(.plain)
+                    .help("Clear search")
+                    .accessibilityLabel("Clear search")
                 }
             }
             .padding(.horizontal, 10).padding(.vertical, 6)

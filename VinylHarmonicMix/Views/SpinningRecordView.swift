@@ -10,6 +10,8 @@ struct SpinningRecordView: View {
     let coverArtURL: URL?
     var diameter: CGFloat = 30
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     // Spin-state: all @State so they survive re-renders and prop changes.
     @State private var frozenAngle: Double = 0
     @State private var spinStartDate: Date = .now
@@ -22,15 +24,16 @@ struct SpinningRecordView: View {
     private static let grooveFractions: [Double] = [0.84, 0.76, 0.67, 0.58, 0.49]
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isPlaying)) { context in
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isPlaying || reduceMotion)) { context in
             let angle: Double = {
-                guard isPlaying else { return frozenAngle }
+                guard isPlaying, !reduceMotion else { return frozenAngle }
                 let elapsed = context.date.timeIntervalSince(spinStartDate)
                 return spinStartAngle + (elapsed / secondsPerRevolution) * 360.0
             }()
             disc(angle: angle)
         }
         .onChange(of: isPlaying) { _, nowPlaying in
+            guard !reduceMotion else { return }
             if nowPlaying {
                 // Resume: restart the elapsed-time clock from the frozen position.
                 spinStartDate  = .now

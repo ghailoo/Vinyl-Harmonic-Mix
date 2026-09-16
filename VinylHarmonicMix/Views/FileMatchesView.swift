@@ -76,6 +76,8 @@ struct FileMatchesView: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
+                .help("Clear search")
+                .accessibilityLabel("Clear search")
             }
         }
         .padding(.horizontal, 10)
@@ -308,6 +310,7 @@ private struct ConfidentRowView: View {
                         }
                         .buttonStyle(.plain)
                         .help(isThisPlaying ? "Pause" : "Play")
+                        .accessibilityLabel(isThisPlaying ? "Pause" : "Play")
                     }
                     Button("Change") { pickFile() }
                         .controlSize(.small)
