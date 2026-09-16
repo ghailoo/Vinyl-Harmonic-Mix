@@ -27,7 +27,7 @@ struct MBIDScanResultsView: View {
                 .strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5)
         )
         .shadow(color: .black.opacity(0.12), radius: 12, x: 0, y: 3)
-        .animation(.easeInOut(duration: 0.2), value: isExpanded)
+        .animation(.snappy, value: isExpanded)
         .overlay(alignment: .bottom) {
             if let msg = toastMessage {
                 Text(msg)
@@ -39,7 +39,7 @@ struct MBIDScanResultsView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: toastMessage)
+        .animation(.snappy, value: toastMessage)
         .sheet(item: $mbidEntryItem) { item in
             MBIDManualEntryView(
                 item: item,

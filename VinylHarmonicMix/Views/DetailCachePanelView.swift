@@ -23,7 +23,7 @@ struct DetailCachePanelView: View {
                 .strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5)
         )
         .shadow(color: .black.opacity(0.12), radius: 12, x: 0, y: 3)
-        .animation(.easeInOut(duration: 0.2), value: isExpanded)
+        .animation(.snappy, value: isExpanded)
     }
 
     // MARK: - Expanded

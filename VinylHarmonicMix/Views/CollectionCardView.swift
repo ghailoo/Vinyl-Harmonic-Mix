@@ -37,7 +37,7 @@ struct CollectionCardView: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(Color.accentColor, lineWidth: 2)
                 .opacity(isHighlighted ? 1 : 0)
-                .animation(.easeOut(duration: 0.6), value: isHighlighted)
+                .animation(.snappy, value: isHighlighted)
         )
         .task(id: covered &+ total &* 10_000 &+ localCovered &* 100_000 &+ linkedCovered &* 1_000_000_000) {
             badgeCovered       = covered

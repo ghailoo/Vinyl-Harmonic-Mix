@@ -360,14 +360,18 @@ struct SetBuilderView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
                     ForEach(compatibleItems) { entry in
-                        StripTileView(
-                            track: entry.item.track,
-                            group: entry.group,
-                            thumbURL: thumbURLs[entry.item.track.filePath ?? ""],
-                            releaseName: nil,
-                            isCandidate: false
-                        )
-                        .onTapGesture { handleTrackPick(entry.item.track) }
+                        Button {
+                            handleTrackPick(entry.item.track)
+                        } label: {
+                            StripTileView(
+                                track: entry.item.track,
+                                group: entry.group,
+                                thumbURL: thumbURLs[entry.item.track.filePath ?? ""],
+                                releaseName: nil,
+                                isCandidate: false
+                            )
+                        }
+                        .buttonStyle(InteractiveTileButtonStyle())
                     }
                 }
                 .padding(.horizontal, 14)
@@ -460,7 +464,7 @@ struct SetBuilderView: View {
                             } label: {
                                 TransitionBubbleView(anchor: anchor, candidate: item.track)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(InteractiveTileButtonStyle())
                         }
                     }
                     .padding(.horizontal, 20)
@@ -512,7 +516,7 @@ struct SetBuilderView: View {
                     guard let instanceId = filePathToInstanceId[track.filePath ?? ""] else { return }
                     activeFilterRaw = CollectionFilter.all.rawValue
                     highlightedItemId = instanceId
-                    withAnimation(.easeInOut(duration: 0.4)) {
+                    withAnimation(.smooth) {
                         proxy.scrollTo(instanceId, anchor: .center)
                     }
                 } label: {
@@ -804,7 +808,7 @@ struct SetBuilderView: View {
                 isHighlighted: item.id == highlightedItemId
             )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(InteractiveTileButtonStyle())
         .id(item.id)
     }
 

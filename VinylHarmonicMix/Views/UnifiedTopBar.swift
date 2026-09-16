@@ -298,17 +298,36 @@ struct LibraryBubbleButtonStyle: ButtonStyle {
                     Capsule().fill(.regularMaterial)
                     Capsule()
                         .fill(tint.opacity(isHovering ? 0.18 : 0))
-                        .animation(.easeInOut(duration: 0.15), value: isHovering)
+                        .animation(.snappy, value: isHovering)
                     Capsule()
                         .stroke(
                             isHovering ? tint.opacity(0.4) : Color.primary.opacity(0.08),
                             lineWidth: 0.5
                         )
-                        .animation(.easeInOut(duration: 0.15), value: isHovering)
+                        .animation(.snappy, value: isHovering)
                 }
             )
             .scaleEffect(configuration.isPressed ? 0.96 : 1.0)
-            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
+            .animation(.snappy, value: configuration.isPressed)
+            .onHover { hovering in
+                isHovering = hovering
+            }
+    }
+}
+
+/// Shared press/hover feedback for tappable surfaces that already draw their own
+/// background/shape (grid cards, harmonic-strip tiles, suggestion bubbles) — unlike
+/// `LibraryBubbleButtonStyle`, this doesn't impose a capsule, just a hover brighten
+/// and a press scale-down so it works on any shape.
+struct InteractiveTileButtonStyle: ButtonStyle {
+    @State private var isHovering = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .brightness(isHovering ? 0.06 : 0)
+            .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
+            .animation(.snappy, value: isHovering)
+            .animation(.snappy, value: configuration.isPressed)
             .onHover { hovering in
                 isHovering = hovering
             }

@@ -64,7 +64,7 @@ struct CollectionStatsView: View {
                         .padding(.vertical, 20)
                     }
                 }
-                .animation(.easeInOut(duration: 0.25), value: cacheCoordinator.shouldShowPanel)
+                .animation(.snappy, value: cacheCoordinator.shouldShowPanel)
             }
         }
         .navigationTitle("Stats")
