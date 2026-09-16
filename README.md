@@ -16,6 +16,10 @@ VinylHarmonicMix turns a Discogs collection into a working DJ tool. It syncs you
 
 No manual tagging. No spreadsheets. Just your records, organized the way a DJ actually thinks about them.
 
+## Using the app
+
+For a full walkthrough of every screen and setting, see [docs/HOW_TO_USE.md](docs/HOW_TO_USE.md).
+
 ## Highlights
 
 **Your collection, synced**
