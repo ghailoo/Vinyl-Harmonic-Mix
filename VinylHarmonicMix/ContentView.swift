@@ -35,6 +35,7 @@ struct ContentView: View {
                     }
                 }
             }
+            .frame(minWidth: 760)
         }
 #else
         NavigationStack {

@@ -64,6 +64,7 @@ struct SetBuilderView: View {
     }
 
     var body: some View {
+        GeometryReader { windowGeo in
         ScrollViewReader { proxy in
         ScrollView {
         LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
@@ -75,13 +76,10 @@ struct SetBuilderView: View {
                 if let track = currentTrack {
                     currentTrackHero(track: track, proxy: proxy)
                 } else {
-                    Text("Tap a track in your collection below to begin")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    heroEmptyState
                 }
             }
-            .frame(height: 320)
+            .frame(minHeight: 200, maxHeight: max(200, windowGeo.size.height * 0.42))
 
             Divider()
 
@@ -90,7 +88,7 @@ struct SetBuilderView: View {
                 harmonicStripHeader
                 harmonicStrip
             }
-            .frame(height: 280)
+            .frame(minHeight: 160, maxHeight: max(160, windowGeo.size.height * 0.38))
 
             // Suggestions panel — only when draft is non-empty
             suggestionsPanel
@@ -176,6 +174,7 @@ struct SetBuilderView: View {
             }
         }
         } // ScrollViewReader
+        } // GeometryReader
     }
 
     // MARK: - Track pick handler
@@ -489,6 +488,19 @@ struct SetBuilderView: View {
     }
 
     // MARK: - Current Track hero
+
+    private var heroEmptyState: some View {
+        VStack(spacing: 16) {
+            Spacer()
+            Image(systemName: "hand.tap.fill")
+                .font(.system(size: 48)).foregroundStyle(.secondary)
+            Text("Tap a track in your collection below to begin")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
 
     @ViewBuilder
     private func currentTrackHero(track: MixTrack, proxy: ScrollViewProxy) -> some View {

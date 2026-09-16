@@ -21,18 +21,22 @@ struct UnifiedTopBar: View {
 
     var body: some View {
         HStack(spacing: 16) {
-            HStack(spacing: 8) {
-                libraryBubble(title: "Sync",           icon: "arrow.triangle.2.circlepath") { syncOrchestrator.startSync() }
-                libraryBubble(title: "MBID",           icon: "magnifyingglass.circle")       { scanCoordinator.start() }
-                libraryBubble(title: "AcousticBrainz", icon: "waveform.circle")             { audioFeaturesCoordinator.start() }
-                libraryBubble(title: "Match Audio",    icon: "link.circle",
-                              disabled: !driveMonitor.isAvailable)                          { fileMatchCoordinator.startFullScan() }
-                libraryBubble(title: "Cues",           icon: "scope",
-                              disabled: !driveMonitor.isAvailable)                          { cueCoordinator.startDetection(scope: .matched) }
-                libraryBubble(title: "Export",         icon: "music.note.list")             { triggerExport() }
-                libraryBubble(title: "Backup",         icon: "externaldrive.badge.timemachine") { runBackupExport() }
-                libraryBubble(title: "Restore",        icon: "arrow.clockwise.icloud")          { runBackupImport() }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    libraryBubble(title: "Sync",           icon: "arrow.triangle.2.circlepath") { syncOrchestrator.startSync() }
+                    libraryBubble(title: "MBID",           icon: "magnifyingglass.circle")       { scanCoordinator.start() }
+                    libraryBubble(title: "AcousticBrainz", icon: "waveform.circle")             { audioFeaturesCoordinator.start() }
+                    libraryBubble(title: "Match Audio",    icon: "link.circle",
+                                  disabled: !driveMonitor.isAvailable)                          { fileMatchCoordinator.startFullScan() }
+                    libraryBubble(title: "Cues",           icon: "scope",
+                                  disabled: !driveMonitor.isAvailable)                          { cueCoordinator.startDetection(scope: .matched) }
+                    libraryBubble(title: "Export",         icon: "music.note.list")             { triggerExport() }
+                    libraryBubble(title: "Backup",         icon: "externaldrive.badge.timemachine") { runBackupExport() }
+                    libraryBubble(title: "Restore",        icon: "arrow.clockwise.icloud")          { runBackupImport() }
+                }
             }
+            .fixedSize(horizontal: false, vertical: true)
+            .layoutPriority(1)
 
             NowPlayingBar()
                 .frame(maxWidth: .infinity)
@@ -269,6 +273,8 @@ struct UnifiedTopBar: View {
                 Text(title)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(disabled ? Color.secondary : Color.primary)
+                    .lineLimit(1)
+                    .fixedSize()
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
