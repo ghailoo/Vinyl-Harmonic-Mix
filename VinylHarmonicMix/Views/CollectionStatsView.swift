@@ -97,6 +97,32 @@ struct CollectionStatsView: View {
         )
     }
 
+    // MARK: - Progress row (shared by every stats section)
+
+    /// One "N of M <noun> (P%)" line plus a matching bar. `isComplete` picks the fill color —
+    /// accent while work remains, green once done — so every section reads the same way instead
+    /// of the mix of one-off colors/phrasings each card used to hand-roll.
+    private func progressRow(count: Int, total: Int, noun: String) -> some View {
+        let pct = total > 0 ? min(100, count * 100 / total) : 0
+        let isComplete = total > 0 && count >= total
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("\(count.formatted()) of \(total.formatted()) \(noun) (\(pct)%)")
+                .font(.system(size: 14))
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.secondary.opacity(0.15)).frame(height: 8)
+                    Capsule()
+                        .fill(isComplete ? Color.green : Color.accentColor)
+                        .frame(
+                            width: total > 0 ? geo.size.width * CGFloat(min(count, total)) / CGFloat(total) : 0,
+                            height: 8
+                        )
+                }
+            }
+            .frame(height: 8)
+        }
+    }
+
     // MARK: - Section header
 
     @ViewBuilder
@@ -376,7 +402,6 @@ struct CollectionStatsView: View {
         let failedCount  = entities.filter { $0.recordingsScanState == "failed"  }.count
         let trackCount   = trackEntities.count
         let totalCached  = cachedDetails.reduce(0) { $0 + $1.tracklist.count }
-        let trackPercent = totalCached > 0 ? min(100, trackCount * 100 / max(totalCached, 1)) : 0
         let isRunning: Bool = {
             switch recordingsCoordinator.phase {
             case .scanning, .paused: return true
@@ -390,22 +415,7 @@ struct CollectionStatsView: View {
 
             if trackCount > 0 {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("\(trackCount.formatted()) tracks have recording MBIDs (\(trackPercent)% of cached tracks)")
-                        .font(.system(size: 14))
-
-                    // Progress bar
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Color.secondary.opacity(0.15)).frame(height: 8)
-                            Capsule()
-                                .fill(Color.accentColor)
-                                .frame(
-                                    width: totalCached > 0 ? geo.size.width * CGFloat(trackCount) / CGFloat(max(totalCached, 1)) : 0,
-                                    height: 8
-                                )
-                        }
-                    }
-                    .frame(height: 8)
+                    progressRow(count: trackCount, total: totalCached, noun: "tracks have recording MBIDs")
 
                     VStack(spacing: 4) {
                         recordingStateRow(icon: "checkmark.circle.fill",  iconColor: .green,    label: "Fetched",         count: fetchedCount)
@@ -456,7 +466,6 @@ struct CollectionStatsView: View {
         let withBoth    = featureEntities.filter { $0.bpm != nil && $0.keyNote != nil }.count
         let totalMBIDs  = Set(trackEntities.map(\.recordingMBID).filter { !$0.isEmpty }).count
         let notQueried  = max(0, totalMBIDs - featureEntities.count)
-        let pct         = totalMBIDs > 0 ? min(100, withData * 100 / max(totalMBIDs, 1)) : 0
         let isRunning: Bool = {
             switch audioFeaturesCoordinator.phase {
             case .scanning, .paused: return true
@@ -474,23 +483,7 @@ struct CollectionStatsView: View {
                     .foregroundStyle(.secondary)
             } else {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("\(withData.formatted()) tracks have BPM and key data (\(pct)% of recording MBIDs)")
-                        .font(.system(size: 14))
-
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Color.secondary.opacity(0.15)).frame(height: 8)
-                            Capsule()
-                                .fill(Color.accentColor)
-                                .frame(
-                                    width: totalMBIDs > 0
-                                        ? geo.size.width * CGFloat(withData) / CGFloat(max(totalMBIDs, 1))
-                                        : 0,
-                                    height: 8
-                                )
-                        }
-                    }
-                    .frame(height: 8)
+                    progressRow(count: withData, total: totalMBIDs, noun: "tracks have BPM and key data")
 
                     VStack(spacing: 4) {
                         audioFeatureRow(icon: "checkmark.circle.fill", iconColor: .green,       label: "BPM available",   count: withBPM)
@@ -527,7 +520,6 @@ struct CollectionStatsView: View {
         let confident  = fileMatchCoordinator.confidentFileCount
         let review     = fileMatchCoordinator.reviewFileCount
         let noMatch    = fileMatchCoordinator.noMatchFileCount
-        let pct        = total > 0 ? min(100, confident * 100 / total) : 0
         let isRunning: Bool = {
             switch fileMatchCoordinator.phase {
             case .indexing, .matching, .paused: return true
@@ -544,23 +536,7 @@ struct CollectionStatsView: View {
                     .foregroundStyle(.secondary)
             } else {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("\(confident.formatted()) confident · \(review.formatted()) to review · \(noMatch.formatted()) no match  (of \(total.formatted()))")
-                        .font(.system(size: 14))
-
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Color.secondary.opacity(0.15)).frame(height: 8)
-                            Capsule()
-                                .fill(Color.green)
-                                .frame(
-                                    width: total > 0
-                                        ? geo.size.width * CGFloat(confident) / CGFloat(max(total, 1))
-                                        : 0,
-                                    height: 8
-                                )
-                        }
-                    }
-                    .frame(height: 8)
+                    progressRow(count: confident, total: total, noun: "tracks confidently matched to files")
 
                     VStack(spacing: 4) {
                         recordingStateRow(icon: "checkmark.circle.fill",    iconColor: .green,    label: "Confident",     count: confident)
@@ -598,13 +574,11 @@ struct CollectionStatsView: View {
         // stale LocalAudioFeaturesEntity row that no longer belongs in this ratio.
         let analyzed  = localFeatureEntities.filter { $0.track?.fileMatchState == "confident" }.count
         let remaining = max(0, confident - analyzed)
-        let pct = confident > 0 ? analyzed * 100 / confident : 0
         let isRunning = localAnalysisCoordinator.phase == .analyzing
                      || localAnalysisCoordinator.phase == .paused
         let fileTotal      = localAnalysisCoordinator.inScopeFileCount
         let fileUnanalyzed = localAnalysisCoordinator.unanalyzedFileCount
         let fileAnalyzed   = max(0, fileTotal - fileUnanalyzed)
-        let filePct        = fileTotal > 0 ? min(100, fileAnalyzed * 100 / max(fileTotal, 1)) : 0
 
         return sectionCard {
             sectionHeader(title: "Local Audio Analysis")
@@ -615,23 +589,7 @@ struct CollectionStatsView: View {
                     .foregroundStyle(.secondary)
             } else {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("\(analyzed.formatted()) of \(confident.formatted()) confident tracks analyzed locally (\(pct)%)")
-                        .font(.system(size: 14))
-
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Color.secondary.opacity(0.15)).frame(height: 8)
-                            Capsule()
-                                .fill(Color.purple)
-                                .frame(
-                                    width: confident > 0
-                                        ? geo.size.width * CGFloat(analyzed) / CGFloat(max(confident, 1))
-                                        : 0,
-                                    height: 8
-                                )
-                        }
-                    }
-                    .frame(height: 8)
+                    progressRow(count: analyzed, total: confident, noun: "confident tracks analyzed locally")
 
                     if analyzed > 0 {
                         localBpmRangeRow
@@ -671,23 +629,7 @@ struct CollectionStatsView: View {
                     .font(.system(size: 15, weight: .semibold))
 
                 if fileTotal > 0 {
-                    Text("\(fileAnalyzed.formatted()) of \(fileTotal.formatted()) in-scope files analyzed (\(filePct)%)")
-                        .font(.system(size: 14))
-
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Color.secondary.opacity(0.15)).frame(height: 8)
-                            Capsule()
-                                .fill(Color(red: 0.15, green: 0.55, blue: 0.30))
-                                .frame(
-                                    width: fileTotal > 0
-                                        ? geo.size.width * CGFloat(fileAnalyzed) / CGFloat(max(fileTotal, 1))
-                                        : 0,
-                                    height: 8
-                                )
-                        }
-                    }
-                    .frame(height: 8)
+                    progressRow(count: fileAnalyzed, total: fileTotal, noun: "files analyzed")
                 } else {
                     Text("Run file matching first — scope is computed from collection artist folders.")
                         .font(.caption)
@@ -922,7 +864,6 @@ struct CollectionStatsView: View {
         let withCues = localFileEntities.filter { !$0.cuePoints.isEmpty }.count
         let analyzed = localFileEntities.filter { $0.bpm > 0 }.count
         let isDetecting = cueCoordinator.phase == .detecting || cueCoordinator.phase == .paused
-        let pct = analyzed > 0 ? withCues * 100 / max(analyzed, 1) : 0
 
         return sectionCard {
             sectionHeader(title: "Cue Point Detection")
@@ -933,23 +874,7 @@ struct CollectionStatsView: View {
                     .foregroundStyle(.secondary)
             } else {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("\(withCues.formatted()) of \(analyzed.formatted()) analyzed files have cue points (\(pct)%)")
-                        .font(.system(size: 14))
-
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Color.secondary.opacity(0.15)).frame(height: 8)
-                            Capsule()
-                                .fill(Color.orange)
-                                .frame(
-                                    width: analyzed > 0
-                                        ? geo.size.width * CGFloat(withCues) / CGFloat(max(analyzed, 1))
-                                        : 0,
-                                    height: 8
-                                )
-                        }
-                    }
-                    .frame(height: 8)
+                    progressRow(count: withCues, total: analyzed, noun: "analyzed files have cue points")
                 }
             }
 
