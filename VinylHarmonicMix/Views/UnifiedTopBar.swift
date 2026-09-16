@@ -60,7 +60,14 @@ struct UnifiedTopBar: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(.regularMaterial)
-        .overlay(alignment: .bottom) { Divider() }
+        .overlay(alignment: .bottom) {
+            LinearGradient(
+                colors: [Color.primary.opacity(0.08), Color.primary.opacity(0)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 8)
+        }
         .alert("Rekordbox Export", isPresented: $showExportSuccessAlert) {
             Button("OK", role: .cancel) { }
         } message: {

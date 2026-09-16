@@ -35,6 +35,7 @@ struct SetBuilderView: View {
     @AppStorage("setBuilderAutoPlayOnPick")    private var autoPlayOnPick: Bool = true
     @State private var visibleGroups: Set<HarmonicGroup> = Set(HarmonicGroup.allCases)
     @State private var sliderDragValue: Double = 5.0
+    @State private var lastBpmLiveCommit: Date = .distantPast
 
     // Grid state
     @State private var featuresByMBID: [String: RecordingFeaturesEntity] = [:]
@@ -281,9 +282,12 @@ struct SetBuilderView: View {
         .frame(maxWidth: .infinity)
         .background(.regularMaterial)
         .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(Color.primary.opacity(0.08))
-                .frame(height: 0.5)
+            LinearGradient(
+                colors: [Color.primary.opacity(0.08), Color.primary.opacity(0)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 8)
         }
     }
 
@@ -355,6 +359,12 @@ struct SetBuilderView: View {
                 .frame(width: 120)
                 .controlSize(.mini)
                 .onAppear { sliderDragValue = bpmTolerancePct }
+                .onChange(of: sliderDragValue) { _, newValue in
+                    let now = Date.now
+                    guard now.timeIntervalSince(lastBpmLiveCommit) >= 0.1 else { return }
+                    lastBpmLiveCommit = now
+                    bpmTolerancePct = newValue
+                }
             }
         }
         .padding(.horizontal, 14)
@@ -561,6 +571,7 @@ struct SetBuilderView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(track.displayTitle)
                         .font(.title2.bold())
+                        .tracking(-0.4)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
 
