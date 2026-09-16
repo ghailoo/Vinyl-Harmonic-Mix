@@ -28,12 +28,15 @@ struct UnifiedTopBar: View {
             NowPlayingBar()
                 .frame(maxWidth: .infinity)
 
-            // Force @Observable tracking for all coordinator state we read in activeOperations
+            // Force @Observable tracking for all coordinator state we read in
+            // activeOperations and activeLibraryBubbleTitles
             let _ = driveMonitor.isAvailable
             let _ = syncOrchestrator.isSyncing
             let _ = syncOrchestrator.syncStatus
             let _ = scanCoordinator.scanned
+            let _ = scanCoordinator.phase
             let _ = audioFeaturesCoordinator.batchesProcessed
+            let _ = audioFeaturesCoordinator.phase
             let _ = fileMatchCoordinator.phase
             let _ = fileMatchCoordinator.waveformsPausing
             let _ = cueCoordinator.phase
@@ -289,9 +292,28 @@ struct UnifiedTopBar: View {
         }
     }
 
+    /// Titles of the library bubbles whose coordinator currently has a running
+    /// operation, so that bubble can be tinted to point at the matching status
+    /// bubble on the right (the only link between the two today is this highlight).
+    private var activeLibraryBubbleTitles: Set<String> {
+        var active: Set<String> = []
+        if syncOrchestrator.isSyncing { active.insert("Sync") }
+        if case .scanning = scanCoordinator.phase { active.insert("MBID") }
+        if case .scanning = audioFeaturesCoordinator.phase { active.insert("AcousticBrainz") }
+        switch fileMatchCoordinator.phase {
+        case .indexing, .matching, .generatingWaveforms, .generatingWaveformsPaused:
+            active.insert("Match Audio")
+        default:
+            break
+        }
+        if cueCoordinator.phase == .detecting { active.insert("Cues") }
+        return active
+    }
+
     @ViewBuilder
     private func libraryBubble(title: String, icon: String, disabled: Bool = false, showsLabel: Bool = true, action: @escaping () -> Void) -> some View {
         let tint = bubbleColor(for: title)
+        let isActive = activeLibraryBubbleTitles.contains(title)
         Button(action: action) {
             HStack(spacing: 6) {
                 Image(systemName: icon)
@@ -308,7 +330,7 @@ struct UnifiedTopBar: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
         }
-        .buttonStyle(LibraryBubbleButtonStyle(tint: tint))
+        .buttonStyle(LibraryBubbleButtonStyle(tint: tint, isActive: isActive))
         .disabled(disabled)
         .opacity(disabled ? 0.5 : 1.0)
         .help(disabled ? "\(title) (unavailable — drive not connected)" : title)
@@ -318,6 +340,9 @@ struct UnifiedTopBar: View {
 
 struct LibraryBubbleButtonStyle: ButtonStyle {
     let tint: Color
+    /// True while this bubble's operation is running, so it visibly links to its
+    /// status bubble on the right without any other connection between the two.
+    var isActive: Bool = false
     @State private var isHovering = false
 
     func makeBody(configuration: Configuration) -> some View {
@@ -326,14 +351,16 @@ struct LibraryBubbleButtonStyle: ButtonStyle {
                 ZStack {
                     Capsule().fill(.regularMaterial)
                     Capsule()
-                        .fill(tint.opacity(isHovering ? 0.18 : 0))
+                        .fill(tint.opacity(isActive ? 0.22 : (isHovering ? 0.18 : 0)))
                         .animation(.snappy, value: isHovering)
+                        .animation(.snappy, value: isActive)
                     Capsule()
                         .stroke(
-                            isHovering ? tint.opacity(0.4) : Color.primary.opacity(0.08),
-                            lineWidth: 0.5
+                            isActive ? tint.opacity(0.7) : (isHovering ? tint.opacity(0.4) : Color.primary.opacity(0.08)),
+                            lineWidth: isActive ? 1.2 : 0.5
                         )
                         .animation(.snappy, value: isHovering)
+                        .animation(.snappy, value: isActive)
                 }
             )
             .scaleEffect(configuration.isPressed ? 0.96 : 1.0)
