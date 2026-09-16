@@ -62,7 +62,7 @@ struct SetBuilderView: View {
 
     private var gridColumns: [GridItem] {
         let minWidth = 120.0 + cardSize * 160.0
-        return [GridItem(.adaptive(minimum: minWidth, maximum: minWidth + 40), spacing: 16)]
+        return [GridItem(.adaptive(minimum: minWidth, maximum: minWidth + 40), spacing: 16, alignment: .top)]
     }
 
     var body: some View {

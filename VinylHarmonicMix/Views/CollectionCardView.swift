@@ -23,7 +23,7 @@ struct CollectionCardView: View {
             coverImage
             Text(item.basicInformation.title)
                 .font(.system(size: 14, weight: .semibold))
-                .lineLimit(2)
+                .lineLimit(2, reservesSpace: true)
             Text(item.basicInformation.artists.map(\.name).joined(separator: " & "))
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
