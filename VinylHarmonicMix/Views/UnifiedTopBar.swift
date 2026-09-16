@@ -21,25 +21,9 @@ struct UnifiedTopBar: View {
 
     var body: some View {
         HStack(spacing: 16) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    // Clears the sidebar toggle button, which overlaps this row's own
-                    // leading padding and otherwise clips the "Sync" bubble.
-                    Color.clear.frame(width: 32, height: 1)
-                    libraryBubble(title: "Sync",           icon: "arrow.triangle.2.circlepath") { syncOrchestrator.startSync() }
-                    libraryBubble(title: "MBID",           icon: "magnifyingglass.circle")       { scanCoordinator.start() }
-                    libraryBubble(title: "AcousticBrainz", icon: "waveform.circle")             { audioFeaturesCoordinator.start() }
-                    libraryBubble(title: "Match Audio",    icon: "link.circle",
-                                  disabled: !driveMonitor.isAvailable)                          { fileMatchCoordinator.startFullScan() }
-                    libraryBubble(title: "Cues",           icon: "scope",
-                                  disabled: !driveMonitor.isAvailable)                          { cueCoordinator.startDetection(scope: .matched) }
-                    libraryBubble(title: "Export",         icon: "music.note.list")             { triggerExport() }
-                    libraryBubble(title: "Backup",         icon: "externaldrive.badge.timemachine") { runBackupExport() }
-                    libraryBubble(title: "Restore",        icon: "arrow.clockwise.icloud")          { runBackupImport() }
-                }
-            }
-            .fixedSize(horizontal: false, vertical: true)
-            .layoutPriority(1)
+            libraryBubbleRow
+                .fixedSize(horizontal: false, vertical: true)
+                .layoutPriority(1)
 
             NowPlayingBar()
                 .frame(maxWidth: .infinity)
@@ -272,19 +256,54 @@ struct UnifiedTopBar: View {
         }
     }
 
+    /// Progressively smaller bubble rows so a growing button count (9 coming with
+    /// "Analyze Audio") degrades by hiding labels, then by scrolling — never by
+    /// clipping text mid-word or letter-wrapping it.
     @ViewBuilder
-    private func libraryBubble(title: String, icon: String, disabled: Bool = false, action: @escaping () -> Void) -> some View {
+    private var libraryBubbleRow: some View {
+        ViewThatFits(in: .horizontal) {
+            libraryButtons(showsLabels: true)
+            libraryButtons(showsLabels: false)
+            ScrollView(.horizontal, showsIndicators: false) {
+                libraryButtons(showsLabels: false)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func libraryButtons(showsLabels: Bool) -> some View {
+        HStack(spacing: 8) {
+            // Clears the sidebar toggle button, which overlaps this row's own
+            // leading padding and otherwise clips the "Sync" bubble.
+            Color.clear.frame(width: 32, height: 1)
+            libraryBubble(title: "Sync",           icon: "arrow.triangle.2.circlepath", showsLabel: showsLabels) { syncOrchestrator.startSync() }
+            libraryBubble(title: "MBID",           icon: "magnifyingglass.circle",       showsLabel: showsLabels) { scanCoordinator.start() }
+            libraryBubble(title: "AcousticBrainz", icon: "waveform.circle",             showsLabel: showsLabels) { audioFeaturesCoordinator.start() }
+            libraryBubble(title: "Match Audio",    icon: "link.circle",
+                          disabled: !driveMonitor.isAvailable, showsLabel: showsLabels) { fileMatchCoordinator.startFullScan() }
+            libraryBubble(title: "Cues",           icon: "scope",
+                          disabled: !driveMonitor.isAvailable, showsLabel: showsLabels) { cueCoordinator.startDetection(scope: .matched) }
+            libraryBubble(title: "Export",         icon: "music.note.list",             showsLabel: showsLabels) { triggerExport() }
+            libraryBubble(title: "Backup",         icon: "externaldrive.badge.timemachine", showsLabel: showsLabels) { runBackupExport() }
+            libraryBubble(title: "Restore",        icon: "arrow.clockwise.icloud",          showsLabel: showsLabels) { runBackupImport() }
+        }
+    }
+
+    @ViewBuilder
+    private func libraryBubble(title: String, icon: String, disabled: Bool = false, showsLabel: Bool = true, action: @escaping () -> Void) -> some View {
         let tint = bubbleColor(for: title)
         Button(action: action) {
             HStack(spacing: 6) {
                 Image(systemName: icon)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(disabled ? Color.secondary : tint)
-                Text(title)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(disabled ? Color.secondary : Color.primary)
-                    .lineLimit(1)
-                    .fixedSize()
+                if showsLabel {
+                    Text(title)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(disabled ? Color.secondary : Color.primary)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
