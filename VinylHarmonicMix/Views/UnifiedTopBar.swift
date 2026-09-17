@@ -223,7 +223,10 @@ struct UnifiedTopBar: View {
         switch c.phase {
         case .indexing:
             return .simple(name: "Match Audio", icon: "link", isRunning: true,
-                           statusText: "Indexing \(c.indexedCount.formatted())")
+                           count: c.indexingStepCount, total: c.indexingStepTotal,
+                           statusText: c.indexingStep.isEmpty
+                               ? "Indexing \(c.indexedCount.formatted())"
+                               : c.indexingStep)
         case .matching:
             return .simple(name: "Match Audio", icon: "link", isRunning: true,
                            count: c.processedTracks, total: c.totalTracks)

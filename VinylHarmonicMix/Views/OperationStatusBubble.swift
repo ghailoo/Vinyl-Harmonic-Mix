@@ -123,11 +123,15 @@ struct OperationStatusBubble: View {
     }
 
     private var label: String {
-        if let count = status.count, let total = status.total {
-            return "\(status.name): \(count) / \(total)"
-        }
+        // statusText wins when present: some phases (e.g. Match Audio's indexing
+        // sub-steps) set count/total purely to fill the bar while wanting their own
+        // exact wording ("Checking 12,000 / 42,353 files") shown instead of a bare
+        // "count / total".
         if let statusText = status.statusText {
             return "\(status.name): \(statusText)"
+        }
+        if let count = status.count, let total = status.total {
+            return "\(status.name): \(count) / \(total)"
         }
         return status.name
     }

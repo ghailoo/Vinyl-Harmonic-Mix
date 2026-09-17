@@ -80,6 +80,14 @@ final class FileMatchCoordinator {
     var orphanSweepSummary: String? = nil
     var onScanCompleted: (() -> Void)? = nil
 
+    // Sub-step progress within Phase 0/1 (orphan sweep, NAS walk, dedup, backfills,
+    // duration backfill) — these don't touch indexedCount, so without this the UI's
+    // stall detector had nothing to watch and flagged healthy multi-minute work as dead.
+    var indexingStep: String = ""
+    var indexingStepCount: Int? = nil
+    var indexingStepTotal: Int? = nil
+    private var lastIndexingStepUpdate: Date = .distantPast
+
     // In-memory candidates for review rows (transient — repopulated each scan run)
     var reviewCandidates: [String: [ScoredCandidate]] = [:]
     var verifyStates: [String: VerifyState] = [:]
@@ -129,6 +137,19 @@ final class FileMatchCoordinator {
         Task { @MainActor [weak self] in self?.hydrateReviewCandidatesIfNeeded() }
     }
 
+    /// Updates the indexing sub-step text (and, when known, its count/total) shown by
+    /// the Match Audio toolbar bubble. `force` bypasses the ~0.5s throttle for
+    /// step-boundary transitions (dedup starting, a new backfill starting, …), which
+    /// should always be visible even if they land right after a throttled update.
+    private func updateIndexingStep(_ text: String, count: Int? = nil, total: Int? = nil, force: Bool = false) {
+        let now = Date()
+        guard force || now.timeIntervalSince(lastIndexingStepUpdate) >= 0.5 else { return }
+        lastIndexingStepUpdate = now
+        indexingStep = text
+        indexingStepCount = count
+        indexingStepTotal = total
+    }
+
     // MARK: - Controls
 
     func startTestBatch(size: Int = 150) {
@@ -152,6 +173,7 @@ final class FileMatchCoordinator {
         indexedCount = 0; processedTracks = 0; totalTracks = 0
         confidentCount = 0; reviewCount = 0; noMatchCount = 0
         currentTrackLabel = ""; lastError = nil
+        indexingStep = ""; indexingStepCount = nil; indexingStepTotal = nil
 
         await runPhase0()
         if Task.isCancelled { return }
@@ -227,6 +249,7 @@ final class FileMatchCoordinator {
         indexedCount = 0; totalTracks = 0; processedTracks = 0
         confidentCount = 0; reviewCount = 0; noMatchCount = 0
         currentTrackLabel = ""; lastError = nil
+        indexingStep = ""; indexingStepCount = nil; indexingStepTotal = nil
     }
 
     // MARK: - Live stats (for Stats card)
@@ -442,6 +465,7 @@ final class FileMatchCoordinator {
         indexedCount = 0; processedTracks = 0; totalTracks = 0
         confidentCount = 0; reviewCount = 0; noMatchCount = 0
         currentTrackLabel = ""; lastError = nil
+        indexingStep = ""; indexingStepCount = nil; indexingStepTotal = nil
 
         // Task inherits @MainActor from call site — all self accesses below are safe.
         scanTask = Task { [weak self] in
@@ -508,10 +532,27 @@ final class FileMatchCoordinator {
         }
         guard !checkItems.isEmpty else { currentTrackLabel = ""; return }
 
+        let total = checkItems.count
+        updateIndexingStep("Checking 0 / \(total.formatted()) files", count: 0, total: total, force: true)
+
         // ── fileExists off-MainActor (SMB walk — ~2 min for 41k files) ─────────
+        let progressCallback: @Sendable (Int) async -> Void = { [weak self] count in
+            await MainActor.run { [weak self] in
+                self?.updateIndexingStep("Checking \(count.formatted()) / \(total.formatted()) files",
+                                          count: count, total: total)
+            }
+        }
         let deadItems: [OrphanCheckItem] = await Task.detached(priority: .userInitiated) {
-            checkItems.filter { !FileManager.default.fileExists(atPath: $0.filePath) }
+            var dead: [OrphanCheckItem] = []
+            for (i, item) in checkItems.enumerated() {
+                if !FileManager.default.fileExists(atPath: item.filePath) { dead.append(item) }
+                if (i + 1) % 200 == 0 { await progressCallback(i + 1) }
+            }
+            return dead
         }.value
+
+        updateIndexingStep("Checking \(total.formatted()) / \(total.formatted()) files",
+                            count: total, total: total, force: true)
 
         guard !deadItems.isEmpty else {
             print("[ORPHAN SWEEP] All \(checkItems.count) indexed files verified on disk.")
@@ -609,8 +650,14 @@ final class FileMatchCoordinator {
 
         // Always walk the library so newly added files are picked up.
         // collectAudioFiles skips paths already in `existing`, so this is incremental.
+        updateIndexingStep("Scanning library folder…", force: true)
+        let scanProgressCallback: @Sendable (Int) async -> Void = { [weak self] count in
+            await MainActor.run { [weak self] in
+                self?.updateIndexingStep("Scanning library folder… \(count.formatted())", count: count)
+            }
+        }
         let filesToInsert = await Task.detached(priority: .userInitiated) {
-            FileMatchCoordinator.collectAudioFiles(at: url, skipping: existing)
+            await FileMatchCoordinator.collectAudioFiles(at: url, skipping: existing, onProgress: scanProgressCallback)
         }.value
 
         if !filesToInsert.isEmpty {
@@ -631,6 +678,7 @@ final class FileMatchCoordinator {
 
     /// Remove duplicate LocalFileEntity rows (same filePath), keeping the matched one when possible.
     private func deduplicateFileIndex() {
+        updateIndexingStep("Removing duplicates", force: true)
         let all = (try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
         var seen: [String: LocalFileEntity] = [:]
         var toDelete: [LocalFileEntity] = []
@@ -656,6 +704,7 @@ final class FileMatchCoordinator {
     /// Backfill parentFolder and grandparentFolder for rows where either is missing.
     /// Derives both from the stored filePath — no disk re-scan needed.
     private func backfillFolderNames() {
+        updateIndexingStep("Backfilling folder names", force: true)
         let all = (try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
         let needs = all.filter { $0.parentFolder.isEmpty || $0.grandparentFolder.isEmpty }
         guard !needs.isEmpty else { return }
@@ -676,6 +725,7 @@ final class FileMatchCoordinator {
     /// Uses an explicit path-ownership map rather than SwiftData's `localFiles` inverse
     /// (which can return a stale cached view when the FK was changed without clearing the cache).
     private func repairOrphanedConfidentTracks() {
+        updateIndexingStep("Repairing file links", force: true)
         let confident = (try? context.fetch(FetchDescriptor<TrackEntity>(
             predicate: #Predicate { $0.fileMatchState == "confident" }
         ))) ?? []
@@ -724,6 +774,7 @@ final class FileMatchCoordinator {
         let needs = ((try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? [])
             .filter { $0.artistFolder.isEmpty }
         guard !needs.isEmpty else { return }
+        updateIndexingStep("Backfilling artist folders", force: true)
         for file in needs {
             file.artistFolder = FileMatchCoordinator.extractArtistFolder(from: file.filePath)
         }
@@ -740,6 +791,8 @@ final class FileMatchCoordinator {
         ))) ?? []
         guard !needsDuration.isEmpty else { return }
         print("[DURATION] Backfilling durations for \(needsDuration.count) files…")
+        updateIndexingStep("Reading durations 0 / \(needsDuration.count.formatted())",
+                            count: 0, total: needsDuration.count, force: true)
 
         struct Stub: Sendable { let id: PersistentIdentifier; let path: String }
         let stubs = needsDuration.map { Stub(id: $0.persistentModelID, path: $0.filePath) }
@@ -750,6 +803,8 @@ final class FileMatchCoordinator {
             if Task.isCancelled { break }
             let chunk = Array(stubs[offset ..< min(offset + chunkSize, stubs.count)])
             currentTrackLabel = "Reading durations… (\(offset)/\(stubs.count))"
+            updateIndexingStep("Reading durations \(offset.formatted()) / \(stubs.count.formatted())",
+                                count: offset, total: stubs.count)
 
             // Parallel duration reads via AudioToolbox — avoids Core Media FigFile spam on M4A/MP4.
             let pairs: [(PersistentIdentifier, Int)] = await withTaskGroup(
@@ -792,7 +847,8 @@ final class FileMatchCoordinator {
 
     /// Synchronous directory walk — no actor state, safe for Task.detached.
     nonisolated private static func collectAudioFiles(at url: URL,
-                                                       skipping existing: Set<String>) -> [FileInfo] {
+                                                       skipping existing: Set<String>,
+                                                       onProgress: @Sendable (Int) async -> Void) async -> [FileInfo] {
         let audioExts: Set<String> = ["flac","mp3","aiff","aif","wav","m4a","mp4","ogg","opus"]
         let skipDirs: Set<String>  = ["#recycle","@eaDir",".Trashes",".Spotlight-V100"]
 
@@ -819,6 +875,7 @@ final class FileMatchCoordinator {
             files.append(FileInfo(path: path, name: name,
                                   parentFolder: parentFolder, grandparentFolder: grandparentFolder,
                                   format: ext, size: size))
+            if files.count % 200 == 0 { await onProgress(files.count) }
         }
         return files
     }
