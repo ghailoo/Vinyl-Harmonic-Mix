@@ -29,6 +29,13 @@ struct CollectionStatsView: View {
     @State private var cachedArtistCounts: [(label: String, count: Int)] = []
     @State private var cachedValidYears: [Int] = []
 
+    // MARK: - "Show all" disclosure state (B4)
+    @State private var showAllFormats = false
+    @State private var showAllGenres = false
+    @State private var showAllDecades = false
+    @State private var showAllLabels = false
+    @State private var showAllArtists = false
+
     // MARK: - LocalFileEntity counts (A1)
     //
     // LocalFileEntity can have tens of thousands of rows. Every use of it here is a
@@ -72,25 +79,23 @@ struct CollectionStatsView: View {
                             .transition(.move(edge: .top).combined(with: .opacity))
                     }
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 16) {
+                        VStack(alignment: .leading, spacing: 14) {
                             Text("Stats")
                                 .font(.system(size: 28, weight: .bold))
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.bottom, 4)
 
-                            heroCard
+                            summaryTilesRow
 
-                            if !cachedFormatCounts.isEmpty  { formatCard }
-                            if !cachedGenreCounts.isEmpty   { genreCard }
-                            if !cachedDecadeCounts.isEmpty  { decadeCard }
-                            if !cachedLabelCounts.isEmpty   { labelsCard }
-                            if !cachedArtistCounts.isEmpty  { artistsCard }
-                            tracksCard
-                            recordingsCard
-                            audioFeaturesCard
-                            localFilesCard
-                            localAnalysisCard
-                            cueDetectionCard
+                            pipelineCard
+
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 420), spacing: 14)], alignment: .leading, spacing: 14) {
+                                if !cachedFormatCounts.isEmpty  { formatCard }
+                                if !cachedGenreCounts.isEmpty   { genreCard }
+                                if !cachedDecadeCounts.isEmpty  { decadeCard }
+                                if !cachedLabelCounts.isEmpty   { labelsCard }
+                                if !cachedArtistCounts.isEmpty  { artistsCard }
+                            }
                         }
                         .padding(.horizontal, 24)
                         .padding(.vertical, 20)
@@ -125,9 +130,9 @@ struct CollectionStatsView: View {
         VStack(alignment: .leading, spacing: 0) {
             content()
         }
-        .padding(20)
+        .padding(16)
         .background(
-            accent ? Color.accentColor.opacity(0.06) : Color.secondary.opacity(0.06),
+            accent ? Color.accentColor.opacity(0.05) : Color.secondary.opacity(0.045),
             in: RoundedRectangle(cornerRadius: 12)
         )
     }
@@ -160,30 +165,29 @@ struct CollectionStatsView: View {
 
     // MARK: - Section header
 
-    @ViewBuilder
-    private func sectionHeader(title: String, total: Int? = nil, shown: Int? = nil) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.system(size: 17, weight: .semibold))
-            if let total, let shown, shown < total {
-                Text("\(shown) of \(total) unique")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.bottom, 12)
+    private func sectionHeader(title: String) -> some View {
+        Text(title)
+            .font(.system(size: 17, weight: .semibold))
+            .padding(.bottom, 10)
     }
 
-    // MARK: - Hero card
+    // MARK: - Summary tiles (B1)
 
-    private var heroCard: some View {
-        sectionCard {
+    private var tracksTileValue: Int {
+        cachedTrackCount > 0 ? cachedTrackCount : trackEntities.count
+    }
+
+    private var summaryTilesRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 16) {
                 statTile(value: entities.count.formatted(), label: "releases", accent: false)
-                statTile(value: matchedCount.formatted(), label: "matched", accent: true)
-                statTile(value: yearRangeLabel, label: "year range", accent: false)
-                statTile(value: medianAge > 0 ? "\(medianAge) years" : "—", label: "median age", accent: false)
+                statTile(value: tracksTileValue.formatted(), label: "tracks", accent: false)
+                statTile(value: fileMatchCoordinator.confidentFileCount.formatted(), label: "matched files", accent: true)
+                statTile(value: analyzedLocalFileCount.formatted(), label: "analyzed", accent: true)
             }
+            Text("\(yearRangeLabel) · median age \(medianAge > 0 ? "\(medianAge)y" : "—")")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -199,28 +203,75 @@ struct CollectionStatsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    // MARK: - Shared breakdown bar row (B3)
+    //
+    // One row shape — label · short bar · count right after the bar — reused by every
+    // breakdown card below instead of each hand-rolling its own label/Spacer/count HStack.
+    private func breakdownRow(rank: Int? = nil, icon: String? = nil, label: String, count: Int, maxCount: Int) -> some View {
+        HStack(spacing: 10) {
+            if let rank {
+                Text("\(rank)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 16, alignment: .trailing)
+            }
+            if let icon {
+                Image(systemName: icon)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16, alignment: .center)
+            }
+            Text(label)
+                .font(.system(size: 14))
+                .lineLimit(1)
+                .frame(width: 110, alignment: .leading)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.secondary.opacity(0.15)).frame(height: 6)
+                    Capsule()
+                        .fill(Color.accentColor)
+                        .frame(
+                            width: maxCount > 0 ? geo.size.width * CGFloat(count) / CGFloat(maxCount) : 0,
+                            height: 6
+                        )
+                }
+            }
+            .frame(height: 6)
+            Text(count.formatted())
+                .font(.system(size: 13).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 44, alignment: .trailing)
+        }
+    }
+
+    /// "Show all N" / "Show less" toggle under a top-5-truncated breakdown list (B4).
+    @ViewBuilder
+    private func showAllToggle(total: Int, isExpanded: Binding<Bool>) -> some View {
+        if total > 5 {
+            Button(isExpanded.wrappedValue ? "Show less" : "Show all \(total)") {
+                isExpanded.wrappedValue.toggle()
+            }
+            .buttonStyle(.plain)
+            .font(.caption)
+            .foregroundStyle(Color.accentColor)
+            .padding(.top, 8)
+        }
+    }
+
     // MARK: - Format card
 
     private var formatCard: some View {
-        sectionCard {
+        let all = cachedFormatCounts
+        let shown = showAllFormats ? all : Array(all.prefix(5))
+        let maxCount = all.map(\.count).max() ?? 1
+        return sectionCard {
             sectionHeader(title: "Releases by format")
-            VStack(spacing: 6) {
-                ForEach(Array(cachedFormatCounts.enumerated()), id: \.offset) { _, item in
-                    HStack(spacing: 8) {
-                        Image(systemName: formatIcon(for: item.label))
-                            .font(.system(size: 14))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 18, alignment: .center)
-                        Text(item.label)
-                            .font(.system(size: 14))
-                        Spacer()
-                        Text(item.count.formatted())
-                            .font(.system(size: 14).monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .frame(width: 50, alignment: .trailing)
-                    }
+            VStack(spacing: 8) {
+                ForEach(Array(shown.enumerated()), id: \.offset) { _, item in
+                    breakdownRow(icon: formatIcon(for: item.label), label: item.label, count: item.count, maxCount: maxCount)
                 }
             }
+            showAllToggle(total: all.count, isExpanded: $showAllFormats)
         }
     }
 
@@ -240,114 +291,87 @@ struct CollectionStatsView: View {
 
     private var genreCard: some View {
         let all = cachedGenreCounts
-        let shown = Array(all.prefix(8))
+        let shown = showAllGenres ? all : Array(all.prefix(5))
+        let maxCount = all.map(\.count).max() ?? 1
         return sectionCard {
-            sectionHeader(title: "Releases by genre", total: all.count, shown: shown.count)
-            VStack(spacing: 6) {
+            sectionHeader(title: "Releases by genre")
+            VStack(spacing: 8) {
                 ForEach(Array(shown.enumerated()), id: \.offset) { _, item in
-                    HStack {
-                        Text(item.label).font(.system(size: 14))
-                        Spacer()
-                        Text(item.count.formatted())
-                            .font(.system(size: 14).monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .frame(width: 50, alignment: .trailing)
-                    }
+                    breakdownRow(label: item.label, count: item.count, maxCount: maxCount)
                 }
             }
+            showAllToggle(total: all.count, isExpanded: $showAllGenres)
         }
     }
 
     // MARK: - Decade card
 
     private var decadeCard: some View {
+        // Chronological, not ranked by count — decades are a bounded timeline, so unlike
+        // the other breakdowns there's no long tail to truncate with a "Show all" toggle.
         let items = cachedDecadeCounts
         let maxCount = items.map(\.count).max() ?? 1
         return sectionCard {
             sectionHeader(title: "Releases by decade")
-            VStack(spacing: 10) {
+            VStack(spacing: 8) {
                 ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                    decadeRow(decade: item.label, count: item.count, maxCount: maxCount)
+                    breakdownRow(label: item.label, count: item.count, maxCount: maxCount)
                 }
             }
-        }
-    }
-
-    private func decadeRow(decade: String, count: Int, maxCount: Int) -> some View {
-        HStack(spacing: 12) {
-            Text(decade)
-                .font(.system(size: 14, weight: .medium))
-                .frame(width: 60, alignment: .leading)
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(Color.secondary.opacity(0.15))
-                        .frame(height: 8)
-                    Capsule()
-                        .fill(Color.accentColor)
-                        .frame(
-                            width: maxCount > 0
-                                ? geo.size.width * CGFloat(count) / CGFloat(maxCount)
-                                : 0,
-                            height: 8
-                        )
-                }
-            }
-            .frame(height: 8)
-            Text(count.formatted())
-                .font(.system(size: 13).monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(width: 50, alignment: .trailing)
         }
     }
 
     // MARK: - Labels card
 
     private var labelsCard: some View {
-        let items = cachedLabelCounts
+        let all = cachedLabelCounts
+        let shown = showAllLabels ? all : Array(all.prefix(5))
+        let maxCount = all.map(\.count).max() ?? 1
         return sectionCard {
             sectionHeader(title: "Top labels by releases")
-            VStack(spacing: 6) {
-                ForEach(Array(items.enumerated()), id: \.offset) { index, item in
-                    HStack(spacing: 8) {
-                        Text("\(index + 1)")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.tertiary)
-                            .frame(width: 20, alignment: .trailing)
-                        Text(item.label).font(.system(size: 14))
-                        Spacer()
-                        Text(item.count.formatted())
-                            .font(.system(size: 14).monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .frame(width: 50, alignment: .trailing)
-                    }
+            VStack(spacing: 8) {
+                ForEach(Array(shown.enumerated()), id: \.offset) { index, item in
+                    breakdownRow(rank: index + 1, label: item.label, count: item.count, maxCount: maxCount)
                 }
             }
+            showAllToggle(total: all.count, isExpanded: $showAllLabels)
         }
     }
 
     // MARK: - Artists card
 
     private var artistsCard: some View {
-        let items = cachedArtistCounts
+        let all = cachedArtistCounts
+        let shown = showAllArtists ? all : Array(all.prefix(5))
+        let maxCount = all.map(\.count).max() ?? 1
         return sectionCard {
             sectionHeader(title: "Top artists by releases")
-            VStack(spacing: 6) {
-                ForEach(Array(items.enumerated()), id: \.offset) { index, item in
-                    HStack(spacing: 8) {
-                        Text("\(index + 1)")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.tertiary)
-                            .frame(width: 20, alignment: .trailing)
-                        Text(item.label).font(.system(size: 14))
-                        Spacer()
-                        Text(item.count.formatted())
-                            .font(.system(size: 14).monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .frame(width: 50, alignment: .trailing)
-                    }
+            VStack(spacing: 8) {
+                ForEach(Array(shown.enumerated()), id: \.offset) { index, item in
+                    breakdownRow(rank: index + 1, label: item.label, count: item.count, maxCount: maxCount)
                 }
             }
+            showAllToggle(total: all.count, isExpanded: $showAllArtists)
+        }
+    }
+
+    // MARK: - Pipeline card (B5)
+    //
+    // The six pipeline progress sections used to be six separate cards scattered down the
+    // page; grouped into one card near the top so the whole ingest pipeline reads at a glance.
+    private var pipelineCard: some View {
+        sectionCard {
+            tracksCard
+            Divider().padding(.vertical, 14)
+            recordingsCard
+            Divider().padding(.vertical, 14)
+            audioFeaturesCard
+            Divider().padding(.vertical, 14)
+            localFilesCard
+            Divider().padding(.vertical, 14)
+            localAnalysisCard
+            Divider().padding(.vertical, 14)
+            cueDetectionCard
         }
     }
 
@@ -371,7 +395,7 @@ struct CollectionStatsView: View {
             }
         }()
 
-        return sectionCard(accent: !effectivelyComplete && !allCached) {
+        return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
                 Text("Tracks & duration")
                     .font(.system(size: 17, weight: .semibold))
@@ -445,7 +469,7 @@ struct CollectionStatsView: View {
         }()
         let canFetch = recordingsCoordinator.unscannedWithMBIDCount > 0
 
-        return sectionCard {
+        return VStack(alignment: .leading, spacing: 0) {
             sectionHeader(title: "Recording MBIDs")
 
             if trackCount > 0 {
@@ -509,7 +533,7 @@ struct CollectionStatsView: View {
         }()
         let canScan = audioFeaturesCoordinator.unqueriedCount > 0
 
-        return sectionCard {
+        return VStack(alignment: .leading, spacing: 0) {
             sectionHeader(title: "Audio Features")
 
             if featureEntities.isEmpty {
@@ -562,7 +586,7 @@ struct CollectionStatsView: View {
             }
         }()
 
-        return sectionCard {
+        return VStack(alignment: .leading, spacing: 0) {
             sectionHeader(title: "Local Files")
 
             if totalLocalFileCount == 0 && confident == 0 {
@@ -615,7 +639,7 @@ struct CollectionStatsView: View {
         let fileUnanalyzed = localAnalysisCoordinator.unanalyzedFileCount
         let fileAnalyzed   = max(0, fileTotal - fileUnanalyzed)
 
-        return sectionCard {
+        return VStack(alignment: .leading, spacing: 0) {
             sectionHeader(title: "Local Audio Analysis")
 
             if confident == 0 {
@@ -790,12 +814,6 @@ struct CollectionStatsView: View {
 
     // MARK: - Computed stats
 
-    private var matchedCount: Int {
-        entities.filter {
-            $0.mbidScanState == "matched" || $0.mbidScanState == "matchedViaSearch" || $0.mbidScanState == "matchedManually"
-        }.count
-    }
-
     private var yearRangeLabel: String {
         guard let minY = cachedValidYears.min(), let maxY = cachedValidYears.max() else { return "—" }
         return "\(minY)–\(maxY)"
@@ -840,8 +858,8 @@ struct CollectionStatsView: View {
         cachedFormatCounts = formats.sorted { $0.value > $1.value }.map { (label: $0.key, count: $0.value) }
         cachedGenreCounts  = genres.sorted { $0.value > $1.value }.map { (label: $0.key, count: $0.value) }
         cachedDecadeCounts = decades.sorted { $0.key < $1.key }.map { (label: "\($0.key)s", count: $0.value) }
-        cachedLabelCounts  = Array(labels.sorted { $0.value > $1.value }.prefix(10)).map { (label: $0.key, count: $0.value) }
-        cachedArtistCounts = Array(artists.sorted { $0.value > $1.value }.prefix(10)).map { (label: $0.key, count: $0.value) }
+        cachedLabelCounts  = labels.sorted { $0.value > $1.value }.map { (label: $0.key, count: $0.value) }
+        cachedArtistCounts = artists.sorted { $0.value > $1.value }.map { (label: $0.key, count: $0.value) }
         cachedValidYears   = years
     }
 
@@ -884,7 +902,7 @@ struct CollectionStatsView: View {
         let analyzed = analyzedLocalFileCount
         let isDetecting = cueCoordinator.phase == .detecting || cueCoordinator.phase == .paused
 
-        return sectionCard {
+        return VStack(alignment: .leading, spacing: 0) {
             sectionHeader(title: "Cue Point Detection")
 
             if analyzed == 0 {
