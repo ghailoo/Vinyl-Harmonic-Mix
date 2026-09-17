@@ -9,6 +9,7 @@ struct UnifiedTopBar: View {
     @Environment(AudioFeaturesScanCoordinator.self) private var audioFeaturesCoordinator
     @Environment(FileMatchCoordinator.self) private var fileMatchCoordinator
     @Environment(CueDetectionCoordinator.self) private var cueCoordinator
+    @Environment(LocalAnalysisCoordinator.self) private var localAnalysisCoordinator
     @Environment(DriveMonitor.self) private var driveMonitor
     @Environment(\.modelContext) private var modelContext
 
@@ -40,6 +41,7 @@ struct UnifiedTopBar: View {
             let _ = fileMatchCoordinator.phase
             let _ = fileMatchCoordinator.waveformsPausing
             let _ = cueCoordinator.phase
+            let _ = localAnalysisCoordinator.phase
 
             HStack(spacing: 8) {
                 ForEach(activeOperations, id: \.name) { status in
@@ -174,7 +176,7 @@ struct UnifiedTopBar: View {
 
         if syncOrchestrator.isSyncing {
             result.append(.simple(
-                name: "Sync",
+                name: "Update All",
                 icon: "arrow.triangle.2.circlepath",
                 isRunning: true,
                 statusText: syncOrchestrator.syncStatus.isEmpty ? nil : syncOrchestrator.syncStatus
@@ -183,7 +185,7 @@ struct UnifiedTopBar: View {
 
         if case .scanning = scanCoordinator.phase {
             result.append(.simple(
-                name: "MBID Scan",
+                name: "Find IDs",
                 icon: "magnifyingglass",
                 isRunning: true,
                 count: scanCoordinator.scanned,
@@ -193,7 +195,7 @@ struct UnifiedTopBar: View {
 
         if case .scanning = audioFeaturesCoordinator.phase {
             result.append(.simple(
-                name: "AcousticBrainz",
+                name: "Web BPM/Key",
                 icon: "waveform.circle",
                 isRunning: true,
                 count: audioFeaturesCoordinator.batchesProcessed,
@@ -205,9 +207,19 @@ struct UnifiedTopBar: View {
             result.append(fileMatch)
         }
 
+        if localAnalysisCoordinator.phase == .analyzing || localAnalysisCoordinator.phase == .paused {
+            result.append(.simple(
+                name: "Detect BPM/Key",
+                icon: "waveform.badge.magnifyingglass",
+                isRunning: true,
+                count: localAnalysisCoordinator.analyzedCount,
+                total: localAnalysisCoordinator.totalCount
+            ))
+        }
+
         if cueCoordinator.phase == .detecting {
             result.append(.simple(
-                name: "Cue Detection",
+                name: "Find Cues",
                 icon: "scope",
                 isRunning: true,
                 count: cueCoordinator.processedCount,
@@ -222,13 +234,13 @@ struct UnifiedTopBar: View {
         let c = fileMatchCoordinator
         switch c.phase {
         case .indexing:
-            return .simple(name: "Match Audio", icon: "link", isRunning: true,
+            return .simple(name: "Link Files", icon: "link", isRunning: true,
                            count: c.indexingStepCount, total: c.indexingStepTotal,
                            statusText: c.indexingStep.isEmpty
                                ? "Indexing \(c.indexedCount.formatted())"
                                : c.indexingStep)
         case .matching:
-            return .simple(name: "Match Audio", icon: "link", isRunning: true,
+            return .simple(name: "Link Files", icon: "link", isRunning: true,
                            count: c.processedTracks, total: c.totalTracks)
         case .generatingWaveforms, .generatingWaveformsPaused:
             return OperationStatus(
@@ -250,21 +262,22 @@ struct UnifiedTopBar: View {
 
     private func bubbleColor(for title: String) -> Color {
         switch title {
-        case "Sync":           return .blue
-        case "MBID":           return .purple
-        case "AcousticBrainz": return .teal
-        case "Match Audio":    return .orange
-        case "Cues":           return .pink
-        case "Export":         return .cyan
-        case "Backup":         return .brown
+        case "Update All":     return .blue
+        case "Find IDs":       return .purple
+        case "Web BPM/Key":    return .teal
+        case "Link Files":     return .orange
+        case "Detect BPM/Key": return .mint
+        case "Find Cues":      return .pink
+        case "Rekordbox":      return .cyan
+        case "Back Up":        return .brown
         case "Restore":        return .indigo
         default:               return .accentColor
         }
     }
 
-    /// Progressively smaller bubble rows so a growing button count (9 coming with
-    /// "Analyze Audio") degrades by hiding labels, then by scrolling — never by
-    /// clipping text mid-word or letter-wrapping it.
+    /// Progressively smaller bubble rows so a growing button count degrades by
+    /// hiding labels, then by scrolling — never by clipping text mid-word or
+    /// letter-wrapping it.
     @ViewBuilder
     private var libraryBubbleRow: some View {
         ViewThatFits(in: .horizontal) {
@@ -280,18 +293,32 @@ struct UnifiedTopBar: View {
     private func libraryButtons(showsLabels: Bool) -> some View {
         HStack(spacing: 8) {
             // Clears the sidebar toggle button, which overlaps this row's own
-            // leading padding and otherwise clips the "Sync" bubble.
+            // leading padding and otherwise clips the "Update All" bubble.
             Color.clear.frame(width: 32, height: 1)
-            libraryBubble(title: "Sync",           icon: "arrow.triangle.2.circlepath", showsLabel: showsLabels) { syncOrchestrator.startSync() }
-            libraryBubble(title: "MBID",           icon: "magnifyingglass.circle",       showsLabel: showsLabels) { scanCoordinator.start() }
-            libraryBubble(title: "AcousticBrainz", icon: "waveform.circle",             showsLabel: showsLabels) { audioFeaturesCoordinator.start() }
-            libraryBubble(title: "Match Audio",    icon: "link.circle",
+            libraryBubble(title: "Update All", tooltip: "Import new Discogs releases run step them",
+                          icon: "arrow.triangle.2.circlepath", showsLabel: showsLabels) { syncOrchestrator.startSync() }
+            libraryBubble(title: "Find IDs", tooltip: "Look up MusicBrainz IDs all releases",
+                          icon: "magnifyingglass.circle", showsLabel: showsLabels) { scanCoordinator.start() }
+            libraryBubble(title: "Web BPM/Key", tooltip: "Fetch BPM key online (needs IDs)",
+                          icon: "waveform.circle", showsLabel: showsLabels) { audioFeaturesCoordinator.start() }
+            libraryBubble(title: "Link Files", tooltip: "Link tracks audio files on NAS",
+                          icon: "link.circle",
                           disabled: !driveMonitor.isAvailable, showsLabel: showsLabels) { fileMatchCoordinator.startFullScan() }
-            libraryBubble(title: "Cues",           icon: "scope",
+            libraryBubble(title: "Detect BPM/Key", tooltip: "Analyze own files BPM key (needs NAS)",
+                          icon: "waveform.badge.magnifyingglass",
+                          disabled: !driveMonitor.isAvailable, showsLabel: showsLabels) { localAnalysisCoordinator.startFileAnalysis() }
+            libraryBubble(title: "Find Cues", tooltip: "Detect cue points in linked files",
+                          icon: "scope",
                           disabled: !driveMonitor.isAvailable, showsLabel: showsLabels) { cueCoordinator.startDetection(scope: .matched) }
-            libraryBubble(title: "Export",         icon: "music.note.list",             showsLabel: showsLabels) { triggerExport() }
-            libraryBubble(title: "Backup",         icon: "externaldrive.badge.timemachine", showsLabel: showsLabels) { runBackupExport() }
-            libraryBubble(title: "Restore",        icon: "arrow.clockwise.icloud",          showsLabel: showsLabels) { runBackupImport() }
+
+            Divider().frame(height: 20)
+
+            libraryBubble(title: "Rekordbox", tooltip: "Export library sets Rekordbox XML",
+                          icon: "music.note.list", showsLabel: showsLabels) { triggerExport() }
+            libraryBubble(title: "Back Up", tooltip: "Save file links JSON file",
+                          icon: "externaldrive.badge.timemachine", showsLabel: showsLabels) { runBackupExport() }
+            libraryBubble(title: "Restore", tooltip: "Load file links backup",
+                          icon: "arrow.clockwise.icloud", showsLabel: showsLabels) { runBackupImport() }
         }
     }
 
@@ -300,21 +327,24 @@ struct UnifiedTopBar: View {
     /// bubble on the right (the only link between the two today is this highlight).
     private var activeLibraryBubbleTitles: Set<String> {
         var active: Set<String> = []
-        if syncOrchestrator.isSyncing { active.insert("Sync") }
-        if case .scanning = scanCoordinator.phase { active.insert("MBID") }
-        if case .scanning = audioFeaturesCoordinator.phase { active.insert("AcousticBrainz") }
+        if syncOrchestrator.isSyncing { active.insert("Update All") }
+        if case .scanning = scanCoordinator.phase { active.insert("Find IDs") }
+        if case .scanning = audioFeaturesCoordinator.phase { active.insert("Web BPM/Key") }
         switch fileMatchCoordinator.phase {
         case .indexing, .matching, .generatingWaveforms, .generatingWaveformsPaused:
-            active.insert("Match Audio")
+            active.insert("Link Files")
         default:
             break
         }
-        if cueCoordinator.phase == .detecting { active.insert("Cues") }
+        if localAnalysisCoordinator.phase == .analyzing || localAnalysisCoordinator.phase == .paused {
+            active.insert("Detect BPM/Key")
+        }
+        if cueCoordinator.phase == .detecting { active.insert("Find Cues") }
         return active
     }
 
     @ViewBuilder
-    private func libraryBubble(title: String, icon: String, disabled: Bool = false, showsLabel: Bool = true, action: @escaping () -> Void) -> some View {
+    private func libraryBubble(title: String, tooltip: String, icon: String, disabled: Bool = false, showsLabel: Bool = true, action: @escaping () -> Void) -> some View {
         let tint = bubbleColor(for: title)
         let isActive = activeLibraryBubbleTitles.contains(title)
         Button(action: action) {
@@ -336,8 +366,8 @@ struct UnifiedTopBar: View {
         .buttonStyle(LibraryBubbleButtonStyle(tint: tint, isActive: isActive))
         .disabled(disabled)
         .opacity(disabled ? 0.5 : 1.0)
-        .help(disabled ? "\(title) (unavailable — drive not connected)" : title)
-        .accessibilityLabel(disabled ? "\(title) (unavailable — drive not connected)" : title)
+        .help(disabled ? "\(title) (unavailable — drive not connected)" : tooltip)
+        .accessibilityLabel(disabled ? "\(title) (unavailable — drive not connected)" : tooltip)
     }
 }
 

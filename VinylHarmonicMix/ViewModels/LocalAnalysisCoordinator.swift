@@ -347,7 +347,10 @@ final class LocalAnalysisCoordinator {
         totalCount = summaries.count
         if totalCount == 0 { phase = .completed; return }
 
-        let chunkSize = 25
+        // ponytail: chunkSize 1 — saves per track so the Stats page header (a @Query
+        // over LocalAudioFeaturesEntity) reflects progress live instead of lagging by
+        // up to a batch. Cheap relative to essentia's per-track analysis time.
+        let chunkSize = 1
         var saveBuffer: [(PersistentIdentifier, AnalysisResult)] = []
 
         for (i, summary) in summaries.enumerated() {
@@ -537,7 +540,8 @@ final class LocalAnalysisCoordinator {
         totalCount = scoped.count
         if totalCount == 0 { phase = .completed; return }
 
-        let chunkSize = 25
+        // ponytail: chunkSize 1, same live-update reasoning as runAnalysis above.
+        let chunkSize = 1
         var saveBuffer: [(PersistentIdentifier, AnalysisResult)] = []
 
         for (i, summary) in scoped.enumerated() {
@@ -559,6 +563,7 @@ final class LocalAnalysisCoordinator {
             if saveBuffer.count >= chunkSize || i == scoped.count - 1 {
                 flushFileResults(saveBuffer)
                 saveBuffer.removeAll()
+                recomputeFileScope(force: true)
                 await Task.yield()
             }
         }

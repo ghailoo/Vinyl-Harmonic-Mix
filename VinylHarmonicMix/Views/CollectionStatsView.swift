@@ -534,7 +534,7 @@ struct CollectionStatsView: View {
         let canScan = audioFeaturesCoordinator.unqueriedCount > 0
 
         return VStack(alignment: .leading, spacing: 0) {
-            sectionHeader(title: "Audio Features")
+            sectionHeader(title: "Web BPM/Key (AcousticBrainz)")
 
             if featureEntities.isEmpty {
                 Text("No audio features yet. Use \"Scan audio\" to query AcousticBrainz for BPM and key data (~3 min).")
@@ -587,7 +587,7 @@ struct CollectionStatsView: View {
         }()
 
         return VStack(alignment: .leading, spacing: 0) {
-            sectionHeader(title: "Local Files")
+            sectionHeader(title: "Linked Files")
 
             if totalLocalFileCount == 0 && confident == 0 {
                 Text("No files matched yet. Run 'Match all tracks' to link local audio files to collection tracks.")
@@ -640,7 +640,7 @@ struct CollectionStatsView: View {
         let fileAnalyzed   = max(0, fileTotal - fileUnanalyzed)
 
         return VStack(alignment: .leading, spacing: 0) {
-            sectionHeader(title: "Local Audio Analysis")
+            sectionHeader(title: "Detect BPM/Key — linked tracks")
 
             if confident == 0 {
                 Text("No confident-matched tracks yet. Run file matching first.")
@@ -684,7 +684,7 @@ struct CollectionStatsView: View {
             Divider().padding(.vertical, 8)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("File-level analysis")
+                Text("Detect BPM/Key — all files")
                     .font(.system(size: 15, weight: .semibold))
 
                 if fileTotal > 0 {
