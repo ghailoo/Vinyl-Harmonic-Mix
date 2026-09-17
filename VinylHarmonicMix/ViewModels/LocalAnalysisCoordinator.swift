@@ -565,7 +565,9 @@ final class LocalAnalysisCoordinator {
 
         try? context.save()
         currentTrackLabel = ""
-        recomputeFileScope()
+        // force: true — files were just analyzed, so the unanalyzed count must refresh
+        // even though the total LocalFileEntity row count didn't change.
+        recomputeFileScope(force: true)
     }
 
     private func flushFileResults(_ buffer: [(PersistentIdentifier, AnalysisResult)]) {
@@ -583,13 +585,26 @@ final class LocalAnalysisCoordinator {
         try? context.save()
     }
 
-    func recomputeFileScope() {
+    private var lastFileScopeCount = -1
+
+    /// Recomputes inScopeFileCount/unanalyzedFileCount. Skips the rebuild when the total
+    /// LocalFileEntity row count hasn't changed since the last run — callers whose change
+    /// doesn't touch that count (e.g. after analyzing existing files) must pass `force: true`.
+    func recomputeFileScope(force: Bool = false) {
+        let currentFileCount = (try? context.fetchCount(FetchDescriptor<LocalFileEntity>())) ?? 0
+        guard force || currentFileCount != lastFileScopeCount else { return }
+        lastFileScopeCount = currentFileCount
+
         let artistNames = ((try? context.fetch(FetchDescriptor<ArtistCreditEntity>())) ?? []).map(\.name)
         let artistTokenSets: [Set<String>] = artistNames.map { name in
             Set(FuzzyMatch.normalize(name).split(separator: " ").map(String.init)).filter { $0.count >= 2 }
         }
 
-        let allFiles = (try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
+        // propertiesToFetch avoids loading each file's waveform blobs (up to ~64 KB/file)
+        // just to read four small fields — the main-actor cost this was blocking on.
+        var fd = FetchDescriptor<LocalFileEntity>()
+        fd.propertiesToFetch = [\.filePath, \.artistFolder, \.bpm, \.analyzedAt]
+        let allFiles = (try? context.fetch(fd)) ?? []
         let summaries: [LocalFileSummary] = allFiles.compactMap { file in
             guard !file.artistFolder.isEmpty else { return nil }
             return LocalFileSummary(

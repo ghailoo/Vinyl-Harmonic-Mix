@@ -241,6 +241,59 @@ final class CollectionViewModel {
 
     func resetSyncPhase() { syncPhase = .idle }
 
+    // MARK: - SetBuilder lookup cache
+    //
+    // SetBuilderView is torn down and recreated on every sidebar switch, so its onAppear
+    // can't tell whether these derived lookups are already up to date. Caching them here
+    // (state that outlives the view) lets rebuildSetBuilderLookupsIfNeeded skip the O(n)
+    // rebuild when the underlying track/feature counts haven't changed since last time.
+    private(set) var setBuilderFeaturesByMBID: [String: RecordingFeaturesEntity] = [:]
+    private(set) var setBuilderCoverageByInstanceId: [Int: (covered: Int, total: Int, localCovered: Int)] = [:]
+    private(set) var setBuilderFilePathToInstanceId: [String: Int] = [:]
+    private(set) var setBuilderThumbURLs: [String: URL] = [:]
+    private(set) var setBuilderConfidentPool: [MixTrack] = []
+    private var setBuilderLastFeaturesCount = -1
+    private var setBuilderLastTracksCount = -1
+
+    @discardableResult
+    func rebuildSetBuilderLookupsIfNeeded(features: [RecordingFeaturesEntity], tracks: [TrackEntity]) -> Bool {
+        guard features.count != setBuilderLastFeaturesCount || tracks.count != setBuilderLastTracksCount else {
+            return false
+        }
+        setBuilderLastFeaturesCount = features.count
+        setBuilderLastTracksCount = tracks.count
+
+        var featuresByMBID: [String: RecordingFeaturesEntity] = [:]
+        featuresByMBID.reserveCapacity(features.count)
+        for f in features { featuresByMBID[f.recordingMBID] = f }
+
+        var totals: [Int: Int] = [:]
+        var coveredCounts: [Int: Int] = [:]
+        var localCounts: [Int: Int] = [:]
+        var fpToId: [String: Int] = [:]
+        fpToId.reserveCapacity(tracks.count)
+        for track in tracks {
+            guard let id = track.collectionItem?.instanceId else { continue }
+            totals[id, default: 0] += 1
+            let hasEffectiveBpm = track.effectiveBpm != nil
+            let hasLocalSource  = track.featureSource == .local
+            let f = featuresByMBID[track.recordingMBID]
+            let hasAbBpm = f?.bpm != nil && f?.camelotCode != nil
+            if hasEffectiveBpm || hasAbBpm { coveredCounts[id, default: 0] += 1 }
+            if hasLocalSource              { localCounts[id, default: 0] += 1 }
+            if let fp = track.primaryLocalFilePath, !fp.isEmpty { fpToId[fp] = id }
+        }
+
+        setBuilderFeaturesByMBID = featuresByMBID
+        setBuilderCoverageByInstanceId = Dictionary(uniqueKeysWithValues: totals.keys.map { id in
+            (id, (covered: coveredCounts[id] ?? 0, total: totals[id]!, localCovered: localCounts[id] ?? 0))
+        })
+        setBuilderFilePathToInstanceId = fpToId
+        setBuilderThumbURLs = MixCoverArt.thumbURLs(from: tracks)
+        setBuilderConfidentPool = MixTrackPool.confident(from: tracks)
+        return true
+    }
+
     private func makeItem(from entity: CollectionItemEntity) -> CollectionItem? {
         guard let basic = entity.basicInformation else { return nil }
         let info = BasicInformation(

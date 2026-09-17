@@ -107,9 +107,7 @@ struct SetBuilderView: View {
         }
         }
         .onAppear {
-            rebuildFeaturesLookup()
-            rebuildCoverageLookup()
-            rebuildThumbURLs()
+            syncSetBuilderLookups()
             if activeSet == nil, !activeSetID.isEmpty {
                 activeSet = allSets.first { $0.id == activeSetID }
                 if activeSet == nil { activeSetID = "" }
@@ -118,18 +116,16 @@ struct SetBuilderView: View {
             // loadedFilePath covers load-without-play; currentFilePath covers played-then-paused.
             if currentTrack == nil {
                 let fp = playback.loadedFilePath ?? playback.currentFilePath
-                if let fp { currentTrack = pool.first(where: { $0.filePath == fp }) }
+                if let fp { currentTrack = viewModel.setBuilderConfidentPool.first(where: { $0.filePath == fp }) }
             }
-            playback.smartAdvancePool = MixTrackPool.confident(from: Array(allTrackEntities))
+            playback.smartAdvancePool = viewModel.setBuilderConfidentPool
         }
         .onChange(of: allFeatures.count) { _, _ in
-            rebuildFeaturesLookup()
-            rebuildCoverageLookup()
+            syncSetBuilderLookups()
         }
         .onChange(of: allTrackEntities.count) { _, _ in
-            rebuildCoverageLookup()
-            rebuildThumbURLs()
-            playback.smartAdvancePool = MixTrackPool.confident(from: Array(allTrackEntities))
+            syncSetBuilderLookups()
+            playback.smartAdvancePool = viewModel.setBuilderConfidentPool
         }
         .onChange(of: playback.currentFilePath) { _, newPath in
             playingInstanceId = newPath.flatMap { filePathToInstanceId[$0] }
@@ -947,41 +943,18 @@ struct SetBuilderView: View {
     }
 
     // MARK: - Lookup rebuilds
-
-    private func rebuildFeaturesLookup() {
-        var d: [String: RecordingFeaturesEntity] = [:]
-        d.reserveCapacity(allFeatures.count)
-        for f in allFeatures { d[f.recordingMBID] = f }
-        featuresByMBID = d
-    }
-
-    private func rebuildCoverageLookup() {
-        guard !allTrackEntities.isEmpty else { coverageByInstanceId = [:]; return }
-        var totals: [Int: Int] = [:]
-        var coveredCounts: [Int: Int] = [:]
-        var localCounts: [Int: Int] = [:]
-        var fpToId: [String: Int] = [:]
-        fpToId.reserveCapacity(allTrackEntities.count)
-        for track in allTrackEntities {
-            guard let id = track.collectionItem?.instanceId else { continue }
-            totals[id, default: 0] += 1
-            let hasEffectiveBpm = track.effectiveBpm != nil
-            let hasLocalSource  = track.featureSource == .local
-            let f = featuresByMBID[track.recordingMBID]
-            let hasAbBpm = f?.bpm != nil && f?.camelotCode != nil
-            if hasEffectiveBpm || hasAbBpm { coveredCounts[id, default: 0] += 1 }
-            if hasLocalSource              { localCounts[id, default: 0] += 1 }
-            if let fp = track.primaryLocalFilePath, !fp.isEmpty { fpToId[fp] = id }
-        }
-        coverageByInstanceId = Dictionary(uniqueKeysWithValues: totals.keys.map { id in
-            (id, (covered: coveredCounts[id] ?? 0, total: totals[id]!, localCovered: localCounts[id] ?? 0))
-        })
-        filePathToInstanceId = fpToId
-        playingInstanceId = playback.currentFilePath.flatMap { fpToId[$0] }
-    }
-
-    private func rebuildThumbURLs() {
-        thumbURLs = MixCoverArt.thumbURLs(from: allTrackEntities)
+    //
+    // SetBuilderView is torn down and recreated on every sidebar switch, so the actual
+    // O(n) rebuild lives in CollectionViewModel (which persists across that) and is
+    // skipped there when the source counts haven't changed. This just pulls the
+    // (possibly cached) results into local @State for the view to read.
+    private func syncSetBuilderLookups() {
+        viewModel.rebuildSetBuilderLookupsIfNeeded(features: allFeatures, tracks: allTrackEntities)
+        featuresByMBID = viewModel.setBuilderFeaturesByMBID
+        coverageByInstanceId = viewModel.setBuilderCoverageByInstanceId
+        filePathToInstanceId = viewModel.setBuilderFilePathToInstanceId
+        thumbURLs = viewModel.setBuilderThumbURLs
+        playingInstanceId = playback.currentFilePath.flatMap { filePathToInstanceId[$0] }
     }
 
     // MARK: - Computed helpers
