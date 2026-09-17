@@ -276,7 +276,7 @@ struct MBIDScanResultsView: View {
                                 },
                                 onResetToNotFound: {
                                     coordinator.resetToNotFound(instanceId: item.instanceId)
-                                    showToast("Reset to \"Not found\" — use Retry not found to rescan")
+                                    showToast("Reset to \"Not found\" — run the MBID scan again to retry")
                                 },
                                 onSetMBIDManually: {
                                     mbidEntryItem = item

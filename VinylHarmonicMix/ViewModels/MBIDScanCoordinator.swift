@@ -104,7 +104,9 @@ final class MBIDScanCoordinator {
     // MARK: - Subset scan (used by SyncOrchestrator for new-release-only MBID pass)
 
     /// Awaitable MBID scan scoped to a specific set of entities.
-    /// Runs the same URL-lookup logic as performScan() but only over the passed entities.
+    /// Runs the same URL-lookup logic as performScan() but only over the passed entities,
+    /// then chains into the search pipeline (searchFallbackMatch) for whatever is still
+    /// unmatched — same "one run does both passes" behavior as the UI-triggered scan (A1).
     /// Skips entities already matched/notFound; only processes unscanned and failed.
     /// Does NOT modify phase/scanned/total (orchestrator owns progress display).
     func startForItems(_ entities: [CollectionItemEntity]) async {
@@ -153,7 +155,60 @@ final class MBIDScanCoordinator {
         }
 
         do { try context.save() } catch { print("❌ Final save failed: \(error)") }
+
+        let stillUnmatched = entities.filter {
+            let s = MBIDScanState(rawValue: $0.mbidScanState) ?? .unscanned
+            return s == .notFound || s == .failed
+        }
+        for entity in stillUnmatched {
+            if Task.isCancelled {
+                currentItem = nil
+                do { try context.save() } catch { print("❌ Save on cancel: \(error)") }
+                return
+            }
+
+            currentItem = ScanningItemInfo(
+                title: entity.basicInformation?.title ?? "—",
+                artist: entity.basicInformation?.artists.first?.name ?? "Unknown artist"
+            )
+            do {
+                if let match = try await searchFallbackMatch(for: entity) {
+                    entity.mbid = match.mbid
+                    entity.mbidMatchedTitle = match.title
+                    entity.mbidMatchedArtist = match.artist
+                    entity.mbidScanState = MBIDScanState.matchedViaSearch.rawValue
+                }
+                // nil → no match found; leave state as notFound
+            } catch is CancellationError {
+                print("⏸️ startForItems search fallback cancelled for releaseId=\(entity.releaseId), state unchanged")
+                try? context.save()
+                currentItem = nil
+                return
+            } catch {
+                entity.mbidScanState = MBIDScanState.failed.rawValue
+                print("⚠️ startForItems search fallback failed item \(entity.releaseId): \(error)")
+            }
+            entity.mbidScannedAt = Date()
+
+            saveCounter += 1
+            if saveCounter >= 10 {
+                do { try context.save() } catch { print("❌ Batch save failed: \(error)") }
+                saveCounter = 0
+            }
+        }
+
+        do { try context.save() } catch { print("❌ Final save failed: \(error)") }
         currentItem = nil
+    }
+
+    /// The shared "search pipeline" strategy used by both the full scan (scanMissingViaSearch)
+    /// and the scoped SyncOrchestrator scan (startForItems) — one implementation, two callers.
+    private func searchFallbackMatch(for entity: CollectionItemEntity) async throws -> MBIDSearchMatch? {
+        let artistName = entity.basicInformation?.artists.map(\.name).joined(separator: " ") ?? ""
+        let title = entity.basicInformation?.title ?? ""
+        let rawYear = entity.basicInformation?.year ?? 0
+        let year: Int? = rawYear > 0 ? rawYear : nil
+        return try await client.searchMBID(artist: artistName, title: title, year: year)
     }
 
     // MARK: - Manual fix actions
@@ -333,22 +388,43 @@ final class MBIDScanCoordinator {
 
         do { try context.save() } catch { print("❌ Final save failed: \(error)") }
         currentItem = nil
-        phase = .completed
+
+        // A1: one MBID run does URL lookup first, then the search pipeline for whatever
+        // is still unmatched — no separate button/hidden second pass required.
+        if scanMode == .urlLookup {
+            await beginSearchFallbackPass()
+        } else {
+            phase = .completed
+        }
     }
 
-    // MARK: - Search-fallback pass (second pass)
+    // MARK: - Search-fallback pass (auto-chained second pass)
 
-    func startSearchScan() {
-        switch phase {
-        case .idle, .completed, .cancelled: break
-        default: return
-        }
+    /// Chains directly into the search pass within the same scan Task (no new Task spawned,
+    /// since this runs inline at the tail of performScan()).
+    private func beginSearchFallbackPass() async {
         scanMode = .searchFallback
         processedCount = 0
         scanned = 0
-        startSearchScanInternal()
+
+        let rawNotFound = MBIDScanState.notFound.rawValue
+        let rawFailed   = MBIDScanState.failed.rawValue
+        let descriptor = FetchDescriptor<CollectionItemEntity>(
+            predicate: #Predicate { $0.mbidScanState == rawNotFound || $0.mbidScanState == rawFailed }
+        )
+        let remaining = (try? context.fetchCount(descriptor)) ?? 0
+        total = remaining
+
+        guard remaining > 0 else {
+            phase = .completed
+            return
+        }
+
+        await scanMissingViaSearch()
     }
 
+    /// Used only when resuming a paused search-fallback pass (spawns its own Task since
+    /// resume() is a synchronous UI call).
     private func startSearchScanInternal() {
         phase = .scanning
         showBanner = true
@@ -394,13 +470,8 @@ final class MBIDScanCoordinator {
                 title: entity.basicInformation?.title ?? "—",
                 artist: entity.basicInformation?.artists.first?.name ?? "Unknown artist"
             )
-            let artistName = entity.basicInformation?.artists.map(\.name).joined(separator: " ") ?? ""
-            let title = entity.basicInformation?.title ?? ""
-            let rawYear = entity.basicInformation?.year ?? 0
-            let year: Int? = rawYear > 0 ? rawYear : nil
-
             do {
-                let match = try await client.searchMBID(artist: artistName, title: title, year: year)
+                let match = try await searchFallbackMatch(for: entity)
                 if let match {
                     entity.mbid = match.mbid
                     entity.mbidMatchedTitle = match.title

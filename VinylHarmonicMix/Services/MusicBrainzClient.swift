@@ -134,10 +134,12 @@ struct RecordingMBIDMatch {
 
 enum MBError: LocalizedError {
     case badResponse(Int)
+    case rateLimited(Int)
 
     var errorDescription: String? {
         switch self {
         case .badResponse(let code): return "MusicBrainz returned HTTP \(code)"
+        case .rateLimited(let code): return "MusicBrainz kept rate-limiting the request (HTTP \(code)) after retries"
         }
     }
 }
@@ -168,35 +170,73 @@ final class MusicBrainzClient {
         return s.map { special.contains($0) ? "\\\($0)" : String($0) }.joined()
     }
 
+    // MARK: - Retry/backoff (shared by all rate-limited endpoints)
+
+    private enum MBHTTPOutcome {
+        case success(Data)
+        case notFound
+    }
+
+    /// A real empty result (200 with no matches, or 404) becomes `.notFound` — permanent.
+    /// Exhausting retries on 429/503 throws instead, so the caller marks the item `.failed`
+    /// (retried on the next scan) rather than treating rate-limiting as "no match".
+    private func requestWithRetry(_ url: URL, maxAttempts: Int = 4) async throws -> MBHTTPOutcome {
+        var attempt = 0
+        while true {
+            attempt += 1
+            await rateLimiter.wait()
+
+            let data: Data
+            let response: URLResponse
+            do {
+                (data, response) = try await session.data(for: makeRequest(url))
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                if attempt >= maxAttempts { throw error }
+                try? await Task.sleep(nanoseconds: UInt64(backoffSeconds(attempt: attempt) * 1_000_000_000))
+                continue
+            }
+
+            guard let http = response as? HTTPURLResponse else {
+                throw MBError.badResponse(0)
+            }
+
+            switch http.statusCode {
+            case 200:
+                return .success(data)
+            case 404:
+                return .notFound
+            case 429, 503:
+                if attempt >= maxAttempts {
+                    throw MBError.rateLimited(http.statusCode)
+                }
+                let wait = retryAfterSeconds(from: http) ?? backoffSeconds(attempt: attempt)
+                try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+            default:
+                throw MBError.badResponse(http.statusCode)
+            }
+        }
+    }
+
+    private func backoffSeconds(attempt: Int) -> Double {
+        min(2.0 * pow(2.0, Double(attempt - 1)), 20.0) // 2s, 4s, 8s, capped at 20s
+    }
+
+    private func retryAfterSeconds(from http: HTTPURLResponse) -> Double? {
+        guard let value = http.value(forHTTPHeaderField: "Retry-After"), let seconds = Double(value) else { return nil }
+        return seconds
+    }
+
     // MARK: - URL-lookup scan (rate-limited)
 
     func findMBID(forDiscogsReleaseId releaseId: Int) async throws -> MBIDMatch? {
         let urlString = "https://musicbrainz.org/ws/2/url?resource=https://www.discogs.com/release/\(releaseId)&inc=release-rels&fmt=json"
         guard let url = URL(string: urlString) else { return nil }
 
-        await rateLimiter.wait()
-        return try await fetchWithRetry(url: url)
-    }
-
-    private func fetchWithRetry(url: URL) async throws -> MBIDMatch? {
-        let (data, response) = try await session.data(for: makeRequest(url))
-        guard let http = response as? HTTPURLResponse else { return nil }
-
-        switch http.statusCode {
-        case 200:
-            return try parseURLMatch(from: data)
-        case 404:
-            return nil
-        case 429, 503:
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-            await rateLimiter.wait()
-            let (retryData, retryResponse) = try await session.data(for: makeRequest(url))
-            guard let retryHttp = retryResponse as? HTTPURLResponse, retryHttp.statusCode == 200 else {
-                return nil
-            }
-            return try parseURLMatch(from: retryData)
-        default:
-            throw MBError.badResponse(http.statusCode)
+        switch try await requestWithRetry(url) {
+        case .notFound: return nil
+        case .success(let data): return try parseURLMatch(from: data)
         }
     }
 
@@ -225,27 +265,9 @@ final class MusicBrainzClient {
             return nil
         }
 
-        await rateLimiter.wait()
-        return try await searchWithRetry(url: url)
-    }
-
-    private func searchWithRetry(url: URL) async throws -> MBIDSearchMatch? {
-        let (data, response) = try await session.data(for: makeRequest(url))
-        guard let http = response as? HTTPURLResponse else { return nil }
-
-        switch http.statusCode {
-        case 200:
-            return try parseSearchMatch(from: data)
-        case 429, 503:
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-            await rateLimiter.wait()
-            let (retryData, retryResponse) = try await session.data(for: makeRequest(url))
-            guard let retryHttp = retryResponse as? HTTPURLResponse, retryHttp.statusCode == 200 else {
-                return nil
-            }
-            return try parseSearchMatch(from: retryData)
-        default:
-            throw MBError.badResponse(http.statusCode)
+        switch try await requestWithRetry(url) {
+        case .notFound: return nil
+        case .success(let data): return try parseSearchMatch(from: data)
         }
     }
 
@@ -268,28 +290,9 @@ final class MusicBrainzClient {
     func fetchRecordings(forReleaseMBID mbid: String) async throws -> [RecordingMBIDMatch] {
         let urlString = "https://musicbrainz.org/ws/2/release/\(mbid)?inc=recordings+artist-credits&fmt=json"
         guard let url = URL(string: urlString) else { throw MBError.badResponse(0) }
-        await rateLimiter.wait()
-        return try await fetchRecordingsWithRetry(url: url)
-    }
-
-    private func fetchRecordingsWithRetry(url: URL) async throws -> [RecordingMBIDMatch] {
-        let (data, response) = try await session.data(for: makeRequest(url))
-        guard let http = response as? HTTPURLResponse else { throw MBError.badResponse(0) }
-        switch http.statusCode {
-        case 200:
-            return try parseRecordings(from: data)
-        case 404:
-            throw MBError.badResponse(404)
-        case 429, 503:
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-            await rateLimiter.wait()
-            let (retryData, retryResponse) = try await session.data(for: makeRequest(url))
-            guard let retryHttp = retryResponse as? HTTPURLResponse, retryHttp.statusCode == 200 else {
-                throw MBError.badResponse((retryResponse as? HTTPURLResponse)?.statusCode ?? 0)
-            }
-            return try parseRecordings(from: retryData)
-        default:
-            throw MBError.badResponse(http.statusCode)
+        switch try await requestWithRetry(url) {
+        case .notFound: throw MBError.badResponse(404)
+        case .success(let data): return try parseRecordings(from: data)
         }
     }
 
