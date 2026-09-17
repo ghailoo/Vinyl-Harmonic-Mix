@@ -6,6 +6,9 @@ struct MBIDScanResultsView: View {
     let onFilterSelect: (CollectionFilter) -> Void
     let onOpenItem: (Int) -> Void
 
+    @Environment(RecordingsScanCoordinator.self) private var recordingsCoordinator
+    @Environment(AudioFeaturesScanCoordinator.self) private var audioFeaturesCoordinator
+
     @State private var isExpanded: Bool = true
     @State private var mbidEntryItem: MBIDScanCoordinator.FailedItemInfo? = nil
     @State private var toastMessage: String? = nil
@@ -64,6 +67,8 @@ struct MBIDScanResultsView: View {
             Divider()
             HStack(spacing: 0) {
                 matchResultsPane
+                Divider()
+                needsReviewPane
                 Divider()
                 failedPane
             }
@@ -203,16 +208,25 @@ struct MBIDScanResultsView: View {
             paneTitle("Match Results")
             VStack(spacing: 4) {
                 matchRow(icon: "checkmark.circle.fill", iconColor: .green,
-                         label: "Via URL relationship", count: coordinator.matchedCount,
+                         label: "Via link",             count: coordinator.matchedCount,
                          filter: .matched)
                 matchRow(icon: "checkmark.circle.fill", iconColor: .green,
-                         label: "Via indexed search",   count: coordinator.searchMatchedCount,
+                         label: "Via barcode",          count: coordinator.viaBarcodeCount,
+                         filter: .matched)
+                matchRow(icon: "checkmark.circle.fill", iconColor: .green,
+                         label: "Via catno",            count: coordinator.viaCatalogNumberCount,
+                         filter: .matched)
+                matchRow(icon: "checkmark.circle.fill", iconColor: .green,
+                         label: "Via search",           count: coordinator.viaFuzzySearchCount,
                          filter: .matched)
                 if coordinator.manualMatchCount > 0 {
                     matchRow(icon: "pencil.circle.fill", iconColor: .green,
                              label: "Manually matched",  count: coordinator.manualMatchCount,
                              filter: .matched)
                 }
+                matchRow(icon: "exclamationmark.circle", iconColor: .orange,
+                         label: "Needs review",         count: coordinator.needsReviewCount,
+                         filter: .needsReview)
                 matchRow(icon: "circle",                iconColor: .secondary,
                          label: "Not found",            count: coordinator.notFoundCount,
                          filter: .notFound)
@@ -251,6 +265,48 @@ struct MBIDScanResultsView: View {
         .buttonStyle(.plain)
         .help(tappable ? "Filter grid to show \(label.lowercased())" : "")
         .accessibilityLabel(tappable ? "Filter grid to show \(label.lowercased())" : "")
+    }
+
+    // MARK: - Needs review pane
+
+    private var needsReviewPane: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            paneTitle("Needs Review")
+            if coordinator.needsReviewItems.isEmpty {
+                Spacer()
+                Text("None")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                Spacer()
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        ForEach(coordinator.needsReviewItems) { item in
+                            NeedsReviewRowView(
+                                item: item,
+                                onAccept: { mbid in
+                                    coordinator.setMBIDManuallyAndEnrich(
+                                        instanceId: item.instanceId,
+                                        mbid: mbid,
+                                        recordingsCoordinator: recordingsCoordinator,
+                                        audioFeaturesCoordinator: audioFeaturesCoordinator
+                                    )
+                                    showToast("MBID set for \(item.title)")
+                                },
+                                onNotOnMusicBrainz: {
+                                    coordinator.resetToNotFound(instanceId: item.instanceId)
+                                    showToast("Marked \"Not found\" for \(item.title)")
+                                }
+                            )
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     // MARK: - Failed pane
@@ -319,10 +375,10 @@ struct MBIDScanResultsView: View {
 
     private var panelContentHeight: CGFloat {
         let baseHeight: CGFloat = 180
-        let failedRowHeight: CGFloat = 56
-        let failedCount = coordinator.failedItems.count
-        guard failedCount > 3 else { return baseHeight }
-        return min(baseHeight + CGFloat(failedCount - 3) * failedRowHeight, 360)
+        let rowHeight: CGFloat = 56
+        let overflowRows = max(coordinator.failedItems.count, coordinator.needsReviewItems.count) - 3
+        guard overflowRows > 0 else { return baseHeight }
+        return min(baseHeight + CGFloat(overflowRows) * rowHeight, 360)
     }
 
     // MARK: - Helpers
@@ -451,6 +507,107 @@ private struct FailedRowView: View {
                 .padding(.vertical, 8)
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Needs-review row with popover
+
+private struct NeedsReviewRowView: View {
+    let item: MBIDScanCoordinator.NeedsReviewItemInfo
+    let onAccept: (String) -> Void
+    let onNotOnMusicBrainz: () -> Void
+
+    @State private var showPopover = false
+
+    var body: some View {
+        Button { showPopover = true } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title)
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
+                Text(item.artist)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Text("\(item.candidates.count) candidate\(item.candidates.count == 1 ? "" : "s")")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $showPopover, arrowEdge: .leading) {
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(2)
+                    Text(item.artist)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(item.candidates) { candidate in
+                        candidateRow(candidate)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+
+                Divider()
+
+                Button(role: .destructive) {
+                    showPopover = false
+                    onNotOnMusicBrainz()
+                } label: {
+                    Label("Not on MusicBrainz", systemImage: "xmark.circle")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(.plain)
+            }
+            .frame(width: 340)
+        }
+    }
+
+    private func candidateRow(_ candidate: MBReviewCandidate) -> some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(candidate.title)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                Text(candidate.artist)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Text([candidate.format, candidate.country, candidate.date, candidate.catno]
+                    .filter { !$0.isEmpty }
+                    .joined(separator: " · "))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 4) {
+                Text("\(Int(candidate.score * 100))%")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                Button("Accept") {
+                    onAccept(candidate.mbid)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+            }
+        }
     }
 }
 

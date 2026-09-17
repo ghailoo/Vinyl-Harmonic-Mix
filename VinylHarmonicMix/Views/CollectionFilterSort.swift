@@ -27,21 +27,23 @@ enum CollectionSort: String, CaseIterable, Identifiable {
 }
 
 enum CollectionFilter: String, CaseIterable, Identifiable {
-    case all       = "All"
-    case matched   = "Matched"
-    case notFound  = "Not found"
-    case failed    = "Failed"
-    case unscanned = "Unscanned"
+    case all         = "All"
+    case matched     = "Matched"
+    case needsReview = "Needs review"
+    case notFound    = "Not found"
+    case failed      = "Failed"
+    case unscanned   = "Unscanned"
 
     var id: String { rawValue }
 
     var icon: String {
         switch self {
-        case .all:      return "circle.grid.2x2"
-        case .matched:  return "checkmark.seal.fill"
-        case .notFound: return "questionmark.circle"
-        case .failed:   return "exclamationmark.triangle"
-        case .unscanned: return "circle.dotted"
+        case .all:         return "circle.grid.2x2"
+        case .matched:     return "checkmark.seal.fill"
+        case .needsReview: return "exclamationmark.circle"
+        case .notFound:    return "questionmark.circle"
+        case .failed:      return "exclamationmark.triangle"
+        case .unscanned:   return "circle.dotted"
         }
     }
 }

@@ -37,6 +37,14 @@ final class MBIDScanCoordinator {
         var id: Int { instanceId }
     }
 
+    struct NeedsReviewItemInfo: Identifiable {
+        let instanceId: Int
+        let title: String
+        let artist: String
+        let candidates: [MBReviewCandidate]
+        var id: Int { instanceId }
+    }
+
     var phase: Phase = .idle
     var scanMode: ScanMode = .urlLookup
     var scanned: Int = 0
@@ -76,6 +84,25 @@ final class MBIDScanCoordinator {
     var failedCount: Int        { fetchCount(state: .failed) }
     var unscannedCount: Int     { fetchCount(state: .unscanned) }
 
+    // MARK: - Counts by search-pipeline method (C2)
+
+    private func fetchCount(matchMethod: MBIDMatchMethod) -> Int {
+        let rawState: String = MBIDScanState.matchedViaSearch.rawValue
+        let rawMethod: String? = matchMethod.rawValue
+        let d = FetchDescriptor<CollectionItemEntity>(
+            predicate: #Predicate { $0.mbidScanState == rawState && $0.mbidMatchMethod == rawMethod }
+        )
+        return (try? context.fetchCount(d)) ?? 0
+    }
+
+    var viaBarcodeCount: Int       { fetchCount(matchMethod: .barcode) }
+    var viaCatalogNumberCount: Int { fetchCount(matchMethod: .catalogNumber) }
+    /// Search (strategy 3) and master-lookup (strategy 4) matches are both surfaced as
+    /// "via search" — the user-facing breakdown asks for one bucket, not four.
+    var viaFuzzySearchCount: Int {
+        searchMatchedCount - viaBarcodeCount - viaCatalogNumberCount
+    }
+
     var totalCount: Int {
         (try? context.fetchCount(FetchDescriptor<CollectionItemEntity>())) ?? 0
     }
@@ -98,6 +125,20 @@ final class MBIDScanCoordinator {
                 title: entity.basicInformation?.title ?? "Unknown",
                 artist: entity.basicInformation?.artists.map(\.name).joined(separator: " & ") ?? "",
                 error: "Network error or invalid response"
+            )
+        }
+    }
+
+    var needsReviewItems: [NeedsReviewItemInfo] {
+        let d = FetchDescriptor<CollectionItemEntity>(
+            predicate: #Predicate { $0.mbidScanState == "needsReview" }
+        )
+        return ((try? context.fetch(d)) ?? []).map { entity in
+            NeedsReviewItemInfo(
+                instanceId: entity.instanceId,
+                title: entity.basicInformation?.title ?? "Unknown",
+                artist: entity.basicInformation?.artists.map(\.name).joined(separator: " & ") ?? "",
+                candidates: entity.reviewCandidates
             )
         }
     }

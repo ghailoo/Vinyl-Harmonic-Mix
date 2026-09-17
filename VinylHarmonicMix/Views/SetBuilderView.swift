@@ -171,6 +171,18 @@ struct SetBuilderView: View {
                 await MainActor.run { highlightedItemId = nil }
             }
         }
+        .overlay(alignment: .top) {
+            if scanCoordinator.shouldShowPanel {
+                MBIDScanResultsView(
+                    coordinator: scanCoordinator,
+                    onFilterSelect: { filter in activeFilterRaw = filter.rawValue },
+                    onOpenItem: { instanceId in
+                        selectedItem = viewModel.items.first { $0.id == instanceId }
+                    }
+                )
+                .padding(.top, 12)
+            }
+        }
         } // ScrollViewReader
         } // GeometryReader
     }
@@ -975,6 +987,7 @@ struct SetBuilderView: View {
             $0.mbidScanState == "matchedViaSearch" ||
             $0.mbidScanState == "matchedManually"
         }.count
+        case .needsReview: return allCollectionEntities.filter { $0.mbidScanState == "needsReview" }.count
         case .notFound:  return allCollectionEntities.filter { $0.mbidScanState == "notFound" }.count
         case .failed:    return allCollectionEntities.filter { $0.mbidScanState == "failed" }.count
         case .unscanned: return allCollectionEntities.filter { $0.mbidScanState == "unscanned" }.count
@@ -994,6 +1007,8 @@ struct SetBuilderView: View {
                     $0.mbidScanState == "matchedViaSearch" ||
                     $0.mbidScanState == "matchedManually"
                 }.map(\.instanceId))
+            case .needsReview:
+                matchingIds = Set(allCollectionEntities.filter { $0.mbidScanState == "needsReview" }.map(\.instanceId))
             case .notFound:
                 matchingIds = Set(allCollectionEntities.filter { $0.mbidScanState == "notFound" }.map(\.instanceId))
             case .failed:
