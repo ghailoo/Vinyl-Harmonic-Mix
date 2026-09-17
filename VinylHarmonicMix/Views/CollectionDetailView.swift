@@ -768,6 +768,21 @@ struct CollectionDetailView: View {
                 .padding(.bottom, 12)
             }
 
+        case .needsReview:
+            VStack(alignment: .leading, spacing: 0) {
+                mbidSectionHeader
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Needs review")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                    Text("Multiple possible MusicBrainz matches — review them in the MBID scan panel")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 12)
+            }
+
         case .unscanned:
             EmptyView()
         }

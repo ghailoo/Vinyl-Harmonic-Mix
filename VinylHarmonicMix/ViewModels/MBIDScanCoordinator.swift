@@ -71,6 +71,7 @@ final class MBIDScanCoordinator {
     var matchedCount: Int       { fetchCount(state: .matched) }
     var searchMatchedCount: Int { fetchCount(state: .matchedViaSearch) }
     var manualMatchCount: Int   { fetchCount(state: .matchedManually) }
+    var needsReviewCount: Int   { fetchCount(state: .needsReview) }
     var notFoundCount: Int      { fetchCount(state: .notFound) }
     var failedCount: Int        { fetchCount(state: .failed) }
     var unscannedCount: Int     { fetchCount(state: .unscanned) }
@@ -80,7 +81,7 @@ final class MBIDScanCoordinator {
     }
 
     var processedSoFar: Int {
-        matchedCount + searchMatchedCount + notFoundCount + failedCount
+        matchedCount + searchMatchedCount + needsReviewCount + notFoundCount + failedCount
     }
 
     var overallMatchRate: Double {
@@ -172,13 +173,8 @@ final class MBIDScanCoordinator {
                 artist: entity.basicInformation?.artists.first?.name ?? "Unknown artist"
             )
             do {
-                if let match = try await searchFallbackMatch(for: entity) {
-                    entity.mbid = match.mbid
-                    entity.mbidMatchedTitle = match.title
-                    entity.mbidMatchedArtist = match.artist
-                    entity.mbidScanState = MBIDScanState.matchedViaSearch.rawValue
-                }
-                // nil → no match found; leave state as notFound
+                let outcome = try await runSearchPipeline(for: entity)
+                applyPipelineOutcome(outcome, to: entity)
             } catch is CancellationError {
                 print("⏸️ startForItems search fallback cancelled for releaseId=\(entity.releaseId), state unchanged")
                 try? context.save()
@@ -201,14 +197,151 @@ final class MBIDScanCoordinator {
         currentItem = nil
     }
 
+    // MARK: - Search pipeline (Part B) — strongest identifier first, stop at first VERIFIED match
+
+    private enum MBPipelineOutcome {
+        case matched(mbid: String, title: String, artist: String, method: MBIDMatchMethod)
+        case needsReview([MBReviewCandidate])
+        case notFound
+    }
+
+    private struct ScoredCandidate {
+        let candidate: MBCandidate
+        let score: Double
+    }
+
     /// The shared "search pipeline" strategy used by both the full scan (scanMissingViaSearch)
     /// and the scoped SyncOrchestrator scan (startForItems) — one implementation, two callers.
-    private func searchFallbackMatch(for entity: CollectionItemEntity) async throws -> MBIDSearchMatch? {
-        let artistName = entity.basicInformation?.artists.map(\.name).joined(separator: " ") ?? ""
+    /// Order: barcode → label+catno → artist+title fuzzy → Discogs master URL. Stops at the
+    /// first strategy whose best candidate clears the identifier/strong-fuzzy bar (B3); anything
+    /// merely plausible is pooled for review instead of discarded.
+    private func runSearchPipeline(for entity: CollectionItemEntity) async throws -> MBPipelineOutcome {
+        let detail = cachedReleaseDetail(for: entity.releaseId)
+        let side = discogsSide(for: entity, detail: detail)
+        var reviewPool: [ScoredCandidate] = []
+
+        func evaluate(_ candidates: [MBCandidate], identifierMatch: Bool, method: MBIDMatchMethod) -> MBPipelineOutcome? {
+            let scored = candidates
+                .compactMap { candidate -> ScoredCandidate? in
+                    guard let score = MBMatchVerifier.score(candidate: candidate, discogs: side) else { return nil }
+                    return ScoredCandidate(candidate: candidate, score: score)
+                }
+                .sorted { $0.score > $1.score }
+
+            guard let best = scored.first else { return nil }
+
+            if identifierMatch || best.score >= MBMatchThresholds.strongFuzzyAutoAccept {
+                return .matched(mbid: best.candidate.mbid, title: best.candidate.title, artist: best.candidate.artist, method: method)
+            }
+
+            reviewPool.append(contentsOf: scored.filter { $0.score >= MBMatchThresholds.reviewMinimum })
+            return nil
+        }
+
+        // 1. Barcode
+        if let barcode = extractBarcode(detail), !barcode.isEmpty {
+            let candidates = try await client.searchReleasesByBarcode(barcode)
+            if let outcome = evaluate(candidates, identifierMatch: true, method: .barcode) { return outcome }
+        }
+
+        // 2. Label + catalog number
+        if let labelCredit = entity.basicInformation?.labels.first(where: isUsableLabelCredit) {
+            let candidates = try await client.searchReleasesByCatalogNumber(catno: labelCredit.catno, label: labelCredit.name)
+            if let outcome = evaluate(candidates, identifierMatch: true, method: .catalogNumber) { return outcome }
+        }
+
+        // 3. Artist + title, fuzzy — each Discogs artist credit searched separately (B1)
+        let artistNames = entity.basicInformation?.artists.map(\.name) ?? []
         let title = entity.basicInformation?.title ?? ""
         let rawYear = entity.basicInformation?.year ?? 0
         let year: Int? = rawYear > 0 ? rawYear : nil
-        return try await client.searchMBID(artist: artistName, title: title, year: year)
+        var fuzzyCandidates: [MBCandidate] = []
+        for artistName in (artistNames.isEmpty ? [""] : artistNames) {
+            let cleanArtist = MBMatchVerifier.stripDiscogsArtistSuffix(artistName)
+            fuzzyCandidates += try await client.searchReleasesByArtistTitle(artist: cleanArtist, title: title, year: year)
+        }
+        if let outcome = evaluate(fuzzyCandidates, identifierMatch: false, method: .search) { return outcome }
+
+        // 4. Discogs master URL → release-group → pick release inside by format/country/catno
+        if let masterId = detail?.masterId,
+           let groupMBID = try await client.lookupReleaseGroupMBID(forDiscogsMasterId: masterId) {
+            let candidates = try await client.browseReleases(releaseGroupMBID: groupMBID)
+            if let outcome = evaluate(candidates, identifierMatch: true, method: .masterLookup) { return outcome }
+        }
+
+        guard !reviewPool.isEmpty else { return .notFound }
+        let top3 = reviewPool
+            .sorted { $0.score > $1.score }
+            .prefix(3)
+            .map { scored in
+                MBReviewCandidate(
+                    mbid: scored.candidate.mbid,
+                    title: scored.candidate.title,
+                    artist: scored.candidate.artist,
+                    format: scored.candidate.formats.joined(separator: ", "),
+                    country: scored.candidate.country ?? "",
+                    date: scored.candidate.date ?? "",
+                    catno: scored.candidate.catalogNumbers.first ?? "",
+                    score: scored.score
+                )
+            }
+        return .needsReview(Array(top3))
+    }
+
+    private func applyPipelineOutcome(_ outcome: MBPipelineOutcome, to entity: CollectionItemEntity) {
+        switch outcome {
+        case .matched(let mbid, let title, let artist, let method):
+            entity.mbid = mbid
+            entity.mbidMatchedTitle = title
+            entity.mbidMatchedArtist = artist
+            entity.mbidMatchMethod = method.rawValue
+            entity.mbidScanState = MBIDScanState.matchedViaSearch.rawValue
+        case .needsReview(let candidates):
+            entity.reviewCandidates = candidates
+            entity.mbidScanState = MBIDScanState.needsReview.rawValue
+        case .notFound:
+            entity.mbidScanState = MBIDScanState.notFound.rawValue
+        }
+    }
+
+    private func cachedReleaseDetail(for releaseId: Int) -> ReleaseDetail? {
+        var descriptor = FetchDescriptor<ReleaseDetailEntity>(
+            predicate: #Predicate { $0.releaseId == releaseId }
+        )
+        descriptor.fetchLimit = 1
+        guard let entity = try? context.fetch(descriptor).first else { return nil }
+        return try? JSONDecoder().decode(ReleaseDetail.self, from: entity.jsonData)
+    }
+
+    private func extractBarcode(_ detail: ReleaseDetail?) -> String? {
+        guard let detail else { return nil }
+        if let barcodeId = detail.identifiers?.first(where: { $0.type.caseInsensitiveCompare("Barcode") == .orderedSame })?.value {
+            return barcodeId
+        }
+        return detail.barcode
+    }
+
+    private func isUsableLabelCredit(_ label: LabelCreditEntity) -> Bool {
+        let catno = label.catno.trimmingCharacters(in: .whitespaces).lowercased()
+        let name = label.name.trimmingCharacters(in: .whitespaces).lowercased()
+        return !catno.isEmpty && catno != "none" && !name.isEmpty && name != "none" && name != "not on label"
+    }
+
+    private func discogsSide(for entity: CollectionItemEntity, detail: ReleaseDetail?) -> MBMatchVerifier.DiscogsSide {
+        let info = entity.basicInformation
+        let rawArtists = (info?.artists.map(\.name) ?? []).map(MBMatchVerifier.stripDiscogsArtistSuffix)
+        let formats = (info?.formats ?? []).flatMap { [$0.name] + ($0.descriptions ?? []) }
+        let catalogNumber = info?.labels.first(where: isUsableLabelCredit)?.catno
+        let rawYear = info?.year ?? 0
+        return MBMatchVerifier.DiscogsSide(
+            artists: rawArtists.isEmpty ? [""] : rawArtists,
+            title: info?.title ?? "",
+            formats: formats,
+            catalogNumber: catalogNumber,
+            country: detail?.country,
+            year: rawYear > 0 ? rawYear : nil,
+            trackCount: detail?.tracklist.count
+        )
     }
 
     // MARK: - Manual fix actions
@@ -249,6 +382,8 @@ final class MBIDScanCoordinator {
         entity.mbidScannedAt = nil
         entity.mbidMatchedTitle = nil
         entity.mbidMatchedArtist = nil
+        entity.mbidMatchMethod = nil
+        entity.mbidReviewCandidatesData = nil
         try? context.save()
     }
 
@@ -263,6 +398,8 @@ final class MBIDScanCoordinator {
         entity.mbidScanState = MBIDScanState.matchedManually.rawValue
         entity.mbidMatchedTitle = nil
         entity.mbidMatchedArtist = nil
+        entity.mbidMatchMethod = nil
+        entity.mbidReviewCandidatesData = nil
         entity.mbidScannedAt = Date()
         try? context.save()
     }
@@ -471,14 +608,8 @@ final class MBIDScanCoordinator {
                 artist: entity.basicInformation?.artists.first?.name ?? "Unknown artist"
             )
             do {
-                let match = try await searchFallbackMatch(for: entity)
-                if let match {
-                    entity.mbid = match.mbid
-                    entity.mbidMatchedTitle = match.title
-                    entity.mbidMatchedArtist = match.artist
-                    entity.mbidScanState = MBIDScanState.matchedViaSearch.rawValue
-                }
-                // nil → score below threshold; leave state as notFound
+                let outcome = try await runSearchPipeline(for: entity)
+                applyPipelineOutcome(outcome, to: entity)
             } catch is CancellationError {
                 print("⏸️ Search scan cancelled mid-request for releaseId=\(entity.releaseId), state unchanged")
                 try? context.save()
@@ -550,6 +681,8 @@ final class MBIDScanCoordinator {
                 entity.mbidScannedAt = nil
                 entity.mbidMatchedTitle = nil
                 entity.mbidMatchedArtist = nil
+                entity.mbidMatchMethod = nil
+                entity.mbidReviewCandidatesData = nil
             }
             try? context.save()
             processedCount = 0

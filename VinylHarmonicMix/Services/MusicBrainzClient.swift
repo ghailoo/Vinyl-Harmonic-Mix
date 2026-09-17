@@ -45,28 +45,75 @@ private struct MBArtist: Decodable {
     let name: String
 }
 
-// MARK: - Search response types
+// MARK: - Search/browse response types (candidate search, Part B)
 
-private struct MBSearchResponse: Decodable {
-    let releases: [MBSearchRelease]
+private struct MBReleaseSearchResponse: Decodable {
+    let releases: [MBReleaseCandidateRaw]
 }
 
-private struct MBSearchRelease: Decodable {
+private struct MBReleaseBrowseResponse: Decodable {
+    let releases: [MBReleaseCandidateRaw]
+}
+
+private struct MBReleaseCandidateRaw: Decodable {
     let id: String
-    let score: Int
+    let score: Int?
     let title: String
     let date: String?
     let country: String?
-    let artistCredit: [MBSearchArtistCredit]?
+    let barcode: String?
+    let artistCredit: [MBArtistCredit]?
+    let labelInfo: [MBLabelInfoRaw]?
+    let media: [MBMediaInfoRaw]?
 
     enum CodingKeys: String, CodingKey {
-        case id, score, title, date, country
+        case id, score, title, date, country, barcode
         case artistCredit = "artist-credit"
+        case labelInfo = "label-info"
+        case media
     }
 }
 
-private struct MBSearchArtistCredit: Decodable {
+private struct MBLabelInfoRaw: Decodable {
+    let catalogNumber: String?
+    let label: MBLabelRef?
+
+    enum CodingKeys: String, CodingKey {
+        case catalogNumber = "catalog-number"
+        case label
+    }
+}
+
+private struct MBLabelRef: Decodable {
     let name: String?
+}
+
+private struct MBMediaInfoRaw: Decodable {
+    let format: String?
+    let trackCount: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case format
+        case trackCount = "track-count"
+    }
+}
+
+// MARK: - Discogs master URL lookup response types
+
+private struct MBURLReleaseGroupResponse: Decodable {
+    let relations: [MBReleaseGroupRelation]
+}
+
+private struct MBReleaseGroupRelation: Decodable {
+    let releaseGroup: MBReleaseGroupRef?
+
+    enum CodingKeys: String, CodingKey {
+        case releaseGroup = "release-group"
+    }
+}
+
+private struct MBReleaseGroupRef: Decodable {
+    let id: String
 }
 
 // MARK: - Recordings response types
@@ -114,13 +161,20 @@ struct MBIDMatch {
     let artist: String
 }
 
-struct MBIDSearchMatch {
+/// A candidate release returned by search or release-group browse (Part B). Verification/scoring
+/// happens locally in `MBMatchVerifier` — this is just the decoded MB data.
+struct MBCandidate {
     let mbid: String
     let title: String
     let artist: String
-    let score: Int
     let date: String?
     let country: String?
+    let barcode: String?
+    let catalogNumbers: [String]
+    let labels: [String]
+    let formats: [String]
+    let trackCount: Int?
+    let mbScore: Int?
 }
 
 struct RecordingMBIDMatch {
@@ -251,37 +305,89 @@ final class MusicBrainzClient {
         return MBIDMatch(mbid: release.id, title: release.title, artist: artistName)
     }
 
-    // MARK: - Search-based fallback (rate-limited, same queue)
+    // MARK: - Candidate search / browse (Part B, rate-limited, same queue)
 
-    func searchMBID(artist: String, title: String, year: Int?) async throws -> MBIDSearchMatch? {
+    /// Strategy 1: exact barcode match.
+    func searchReleasesByBarcode(_ barcode: String) async throws -> [MBCandidate] {
+        try await searchReleases(query: "barcode:\(escapeLucene(barcode))")
+    }
+
+    /// Strategy 2: label + catalog number.
+    func searchReleasesByCatalogNumber(catno: String, label: String) async throws -> [MBCandidate] {
+        let escapedCatno = escapeLucene(catno)
+        let escapedLabel = escapeLucene(label)
+        return try await searchReleases(query: "catno:\"\(escapedCatno)\" AND label:\"\(escapedLabel)\"")
+    }
+
+    /// Strategy 3: artist + title, fuzzy (B1 — unquoted title, date is a boost not a filter so a
+    /// missing/wrong Discogs year doesn't zero out results).
+    func searchReleasesByArtistTitle(artist: String, title: String, year: Int?) async throws -> [MBCandidate] {
         let escapedArtist = escapeLucene(artist)
         let escapedTitle = escapeLucene(title)
-        var lucene = "artist:\"\(escapedArtist)\" AND release:\"\(escapedTitle)\""
+        var lucene = "artist:\(escapedArtist) AND release:\(escapedTitle)"
         if let year, year > 0 {
-            lucene += " AND date:\(year)"
+            lucene += " AND (date:\(year)^2 OR NOT date:\(year))"
         }
-        guard let encoded = lucene.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-              let url = URL(string: "https://musicbrainz.org/ws/2/release?query=\(encoded)&limit=5&fmt=json") else {
-            return nil
-        }
+        return try await searchReleases(query: lucene)
+    }
 
+    private func searchReleases(query: String, limit: Int = 5) async throws -> [MBCandidate] {
+        guard let encoded = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "https://musicbrainz.org/ws/2/release?query=\(encoded)&limit=\(limit)&fmt=json") else {
+            return []
+        }
         switch try await requestWithRetry(url) {
-        case .notFound: return nil
-        case .success(let data): return try parseSearchMatch(from: data)
+        case .notFound: return []
+        case .success(let data):
+            return try JSONDecoder().decode(MBReleaseSearchResponse.self, from: data).releases.map(makeCandidate)
         }
     }
 
-    private func parseSearchMatch(from data: Data) throws -> MBIDSearchMatch? {
-        let decoded = try JSONDecoder().decode(MBSearchResponse.self, from: data)
-        guard let top = decoded.releases.first, top.score >= 90 else { return nil }
-        let artistName = top.artistCredit?.compactMap(\.name).joined(separator: " ") ?? ""
-        return MBIDSearchMatch(
-            mbid: top.id,
-            title: top.title,
+    /// Strategy 4a: resolve a Discogs master URL to a MusicBrainz release-group MBID.
+    func lookupReleaseGroupMBID(forDiscogsMasterId masterId: Int) async throws -> String? {
+        let urlString = "https://musicbrainz.org/ws/2/url?resource=https://www.discogs.com/master/\(masterId)&inc=release-group-rels&fmt=json"
+        guard let url = URL(string: urlString) else { return nil }
+        switch try await requestWithRetry(url) {
+        case .notFound: return nil
+        case .success(let data):
+            let decoded = try JSONDecoder().decode(MBURLReleaseGroupResponse.self, from: data)
+            return decoded.relations.compactMap(\.releaseGroup?.id).first
+        }
+    }
+
+    /// Strategy 4b: browse the releases inside a release-group so the pipeline can pick the one
+    /// matching Discogs's format/country/catno.
+    func browseReleases(releaseGroupMBID: String) async throws -> [MBCandidate] {
+        guard let url = URL(string: "https://musicbrainz.org/ws/2/release?release-group=\(releaseGroupMBID)&limit=25&fmt=json") else {
+            return []
+        }
+        switch try await requestWithRetry(url) {
+        case .notFound: return []
+        case .success(let data):
+            return try JSONDecoder().decode(MBReleaseBrowseResponse.self, from: data).releases.map(makeCandidate)
+        }
+    }
+
+    private func makeCandidate(_ raw: MBReleaseCandidateRaw) -> MBCandidate {
+        let artistName = raw.artistCredit?
+            .compactMap { $0.name ?? $0.artist?.name }
+            .joined(separator: " ") ?? ""
+        let catalogNumbers = (raw.labelInfo ?? []).compactMap(\.catalogNumber)
+        let labels = (raw.labelInfo ?? []).compactMap { $0.label?.name }
+        let formats = (raw.media ?? []).compactMap(\.format)
+        let trackCount = (raw.media ?? []).reduce(0) { $0 + ($1.trackCount ?? 0) }
+        return MBCandidate(
+            mbid: raw.id,
+            title: raw.title,
             artist: artistName,
-            score: top.score,
-            date: top.date,
-            country: top.country
+            date: raw.date,
+            country: raw.country,
+            barcode: raw.barcode,
+            catalogNumbers: catalogNumbers,
+            labels: labels,
+            formats: formats,
+            trackCount: trackCount > 0 ? trackCount : nil,
+            mbScore: raw.score
         )
     }
 

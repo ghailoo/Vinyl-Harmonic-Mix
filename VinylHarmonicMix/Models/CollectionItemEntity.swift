@@ -12,10 +12,12 @@ final class CollectionItemEntity {
 
     var mbid: String?
     var mbidScanState: String = MBIDScanState.unscanned.rawValue
-  
+
     var mbidScannedAt: Date?
     var mbidMatchedTitle: String?
     var mbidMatchedArtist: String?
+    var mbidMatchMethod: String?
+    var mbidReviewCandidatesData: Data?
 
     var recordingsScanState: String = RecordingsScanState.unscanned.rawValue
     var recordingsScannedAt: Date?
@@ -24,6 +26,16 @@ final class CollectionItemEntity {
 
     var scanState: MBIDScanState {
         MBIDScanState(rawValue: mbidScanState) ?? .unscanned
+    }
+
+    var reviewCandidates: [MBReviewCandidate] {
+        get {
+            guard let data = mbidReviewCandidatesData else { return [] }
+            return (try? JSONDecoder().decode([MBReviewCandidate].self, from: data)) ?? []
+        }
+        set {
+            mbidReviewCandidatesData = try? JSONEncoder().encode(newValue)
+        }
     }
 
     var recordingsScanStateEnum: RecordingsScanState {
