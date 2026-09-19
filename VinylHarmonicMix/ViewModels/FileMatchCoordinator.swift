@@ -891,7 +891,8 @@ final class FileMatchCoordinator {
         let durationMs: Int  // 0 = unknown (TrackEntity.durationMs is Int?)
     }
 
-    private struct FileSummary: Sendable {
+    // internal (not private): constructed by tests exercising scoreFile() directly.
+    struct FileSummary: Sendable {
         let id: PersistentIdentifier   // for context.model(for:) in write-back — no predicate fetch
         let filePath: String
         let fileName: String
@@ -916,6 +917,108 @@ final class FileMatchCoordinator {
         case confident, review, noMatch
     }
 
+    /// Filename → (title stem tokens, version descriptor). Shared by the live-scan indexer
+    /// and by candidate rehydration so both derive identical tokens from a given fileName.
+    nonisolated static func stemAndVersion(fileName: String) -> (stemTokens: Set<String>, version: String?) {
+        var stem = URL(fileURLWithPath: fileName).deletingPathExtension().lastPathComponent
+        stem = stem.replacingOccurrences(of: #"^\d{1,3}[\s\.\-_]+"#, with: "", options: .regularExpression)
+        // Strip "Artist - Title" / "Artist – Title" naming convention prefix so the
+        // artist name doesn't dilute the title's Jaccard score.
+        if let dashRange = stem.range(of: " - ") ?? stem.range(of: " \u{2013} ") {
+            let rest = String(stem[dashRange.upperBound...]).trimmingCharacters(in: .whitespaces)
+            if !rest.isEmpty { stem = rest }
+        }
+        let (base, version) = FuzzyMatch.splitVersion(stem)
+        let stemTokens = Set(base.split(separator: " ").map(String.init))
+        return (stemTokens, version)
+    }
+
+    /// Title/version/duration scoring for one file against one track. Shared by the live-scan
+    /// Stage 2 loop and by candidate rehydration — same formula, so restored scores match a
+    /// fresh scan's scores. Returns nil when title similarity is below the matching floor.
+    nonisolated static func scoreFile(
+        _ file: FileSummary,
+        stemTokens: Set<String>,
+        version: String?,
+        trackTitleTokens: Set<String>,
+        trackVersion: String?,
+        trackDurationMs: Int,
+        artistScore: Double
+    ) -> ScoredCandidate? {
+        let titleScore = FuzzyMatch.similarity(tokensA: trackTitleTokens, tokensB: stemTokens)
+        guard titleScore >= 0.2 else { return nil }
+
+        let ver = FuzzyMatch.versionSimilarity(trackVersion, version)
+
+        let durScore: Double
+        if trackDurationMs == 0 || file.durationMs <= 0 {  // 0 = unknown, -1 = read failed
+            durScore = 0.5
+        } else {
+            let diffSec = abs(trackDurationMs - file.durationMs) / 1000
+            switch diffSec {
+            case 0...5:   durScore = 1.0
+            case 6...15:  durScore = 0.8
+            case 16...30: durScore = 0.5
+            default:      durScore = 0.2
+            }
+        }
+
+        return ScoredCandidate(fileID: file.id, filePath: file.filePath, fileName: file.fileName,
+                               format: file.format, artistScore: artistScore, titleScore: titleScore,
+                               versionScore: ver, version: version,
+                               durationMs: file.durationMs, durationScore: durScore)
+    }
+
+    /// Best-candidate-first ordering — same comparator the live scan uses, shared so
+    /// rehydrated candidates sort identically to a fresh scan's results.
+    nonisolated static func sortCandidates(_ candidates: [ScoredCandidate]) -> [ScoredCandidate] {
+        candidates.sorted { lhs, rhs in
+            if abs(lhs.combinedScore - rhs.combinedScore) > 0.01 { return lhs.combinedScore > rhs.combinedScore }
+            if abs(lhs.durationScore - rhs.durationScore) > 0.05 { return lhs.durationScore > rhs.durationScore }
+            return (formatPriority[lhs.format] ?? 99) < (formatPriority[rhs.format] ?? 99)
+        }
+    }
+
+    /// Same artist-vs-folder subset-Jaccard formula as Stage 1's folder prefilter, evaluated
+    /// for a single known folder rather than searched across all folders. Stage 1 keeps its own
+    /// inline copy — reusing this helper there would recompute artistSubTokenSets once per
+    /// folder instead of once per track, which matters at full-library scan size. Only
+    /// rehydration (one file, already known) uses this entry point.
+    nonisolated static func artistFolderScore(trackArtist: String, folderName: String) -> Double {
+        var artistSubTokenSets: [Set<String>] = []
+        var remainingArtist = trackArtist
+        for delim in [" & ", " feat. ", " feat ", " featuring ", " vs. ", " vs ", ", "] {
+            remainingArtist = remainingArtist.replacingOccurrences(of: delim, with: "|||",
+                                                                   options: .caseInsensitive)
+        }
+        for part in remainingArtist.components(separatedBy: "|||") {
+            let norm   = FuzzyMatch.normalize(part.trimmingCharacters(in: .whitespaces))
+            let tokens = Set(norm.split(separator: " ").map(String.init)).filter { $0.count >= 2 }
+            if !tokens.isEmpty { artistSubTokenSets.append(tokens) }
+        }
+        guard !artistSubTokenSets.isEmpty else { return 0 }
+
+        let norm = FuzzyMatch.normalizeFolderName(folderName)
+        let entryTokens = Set(norm.split(separator: " ").map(String.init)).filter { $0.count >= 2 }
+        guard !entryTokens.isEmpty else { return 0 }
+
+        var best = 0.0
+        for subTokens in artistSubTokenSets {
+            let hit   = Double(subTokens.intersection(entryTokens).count)
+            let score = hit / Double(max(entryTokens.count, subTokens.count))
+            if score > best { best = score }
+        }
+        return best
+    }
+
+    /// TrackEntity → the artist string Phase 2 scores against (falls back to the collection's
+    /// first credited artist when artistCredit wasn't populated).
+    private func effectiveArtist(_ track: TrackEntity) -> String {
+        track.artistCredit.isEmpty
+            ? (track.collectionItem?.basicInformation?.artists.first?.name ?? "")
+            : track.artistCredit
+    }
+
     private func runPhase2(limit: Int?) async {
         // ── Snapshot: extract Sendable value types from SwiftData models ──────────────
         // All model access happens HERE on the MainActor. The scoring step below is
@@ -927,13 +1030,10 @@ final class FileMatchCoordinator {
         let scoped = limit.map { Array(eligible.prefix($0)) } ?? Array(eligible)
 
         let tracks: [TrackSummary] = scoped.map { t -> TrackSummary in
-            let artist = t.artistCredit.isEmpty
-                ? (t.collectionItem?.basicInformation?.artists.first?.name ?? "")
-                : t.artistCredit
             // persistentModelID is Sendable — safe to pass to nonisolated scoring
             return TrackSummary(id: t.persistentModelID,
                                 trackMBID: t.trackMBID, recordingMBID: t.recordingMBID,
-                                artist: artist, title: t.title,
+                                artist: effectiveArtist(t), title: t.title,
                                 durationMs: t.durationMs ?? 0)
         }
 
@@ -1057,16 +1157,7 @@ final class FileMatchCoordinator {
 
         // Pre-process every file once — stem tokens from filename only
         let indexed: [IndexedFile] = files.map { file in
-            var stem = URL(fileURLWithPath: file.fileName).deletingPathExtension().lastPathComponent
-            stem = stem.replacingOccurrences(of: #"^\d{1,3}[\s\.\-_]+"#, with: "", options: .regularExpression)
-            // Strip "Artist - Title" / "Artist – Title" naming convention prefix so the
-            // artist name doesn't dilute the title's Jaccard score (e.g. "49ers – Die Walküre").
-            if let dashRange = stem.range(of: " - ") ?? stem.range(of: " \u{2013} ") {
-                let rest = String(stem[dashRange.upperBound...]).trimmingCharacters(in: .whitespaces)
-                if !rest.isEmpty { stem = rest }
-            }
-            let (base, version) = FuzzyMatch.splitVersion(stem)
-            let stemTokens = Set(base.split(separator: " ").map(String.init))
+            let (stemTokens, version) = stemAndVersion(fileName: file.fileName)
             return IndexedFile(summary: file, stemTokens: stemTokens, version: version)
         }
 
@@ -1141,42 +1232,11 @@ final class FileMatchCoordinator {
             let (trackBase, trackVersion) = FuzzyMatch.splitVersion(track.title)
             let trackTitleTokens = Set(trackBase.split(separator: " ").map(String.init))
 
-            let scored: [ScoredCandidate] = matchedFiles.compactMap { file -> ScoredCandidate? in
-                let titleScore = FuzzyMatch.similarity(tokensA: trackTitleTokens, tokensB: file.stemTokens)
-                guard titleScore >= 0.2 else { return nil }
-
-                let ver = FuzzyMatch.versionSimilarity(trackVersion, file.version)
-
-                let trackMs = track.durationMs
-                let fileMs  = file.summary.durationMs
-                let durScore: Double
-                if trackMs == 0 || fileMs <= 0 {  // 0 = unknown, -1 = read failed
-                    durScore = 0.5
-                } else {
-                    let diffSec = abs(trackMs - fileMs) / 1000
-                    switch diffSec {
-                    case 0...5:   durScore = 1.0
-                    case 6...15:  durScore = 0.8
-                    case 16...30: durScore = 0.5
-                    default:      durScore = 0.2
-                    }
-                }
-
-                return ScoredCandidate(fileID: file.summary.id,
-                                       filePath: file.summary.filePath,
-                                       fileName: file.summary.fileName,
-                                       format: file.summary.format,
-                                       artistScore: bestFolderScore,
-                                       titleScore: titleScore,
-                                       versionScore: ver,
-                                       version: file.version,
-                                       durationMs: fileMs,
-                                       durationScore: durScore)
-            }.sorted { lhs, rhs in
-                if abs(lhs.combinedScore - rhs.combinedScore) > 0.01 { return lhs.combinedScore > rhs.combinedScore }
-                if abs(lhs.durationScore - rhs.durationScore) > 0.05 { return lhs.durationScore > rhs.durationScore }
-                return (formatPriority[lhs.format] ?? 99) < (formatPriority[rhs.format] ?? 99)
-            }
+            let scored: [ScoredCandidate] = sortCandidates(matchedFiles.compactMap { file -> ScoredCandidate? in
+                scoreFile(file.summary, stemTokens: file.stemTokens, version: file.version,
+                         trackTitleTokens: trackTitleTokens, trackVersion: trackVersion,
+                         trackDurationMs: track.durationMs, artistScore: bestFolderScore)
+            })
 
             let top = scored.first
             let tier: MatchTier
@@ -1281,21 +1341,32 @@ final class FileMatchCoordinator {
         for f in allFiles { fileByPath[f.filePath] = f }
 
         for track in reviewTracks where reviewCandidates[track.trackMBID] == nil {
-            let candidates: [ScoredCandidate] = track.candidateFilePaths.compactMap { path in
+            let artist = effectiveArtist(track)
+            let (trackBase, trackVersion) = FuzzyMatch.splitVersion(track.title)
+            let trackTitleTokens = Set(trackBase.split(separator: " ").map(String.init))
+            let trackDurationMs = track.durationMs ?? 0
+
+            // Real scores, recomputed from the persisted paths — same formula the live scan
+            // uses (stemAndVersion + scoreFile), just run for one already-known file per
+            // candidate rather than searched across the whole library. Cheap: string matching
+            // only, no disk walk.
+            let candidates: [ScoredCandidate] = track.candidateFilePaths.compactMap { path -> ScoredCandidate? in
                 guard let file = fileByPath[path] else { return nil }
-                // baseScore=0 signals "loaded from disk, no live score available";
-                // the UI hides the score line when baseScore == 0.
-                // artistScore=0 / titleScore=0 signals "loaded from disk, no live scores".
-                // The UI hides numeric score display when baseScore (= 0) is zero.
-                return ScoredCandidate(fileID: file.persistentModelID,
-                                       filePath: path,
-                                       fileName: file.fileName,
-                                       format: file.format,
-                                       artistScore: 0, titleScore: 0,
-                                       versionScore: 0.5, version: nil)
+                let (stemTokens, version) = FileMatchCoordinator.stemAndVersion(fileName: file.fileName)
+                let artistScore = FileMatchCoordinator.artistFolderScore(trackArtist: artist,
+                                                                         folderName: file.artistFolder)
+                let summary = FileSummary(id: file.persistentModelID, filePath: file.filePath,
+                                          fileName: file.fileName, parentFolder: file.parentFolder,
+                                          grandparentFolder: file.grandparentFolder, format: file.format,
+                                          durationMs: file.durationMs, artistFolder: file.artistFolder)
+                return FileMatchCoordinator.scoreFile(summary, stemTokens: stemTokens, version: version,
+                                                      trackTitleTokens: trackTitleTokens,
+                                                      trackVersion: trackVersion,
+                                                      trackDurationMs: trackDurationMs,
+                                                      artistScore: artistScore)
             }
             if !candidates.isEmpty {
-                reviewCandidates[track.trackMBID] = candidates
+                reviewCandidates[track.trackMBID] = FileMatchCoordinator.sortCandidates(candidates)
             }
         }
     }
