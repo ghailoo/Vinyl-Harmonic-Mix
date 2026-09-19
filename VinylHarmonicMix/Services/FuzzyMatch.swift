@@ -2,6 +2,11 @@ import Foundation
 
 enum FuzzyMatch {
 
+    // Single source of truth for "is this the same mix/version" — shared by
+    // FileMatchCoordinator's confident/review tiering and FileMatchesView's mixCheck so the
+    // two never disagree about the same versionSimilarity score.
+    nonisolated static let versionMatchThreshold = 0.6
+
     // Stripped before comparing version tokens — these words carry no distinguishing info.
     // "Dime and Dollar mix" → {dime, dollar}; "Original Radio Mix" → {original, radio}
     private static let versionFillerWords: Set<String> = [
@@ -19,7 +24,12 @@ enum FuzzyMatch {
         t = t.replacingOccurrences(of: "'",  with: "")   // U+0027 straight
         t = t.replacingOccurrences(of: "\u{2018}", with: "")  // U+2018 left single quotation mark
         t = t.replacingOccurrences(of: "\u{2019}", with: "")  // U+2019 right single quotation mark
-        t = t.replacingOccurrences(of: #"[_\-\.,'""!?&]+"#, with: " ", options: .regularExpression)
+        // Inch marks — stripped without inserting a space (same rule as the apostrophe above)
+        // so 7″ / 7" / 7'' / 7′′ all collapse to the same "7" token instead of drifting apart.
+        t = t.replacingOccurrences(of: "\u{2033}", with: "")  // ″ double prime
+        t = t.replacingOccurrences(of: "\u{2032}", with: "")  // ′ prime
+        t = t.replacingOccurrences(of: "\u{201D}", with: "")  // ” right double quotation mark
+        t = t.replacingOccurrences(of: #"[_\-\./,'""!?&]+"#, with: " ", options: .regularExpression)
         t = t.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
         return t.trimmingCharacters(in: .whitespaces)
     }

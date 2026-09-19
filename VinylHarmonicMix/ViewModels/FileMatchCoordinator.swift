@@ -1244,7 +1244,7 @@ final class FileMatchCoordinator {
                 // Artist is already guaranteed by folder match — only title + version determine tier.
                 // Duration is a sort-order tiebreaker only; it never blocks a confident match.
                 let titleOK = top.titleScore >= 0.8
-                let verOK   = trackVersion == nil || top.versionScore >= 0.6
+                let verOK   = trackVersion == nil || top.versionScore >= FuzzyMatch.versionMatchThreshold
                 tier = (titleOK && verOK) ? .confident : .review
             } else {
                 tier = .noMatch

@@ -168,7 +168,7 @@ private enum MixCheck: CaseIterable {
 private func mixCheck(trackTitle: String, candidateVersion: String?) -> MixCheck {
     let trackVersion = FuzzyMatch.splitVersion(trackTitle).version
     guard let a = trackVersion, let b = candidateVersion else { return .unknown }
-    return FuzzyMatch.versionSimilarity(a, b) >= 0.99 ? .same : .different
+    return FuzzyMatch.versionSimilarity(a, b) >= FuzzyMatch.versionMatchThreshold ? .same : .different
 }
 
 /// Splits `original` into (text, highlighted mix/version substring) for display, using
@@ -323,7 +323,9 @@ private struct ReviewMasterDetailView: View {
             }
         }
         // B1 — keyboard review. ↑/↓ row movement is Table's native behavior; these add the rest.
-        .onKeyPress(.return) { confirmChosen(); return .handled }
+        // Return is deliberately NOT handled here — NSTableView (which backs Table) swallows it
+        // as its own row-activation key before onKeyPress ever sees it. Confirm's
+        // .keyboardShortcut(.defaultAction) in the detail pane covers Return instead.
         .onKeyPress("s") { skipCurrent(); return .handled }
         .onKeyPress(.delete) { skipCurrent(); return .handled }
         .onKeyPress(.space) { playChosen(); return .handled }
@@ -380,6 +382,19 @@ private struct ReviewMasterDetailView: View {
 
                 Divider()
                 HStack(spacing: 8) {
+                    // The chosen candidate's mix check decides the label only — confirming works
+                    // for every mix-check state (same/different/unknown); the user always decides.
+                    Button(chosenMixCheck(row) == .different ? "Confirm anyway" : "Confirm") {
+                        confirmChosen()
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!row.candidates.indices.contains(chosenCandidateIndex))
+
+                    Button("Skip") { skipCurrent() }
+                        .foregroundStyle(.secondary)
+
+                    Divider().frame(height: 16)
+
                     Button("Browse…") { browseFile(row) }.controlSize(.small)
                     Button("Search files…") { showFileSearch = true }.controlSize(.small)
                     if row.candidates.indices.contains(chosenCandidateIndex) {
@@ -464,6 +479,12 @@ private struct ReviewMasterDetailView: View {
     }
 
     // MARK: - Actions (B1, B2, B5)
+
+    /// Mix check for whichever candidate is currently chosen (1–5 picker) — nil if none.
+    private func chosenMixCheck(_ row: ReviewRow) -> MixCheck? {
+        guard row.candidates.indices.contains(chosenCandidateIndex) else { return nil }
+        return mixCheck(trackTitle: row.track.title, candidateVersion: row.candidates[chosenCandidateIndex].version)
+    }
 
     private func confirmChosen() {
         guard let row = currentRow, row.candidates.indices.contains(chosenCandidateIndex) else { return }
