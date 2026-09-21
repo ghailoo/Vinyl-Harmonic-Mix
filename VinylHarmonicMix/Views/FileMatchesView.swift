@@ -330,17 +330,18 @@ private struct ReviewMasterDetailView: View {
                     .controlSize(.small)
                     .disabled(selectedNonDuplicateCount == 0)
             }
-            Button("Confirm \(matchingMixCandidates.count) with matching mix") {
-                confirmBatchDialog = true
-            }
-            .controlSize(.small)
-            .disabled(matchingMixCandidates.isEmpty)
-            .confirmationDialog(
-                "Confirm \(matchingMixCandidates.count) tracks with a matching mix?",
-                isPresented: $confirmBatchDialog, titleVisibility: .visible
-            ) {
-                Button("Confirm \(matchingMixCandidates.count)") { confirmMatchingMix() }
-                Button("Cancel", role: .cancel) {}
+            if !matchingMixCandidates.isEmpty {
+                Button("Confirm \(matchingMixCandidates.count) same-mix matches") {
+                    confirmBatchDialog = true
+                }
+                .controlSize(.small)
+                .confirmationDialog(
+                    "Confirm \(matchingMixCandidates.count) tracks with a matching mix?",
+                    isPresented: $confirmBatchDialog, titleVisibility: .visible
+                ) {
+                    Button("Confirm \(matchingMixCandidates.count)") { confirmMatchingMix() }
+                    Button("Cancel", role: .cancel) {}
+                }
             }
         }
     }
@@ -365,7 +366,16 @@ private struct ReviewMasterDetailView: View {
     private var table: some View {
         Table(sortedRows, selection: $selection, sortOrder: $sortOrder) {
             TableColumn("Discogs track") { row in
-                Text("\(row.track.artistCredit) – \(row.track.title)").lineLimit(1)
+                HStack(spacing: 5) {
+                    Text("\(row.track.artistCredit) – \(row.track.title)").lineLimit(1)
+                    if row.mixCheck != .unknown {
+                        Text(row.mixCheck.symbol)
+                            .font(.caption.bold())
+                            .foregroundStyle(row.mixCheck.tint)
+                            .help(row.mixCheck.label)
+                            .accessibilityLabel(row.mixCheck.label)
+                    }
+                }
             }
             TableColumn("Best-guess file") { row in
                 HStack(spacing: 4) {
@@ -379,10 +389,6 @@ private struct ReviewMasterDetailView: View {
                             .accessibilityLabel("Duplicate best-guess file, also proposed for another track")
                     }
                 }
-            }
-            TableColumn("Mix check") { row in
-                Text("\(row.mixCheck.symbol) \(row.mixCheck.label)")
-                    .font(.caption).foregroundStyle(row.mixCheck.tint)
             }
             TableColumn("Score", value: \.score) { row in
                 Text(row.top != nil ? String(format: "%.2f", row.score) : "—")
