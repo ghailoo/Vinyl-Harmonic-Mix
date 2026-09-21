@@ -123,7 +123,7 @@ final class SyncOrchestrator {
                     }
                 }
 
-                syncStatus = "Analyzing new tracks (\(pending) files)…"
+                syncStatus = "Detecting BPM/Key (\(pending) files)…"
                 await localAnalysisCoordinator.startAndAwaitFileAnalysis()
                 filesAnalyzed = localAnalysisCoordinator.analyzedCount
             }
