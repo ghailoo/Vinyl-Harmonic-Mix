@@ -122,7 +122,6 @@ struct VinylHarmonicMixApp: App {
                         }
                     }
                     recordingsCoordinator.backfillOrphanReleaseTracks()
-                    recordingsCoordinator.backfillMBIDReleaseTracks()
 #if DEBUG
                     let ctx = container.mainContext
                     let itemDescriptor = FetchDescriptor<CollectionItemEntity>()
