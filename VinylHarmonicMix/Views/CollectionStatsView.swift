@@ -58,7 +58,14 @@ struct CollectionStatsView: View {
     }
 
     var body: some View {
-        Group {
+        PerfLog.begin("CollectionStatsView.body")
+        defer { PerfLog.end("CollectionStatsView.body") }
+        let _ = PerfLog.measure("CollectionStatsView.query.entities") { entities.count }
+        let _ = PerfLog.measure("CollectionStatsView.query.detailEntities") { detailEntities.count }
+        let _ = PerfLog.measure("CollectionStatsView.query.trackEntities") { trackEntities.count }
+        let _ = PerfLog.measure("CollectionStatsView.query.featureEntities") { featureEntities.count }
+        let _ = PerfLog.measure("CollectionStatsView.query.localFeatureEntities") { localFeatureEntities.count }
+        return Group {
             if entities.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "tray")
@@ -106,15 +113,21 @@ struct CollectionStatsView: View {
         }
         .navigationTitle("Stats")
         .task(id: detailEntities.count) {
+            PerfLog.begin("CollectionStatsView.decodeCachedDetails")
             cachedDetails = detailEntities.compactMap {
                 try? JSONDecoder().decode(ReleaseDetail.self, from: $0.jsonData)
             }
+            PerfLog.end("CollectionStatsView.decodeCachedDetails")
         }
         .task(id: entities.count) {
+            PerfLog.begin("CollectionStatsView.recomputeBreakdowns")
             recomputeBreakdowns()
+            PerfLog.end("CollectionStatsView.recomputeBreakdowns")
         }
         .task {
+            PerfLog.begin("CollectionStatsView.recomputeFileScope")
             localAnalysisCoordinator.recomputeFileScope()
+            PerfLog.end("CollectionStatsView.recomputeFileScope")
         }
         .alert("Refresh all cached details?", isPresented: $showRefreshAlert) {
             Button("Refresh (~15 min)", role: .destructive) { cacheCoordinator.startRefresh() }

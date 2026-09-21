@@ -1328,6 +1328,8 @@ final class FileMatchCoordinator {
     // review rows show their best guess after app restart without re-scanning.
     // Called once at startup (deferred via Task so it doesn't block init).
     func hydrateReviewCandidatesIfNeeded() {
+        PerfLog.begin("FileMatchCoordinator.hydrateReviewCandidatesIfNeeded")
+        defer { PerfLog.end("FileMatchCoordinator.hydrateReviewCandidatesIfNeeded") }
         let reviewTracks = (try? context.fetch(FetchDescriptor<TrackEntity>(
             predicate: #Predicate { $0.fileMatchState == "review" }
         ))) ?? []

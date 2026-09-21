@@ -257,6 +257,8 @@ final class CollectionViewModel {
 
     @discardableResult
     func rebuildSetBuilderLookupsIfNeeded(features: [RecordingFeaturesEntity], tracks: [TrackEntity]) -> Bool {
+        PerfLog.begin("CollectionViewModel.rebuildSetBuilderLookupsIfNeeded")
+        defer { PerfLog.end("CollectionViewModel.rebuildSetBuilderLookupsIfNeeded") }
         guard features.count != setBuilderLastFeaturesCount || tracks.count != setBuilderLastTracksCount else {
             return false
         }

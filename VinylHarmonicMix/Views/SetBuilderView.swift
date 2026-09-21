@@ -66,7 +66,13 @@ struct SetBuilderView: View {
     }
 
     var body: some View {
-        GeometryReader { windowGeo in
+        PerfLog.begin("SetBuilderView.body")
+        defer { PerfLog.end("SetBuilderView.body") }
+        let _ = PerfLog.measure("SetBuilderView.query.allCollectionEntities") { allCollectionEntities.count }
+        let _ = PerfLog.measure("SetBuilderView.query.allTrackEntities") { allTrackEntities.count }
+        let _ = PerfLog.measure("SetBuilderView.query.allFeatures") { allFeatures.count }
+        let _ = PerfLog.measure("SetBuilderView.query.allSets") { allSets.count }
+        return GeometryReader { windowGeo in
         ScrollViewReader { proxy in
         ScrollView {
         LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
@@ -961,6 +967,8 @@ struct SetBuilderView: View {
     // skipped there when the source counts haven't changed. This just pulls the
     // (possibly cached) results into local @State for the view to read.
     private func syncSetBuilderLookups() {
+        PerfLog.begin("SetBuilderView.syncSetBuilderLookups")
+        defer { PerfLog.end("SetBuilderView.syncSetBuilderLookups") }
         viewModel.rebuildSetBuilderLookupsIfNeeded(features: allFeatures, tracks: allTrackEntities)
         featuresByMBID = viewModel.setBuilderFeaturesByMBID
         coverageByInstanceId = viewModel.setBuilderCoverageByInstanceId

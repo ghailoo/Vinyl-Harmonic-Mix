@@ -70,7 +70,12 @@ struct FileMatchesView: View {
     }
 
     var body: some View {
-        Group {
+        PerfLog.begin("FileMatchesView.body")
+        defer { PerfLog.end("FileMatchesView.body") }
+        let _ = PerfLog.measure("FileMatchesView.query.confidentTracks") { confidentTracks.count }
+        let _ = PerfLog.measure("FileMatchesView.query.reviewTracks") { reviewTracks.count }
+        let _ = PerfLog.measure("FileMatchesView.query.noMatchTracks") { noMatchTracks.count }
+        return Group {
             if confidentTracks.isEmpty && reviewTracks.isEmpty && noMatchTracks.isEmpty {
                 emptyState
             } else {
