@@ -346,16 +346,31 @@ final class RecordingsScanCoordinator {
         let existingSurrogates = Set((try? context.fetch(existingFD))?.map(\.trackMBID) ?? [])
         var created = 0
 
+        // "Various Artists" convention shared with SetBuilderView.isCompilation.
+        let isCompilation = entity.basicInformation?.artists.first?.name.lowercased() == "various"
+        let releaseArtist = entity.basicInformation?.artists.map(\.name).joined(separator: " & ") ?? ""
+
         for track in detail.tracklist {
+            // Discogs tracklists include heading/index rows (e.g. side headers) with no position.
+            guard !track.position.isEmpty else { continue }
+
             let surrogate = "discogs:\(releaseId):\(track.position)"
             guard !existingSurrogates.contains(surrogate) else { continue }
+
+            let artistCredit: String
+            if isCompilation, let trackArtists = track.artists, !trackArtists.isEmpty {
+                artistCredit = trackArtists.map(\.name).joined(separator: " & ")
+            } else {
+                artistCredit = releaseArtist
+            }
+
             let newTrack = TrackEntity(
                 trackMBID: surrogate,
                 recordingMBID: "",
                 position: track.position,
                 title: track.title,
-                durationMs: nil,
-                artistCredit: ""
+                durationMs: track.durationMs,
+                artistCredit: artistCredit
             )
             newTrack.collectionItem = entity
             context.insert(newTrack)
