@@ -347,11 +347,16 @@ final class LocalAnalysisCoordinator {
         totalCount = summaries.count
         if totalCount == 0 { phase = .completed; return }
 
-        // ponytail: chunkSize 1 — saves per track so the Stats page header (a @Query
-        // over LocalAudioFeaturesEntity) reflects progress live instead of lagging by
-        // up to a batch. Cheap relative to essentia's per-track analysis time.
-        let chunkSize = 1
+        // ponytail: batch saves — flush every ~10 tracks or ~1s, whichever comes first,
+        // instead of per track. context.save() runs on the main actor and invalidates
+        // every live @Query in the visible view, so per-track saving was stuttering
+        // scroll in whatever view was on screen during a background analysis run.
+        // The Stats header no longer needs per-track saves for live progress (see 1a:
+        // it now reads analyzedCount/totalCount directly), so this is safe to relax.
+        let chunkSize = 10
+        let minFlushInterval: TimeInterval = 1.0
         var saveBuffer: [(PersistentIdentifier, AnalysisResult)] = []
+        var lastFlush = Date()
 
         for (i, summary) in summaries.enumerated() {
             if Task.isCancelled { break }
@@ -369,13 +374,25 @@ final class LocalAnalysisCoordinator {
 
             analyzedCount = i + 1
 
-            if saveBuffer.count >= chunkSize || i == summaries.count - 1 {
+            let isLast = i == summaries.count - 1
+            let dueForFlush = saveBuffer.count >= chunkSize
+                || Date().timeIntervalSince(lastFlush) >= minFlushInterval
+                || isLast
+            if !saveBuffer.isEmpty && dueForFlush {
                 flushResults(saveBuffer)
                 saveBuffer.removeAll()
+                lastFlush = Date()
                 await Task.yield()
             }
         }
 
+        // Final flush — catches a partial buffer left over from a cancellation (the loop
+        // above breaks before the isLast branch can run) or a quit mid-run. No analyzed
+        // track is ever left unsaved.
+        if !saveBuffer.isEmpty {
+            flushResults(saveBuffer)
+            saveBuffer.removeAll()
+        }
         try? context.save()
         currentTrackLabel = ""
     }
@@ -540,9 +557,12 @@ final class LocalAnalysisCoordinator {
         totalCount = scoped.count
         if totalCount == 0 { phase = .completed; return }
 
-        // ponytail: chunkSize 1, same live-update reasoning as runAnalysis above.
-        let chunkSize = 1
+        // ponytail: batch saves, same cadence/reasoning as runAnalysis above — flush
+        // every ~10 files or ~1s instead of per file.
+        let chunkSize = 10
+        let minFlushInterval: TimeInterval = 1.0
         var saveBuffer: [(PersistentIdentifier, AnalysisResult)] = []
+        var lastFlush = Date()
 
         for (i, summary) in scoped.enumerated() {
             if Task.isCancelled { break }
@@ -560,14 +580,24 @@ final class LocalAnalysisCoordinator {
 
             analyzedCount = i + 1
 
-            if saveBuffer.count >= chunkSize || i == scoped.count - 1 {
+            let isLast = i == scoped.count - 1
+            let dueForFlush = saveBuffer.count >= chunkSize
+                || Date().timeIntervalSince(lastFlush) >= minFlushInterval
+                || isLast
+            if !saveBuffer.isEmpty && dueForFlush {
                 flushFileResults(saveBuffer)
                 saveBuffer.removeAll()
+                lastFlush = Date()
                 recomputeFileScope(force: true)
                 await Task.yield()
             }
         }
 
+        // Final flush — same cancel/quit safety net as runAnalysis above.
+        if !saveBuffer.isEmpty {
+            flushFileResults(saveBuffer)
+            saveBuffer.removeAll()
+        }
         try? context.save()
         currentTrackLabel = ""
         // force: true — files were just analyzed, so the unanalyzed count must refresh
