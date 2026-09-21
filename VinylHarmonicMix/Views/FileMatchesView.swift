@@ -227,6 +227,7 @@ private struct ReviewMasterDetailView: View {
     @State private var previewPendingPath: String? = nil
     @State private var showFileSearch = false
     @State private var confirmBatchDialog = false
+    @AppStorage("fileMatchesTableWidthFraction") private var tableWidthFraction: Double = 0.6
 
     // Same title-score floor Stage 2 uses for its confident tier (FileMatchCoordinator's
     // _scoreCandidates: titleOK = titleScore >= 0.8) — reused here to define "high confidence"
@@ -258,13 +259,33 @@ private struct ReviewMasterDetailView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             filterAndBatchBar
-            HStack(spacing: 0) {
-                table.frame(minWidth: 360)
-                Divider()
-                detailPane.frame(minWidth: 320)
+            GeometryReader { totalGeo in
+                HSplitView {
+                    table
+                        .frame(minWidth: 360, idealWidth: totalGeo.size.width * tableWidthFraction)
+                        .background(splitWidthObserver(totalWidth: totalGeo.size.width))
+                    detailPane
+                        .frame(minWidth: 320)
+                        .layoutPriority(1)
+                }
             }
         }
         .onChange(of: currentRow?.id) { _, _ in chosenCandidateIndex = 0 }
+    }
+
+    // ponytail: SwiftUI's HSplitView exposes no binding for divider position, so we read
+    // the table pane's live width via a background GeometryReader (fires during drag too)
+    // and persist it as a fraction of the total — the closest native-API way to remember
+    // the divider without dropping to an NSSplitView-delegate bridge.
+    @ViewBuilder
+    private func splitWidthObserver(totalWidth: CGFloat) -> some View {
+        GeometryReader { paneGeo in
+            Color.clear
+                .onChange(of: paneGeo.size.width) { _, newWidth in
+                    guard totalWidth > 0 else { return }
+                    tableWidthFraction = newWidth / totalWidth
+                }
+        }
     }
 
     // MARK: - Filter chips + batch actions (B3, B4)
