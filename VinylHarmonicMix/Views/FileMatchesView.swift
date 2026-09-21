@@ -393,7 +393,9 @@ private struct ReviewMasterDetailView: View {
             TableColumn("Score", value: \.score) { row in
                 Text(row.top != nil ? String(format: "%.2f", row.score) : "—")
                     .font(.caption.monospacedDigit())
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
+            .width(56)
         }
         // B1 — keyboard review. ↑/↓ row movement is Table's native behavior; these add the rest.
         // Return is deliberately NOT handled here — NSTableView (which backs Table) swallows it
