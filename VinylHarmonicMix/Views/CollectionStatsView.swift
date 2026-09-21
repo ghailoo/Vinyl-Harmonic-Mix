@@ -378,11 +378,11 @@ struct CollectionStatsView: View {
             Divider().padding(.vertical, 14)
             recordingsCard
             Divider().padding(.vertical, 14)
-            audioFeaturesCard
-            Divider().padding(.vertical, 14)
             localFilesCard
             Divider().padding(.vertical, 14)
             localAnalysisCard
+            Divider().padding(.vertical, 14)
+            audioFeaturesCard
             Divider().padding(.vertical, 14)
             cueDetectionCard
         }
@@ -547,10 +547,14 @@ struct CollectionStatsView: View {
         let canScan = audioFeaturesCoordinator.unqueriedCount > 0
 
         return VStack(alignment: .leading, spacing: 0) {
-            sectionHeader(title: "Web BPM/Key (AcousticBrainz)")
+            sectionHeader(title: "Web BPM/Key (AcousticBrainz) — Historical")
+            Text("No longer fetched automatically — local analysis above is now the primary BPM/key source. Existing data stays here; you can still scan manually.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .padding(.bottom, 6)
 
             if featureEntities.isEmpty {
-                Text("No audio features yet. Use \"Scan audio\" to query AcousticBrainz for BPM and key data (~3 min).")
+                Text("No audio features on file. Use \"Scan unqueried tracks\" below to query AcousticBrainz manually.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
