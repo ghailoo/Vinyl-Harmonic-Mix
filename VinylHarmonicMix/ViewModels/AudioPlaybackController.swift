@@ -248,9 +248,9 @@ final class AudioPlaybackController {
                 return p
             }
 
-            await MainActor.run {
-                guard let self else { return }
+            guard let self else { return }
 
+            await MainActor.run {
                 // Race-protection: if another track was requested while we were loading,
                 // discard this stale result rather than clobbering the newer track.
                 guard self.currentFilePath == intendedPath else {
@@ -457,8 +457,9 @@ final class AudioPlaybackController {
                 return p
             }
 
+            guard let self else { return }
+
             await MainActor.run {
-                guard let self else { return }
                 self.isPreloadInFlight = false
 
                 guard self.predictedNextFilePath() == intendedPath else {
