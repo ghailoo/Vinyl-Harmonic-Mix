@@ -606,6 +606,7 @@ final class LocalAnalysisCoordinator {
     }
 
     private func flushFileResults(_ buffer: [(PersistentIdentifier, AnalysisResult)]) {
+        PerfLog.begin("LocalAnalysisCoordinator.flushFileResults(\(buffer.count))")
         for (fileID, result) in buffer {
             guard let file = context.model(for: fileID) as? LocalFileEntity else { continue }
             file.rawBpm          = result.rawBpm
@@ -618,6 +619,7 @@ final class LocalAnalysisCoordinator {
             file.analyzerVersion = "essentia-2.1b6 degara"
         }
         try? context.save()
+        PerfLog.end("LocalAnalysisCoordinator.flushFileResults(\(buffer.count))")
     }
 
     private var lastFileScopeCount = -1
@@ -702,6 +704,7 @@ final class LocalAnalysisCoordinator {
     // MARK: - Write-back (tracks)
 
     private func flushResults(_ buffer: [(PersistentIdentifier, AnalysisResult)]) {
+        PerfLog.begin("LocalAnalysisCoordinator.flushResults(\(buffer.count))")
         for (trackID, result) in buffer {
             guard let track = context.model(for: trackID) as? TrackEntity else { continue }
 
@@ -723,5 +726,6 @@ final class LocalAnalysisCoordinator {
             features.analyzerVersion = "essentia-2.1b6 degara"
         }
         try? context.save()
+        PerfLog.end("LocalAnalysisCoordinator.flushResults(\(buffer.count))")
     }
 }
