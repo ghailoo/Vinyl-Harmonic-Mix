@@ -276,15 +276,88 @@ struct UnifiedTopBar: View {
     }
 
     /// Progressively smaller bubble rows so a growing button count degrades by
-    /// hiding labels, then by scrolling — never by clipping text mid-word or
-    /// letter-wrapping it.
+    /// keeping as many labels as fit and tucking the rest into a trailing "More"
+    /// menu (icon + full label, never silently unlabeled); only once that no longer
+    /// fits do all labels drop at once, and only as an absolute last resort do we
+    /// fall back to scrolling — never by clipping text mid-word or letter-wrapping it.
     @ViewBuilder
     private var libraryBubbleRow: some View {
+        let actions = libraryActions
         ViewThatFits(in: .horizontal) {
             libraryButtons(showsLabels: true)
+            overflowLibraryRow(actions: actions, labeledCount: 5)
+            overflowLibraryRow(actions: actions, labeledCount: 2)
             libraryButtons(showsLabels: false)
             ScrollView(.horizontal, showsIndicators: false) {
                 libraryButtons(showsLabels: false)
+            }
+        }
+    }
+
+    /// One library toolbar action — shared by the labeled row and the overflow
+    /// "More" menu so their icon/label/tooltip/action can't drift apart.
+    private struct LibraryAction {
+        let title: String
+        let tooltip: String
+        let icon: String
+        let disabled: Bool
+        let action: () -> Void
+    }
+
+    private var libraryActions: [LibraryAction] {
+        [
+            LibraryAction(title: "Update All", tooltip: "Import new Discogs releases run step them",
+                          icon: "arrow.triangle.2.circlepath", disabled: false, action: { syncOrchestrator.startSync() }),
+            LibraryAction(title: "Find IDs", tooltip: "Look up MusicBrainz IDs all releases",
+                          icon: "magnifyingglass.circle", disabled: false, action: { scanCoordinator.start() }),
+            LibraryAction(title: "Web BPM/Key", tooltip: "Fetch BPM key online (needs IDs)",
+                          icon: "waveform.circle", disabled: false, action: { audioFeaturesCoordinator.start() }),
+            LibraryAction(title: "Link Files", tooltip: "Link tracks audio files on NAS",
+                          icon: "link.circle", disabled: !driveMonitor.isAvailable, action: { fileMatchCoordinator.startFullScan() }),
+            LibraryAction(title: "Detect BPM/Key", tooltip: "Analyze own files BPM key (needs NAS)",
+                          icon: "waveform.badge.magnifyingglass", disabled: !driveMonitor.isAvailable, action: { localAnalysisCoordinator.startFileAnalysis() }),
+            LibraryAction(title: "Find Cues", tooltip: "Detect cue points in linked files",
+                          icon: "scope", disabled: !driveMonitor.isAvailable, action: { cueCoordinator.startDetection(scope: .matched) }),
+            LibraryAction(title: "Rekordbox", tooltip: "Export library sets Rekordbox XML",
+                          icon: "music.note.list", disabled: false, action: { triggerExport() }),
+            LibraryAction(title: "Back Up", tooltip: "Save file links JSON file",
+                          icon: "externaldrive.badge.timemachine", disabled: false, action: { runBackupExport() }),
+            LibraryAction(title: "Restore", tooltip: "Load file links backup",
+                          icon: "arrow.clockwise.icloud", disabled: false, action: { runBackupImport() }),
+        ]
+    }
+
+    /// `labeledCount` actions (in order) stay inline with their label; the rest are
+    /// tucked into a trailing "More" menu listing icon + full label, so a narrow
+    /// window loses button labels gradually instead of all at once.
+    @ViewBuilder
+    private func overflowLibraryRow(actions: [LibraryAction], labeledCount: Int) -> some View {
+        let visible = Array(actions.prefix(labeledCount))
+        let overflow = Array(actions.suffix(from: min(labeledCount, actions.count)))
+        HStack(spacing: 8) {
+            Color.clear.frame(width: 32, height: 1)
+            ForEach(visible, id: \.title) { action in
+                libraryBubble(title: action.title, tooltip: action.tooltip, icon: action.icon,
+                              disabled: action.disabled, showsLabel: true, action: action.action)
+            }
+            if !overflow.isEmpty {
+                Menu {
+                    ForEach(overflow, id: \.title) { action in
+                        Button(action: action.action) {
+                            Label(action.title, systemImage: action.icon)
+                        }
+                        .disabled(action.disabled)
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .frame(width: 22)
+                .help("More library actions")
+                .accessibilityLabel("More library actions")
             }
         }
     }

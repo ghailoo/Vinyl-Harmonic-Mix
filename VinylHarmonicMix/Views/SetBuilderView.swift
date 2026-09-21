@@ -79,24 +79,29 @@ struct SetBuilderView: View {
             Section {
             VStack(spacing: 0) {
 
-            // Current Track section
-            VStack(spacing: 0) {
+            // Current Track + Harmonic strip. With nothing picked yet there's nothing
+            // live to show in either, so collapse both into one compact invitation
+            // instead of reserving ~80% of window height for empty panels.
+            Group {
                 if let track = currentTrack {
-                    currentTrackHero(track: track, proxy: proxy)
+                    VStack(spacing: 0) {
+                        currentTrackHero(track: track, proxy: proxy)
+                    }
+                    .frame(minHeight: 200, maxHeight: max(200, windowGeo.size.height * 0.42))
+
+                    Divider()
+
+                    VStack(spacing: 0) {
+                        harmonicStripHeader
+                        harmonicStrip
+                    }
+                    .frame(minHeight: 160, maxHeight: max(160, windowGeo.size.height * 0.38))
                 } else {
                     heroEmptyState
+                        .frame(height: 220)
                 }
             }
-            .frame(minHeight: 200, maxHeight: max(200, windowGeo.size.height * 0.42))
-
-            Divider()
-
-            // Harmonic strip section
-            VStack(spacing: 0) {
-                harmonicStripHeader
-                harmonicStrip
-            }
-            .frame(minHeight: 160, maxHeight: max(160, windowGeo.size.height * 0.38))
+            .animation(.snappy, value: currentTrack == nil)
 
             // Suggestions panel — only when draft is non-empty
             suggestionsPanel
@@ -393,9 +398,9 @@ struct SetBuilderView: View {
 
     @ViewBuilder
     private var harmonicStrip: some View {
-        if currentTrack == nil {
-            Color.clear
-        } else if compatibleItems.isEmpty {
+        // ponytail: currentTrack is always non-nil here — this view only renders inside
+        // the `if let track` branch of the hero/strip Group in body.
+        if compatibleItems.isEmpty {
             emptyStripState
         } else {
             ScrollView(.horizontal, showsIndicators: false) {
@@ -422,11 +427,19 @@ struct SetBuilderView: View {
     }
 
     private var emptyStripState: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 10) {
             Spacer()
-            Text("No compatible tracks at ±\(String(format: "%.1f", bpmTolerancePct))% BPM tolerance")
-                .font(.subheadline)
+            Image(systemName: "exclamationmark.magnifyingglass")
+                .font(.system(size: 34))
                 .foregroundStyle(.secondary)
+            VStack(spacing: 4) {
+                Text("No compatible tracks nearby")
+                    .font(.title3.weight(.semibold))
+                    .tracking(-0.2)
+                Text("Nothing matches within ±\(String(format: "%.1f", bpmTolerancePct))% BPM tolerance.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
             HStack(spacing: 8) {
                 Button("Widen to 10%") { bpmTolerancePct = 10.0 }
                     .controlSize(.small)
@@ -536,13 +549,19 @@ struct SetBuilderView: View {
     // MARK: - Current Track hero
 
     private var heroEmptyState: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 10) {
             Spacer()
-            Image(systemName: "hand.tap.fill")
-                .font(.system(size: 48)).foregroundStyle(.secondary)
-            Text("Tap a track in your collection below to begin")
-                .font(.subheadline)
+            Image(systemName: "rectangle.stack.badge.plus")
+                .font(.system(size: 34))
                 .foregroundStyle(.secondary)
+            VStack(spacing: 4) {
+                Text("Choose a track below to start building a set.")
+                    .font(.title3.weight(.semibold))
+                    .tracking(-0.2)
+                Text("Its harmonic matches will show up here.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
