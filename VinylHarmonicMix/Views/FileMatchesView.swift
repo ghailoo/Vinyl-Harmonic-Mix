@@ -251,9 +251,40 @@ private struct ReviewMasterDetailView: View {
 
     private var matchingMixCandidates: [(row: ReviewRow, candidate: ScoredCandidate)] {
         sortedRows.compactMap { row in
-            guard let top = row.top, row.mixCheck == .same, top.titleScore >= confidentTitleFloor else { return nil }
+            guard let top = row.top, row.mixCheck == .same, top.titleScore >= confidentTitleFloor,
+                  !isDuplicateFile(row) else { return nil }
             return (row, top)
         }
+    }
+
+    // MARK: - Duplicate best-guess file (B2)
+    //
+    // Several Discogs tracks can propose the same file as their best guess (different
+    // mixes, one physical file). Batch-confirming those would silently award the file to
+    // whichever row happened to be processed, so they're marked and kept out of batch
+    // confirms; a manual single-row Confirm still works — the user may genuinely own only
+    // one of the mixes.
+    private var duplicateFilePaths: Set<String> {
+        var counts: [String: Int] = [:]
+        for row in rows {
+            guard let path = row.top?.filePath else { continue }
+            counts[path, default: 0] += 1
+        }
+        return Set(counts.filter { $0.value > 1 }.keys)
+    }
+
+    private func isDuplicateFile(_ row: ReviewRow) -> Bool {
+        guard let path = row.top?.filePath else { return false }
+        return duplicateFilePaths.contains(path)
+    }
+
+    private func otherTracksWanting(_ row: ReviewRow) -> [ReviewRow] {
+        guard let path = row.top?.filePath else { return [] }
+        return rows.filter { $0.id != row.id && $0.top?.filePath == path }
+    }
+
+    private var selectedNonDuplicateCount: Int {
+        sortedRows.filter { selection.contains($0.id) && !isDuplicateFile($0) }.count
     }
 
     var body: some View {
@@ -295,8 +326,9 @@ private struct ReviewMasterDetailView: View {
             ForEach(MixCheck.allCases, id: \.self) { chip($0) }
             Spacer()
             if selection.count > 1 {
-                Button("Confirm \(selection.count) selected") { confirmSelected() }
+                Button("Confirm \(selectedNonDuplicateCount) selected") { confirmSelected() }
                     .controlSize(.small)
+                    .disabled(selectedNonDuplicateCount == 0)
             }
             Button("Confirm \(matchingMixCandidates.count) with matching mix") {
                 confirmBatchDialog = true
@@ -336,8 +368,17 @@ private struct ReviewMasterDetailView: View {
                 Text("\(row.track.artistCredit) – \(row.track.title)").lineLimit(1)
             }
             TableColumn("Best-guess file") { row in
-                Text(row.top.map { URL(fileURLWithPath: $0.filePath).lastPathComponent } ?? "—")
-                    .foregroundStyle(.secondary).lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(row.top.map { URL(fileURLWithPath: $0.filePath).lastPathComponent } ?? "—")
+                        .foregroundStyle(.secondary).lineLimit(1)
+                    if isDuplicateFile(row) {
+                        Image(systemName: "arrow.triangle.branch")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                            .help("Also the best guess for another track — see detail pane")
+                            .accessibilityLabel("Duplicate best-guess file, also proposed for another track")
+                    }
+                }
             }
             TableColumn("Mix check") { row in
                 Text("\(row.mixCheck.symbol) \(row.mixCheck.label)")
@@ -388,6 +429,21 @@ private struct ReviewMasterDetailView: View {
                 compareLine(icon: "opticaldisc", original: "\(row.track.artistCredit) – \(row.track.title)")
                 if let top = row.top {
                     compareLine(icon: "doc", original: URL(fileURLWithPath: top.filePath).lastPathComponent)
+                }
+
+                if isDuplicateFile(row) {
+                    let others = otherTracksWanting(row)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label("Also the best guess for \(others.count) other track\(others.count == 1 ? "" : "s")",
+                              systemImage: "arrow.triangle.branch")
+                            .font(.caption).foregroundStyle(.orange)
+                        ForEach(others) { other in
+                            Text("• \(other.track.artistCredit) – \(other.track.title)")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(8)
+                    .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
                 }
 
                 if row.candidates.isEmpty {
@@ -551,7 +607,8 @@ private struct ReviewMasterDetailView: View {
 
     private func confirmSelected() {
         for id in selection {
-            guard let row = sortedRows.first(where: { $0.id == id }), let top = row.top else { continue }
+            guard let row = sortedRows.first(where: { $0.id == id }), let top = row.top,
+                  !isDuplicateFile(row) else { continue }
             coordinator.confirmMatch(trackMBID: row.track.trackMBID, filePath: top.filePath)
         }
         selection = []
