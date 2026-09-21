@@ -29,6 +29,7 @@ final class DetailCacheCoordinator {
     private let context: ModelContext
     private let client = DiscogsClient()
     private let keychain = KeychainService.shared
+    private let recordingsCoordinator: RecordingsScanCoordinator
     private var cacheTask: Task<Void, Never>?
     private var processedCount: Int = 0
     private(set) var isRefreshMode: Bool = false
@@ -36,6 +37,7 @@ final class DetailCacheCoordinator {
 
     init(context: ModelContext) {
         self.context = context
+        self.recordingsCoordinator = RecordingsScanCoordinator(context: context)
     }
 
     // MARK: - Panel state
@@ -184,6 +186,10 @@ final class DetailCacheCoordinator {
                 } else {
                     context.insert(ReleaseDetailEntity(releaseId: releaseId, jsonData: data))
                 }
+                // ponytail: reuses the existing idempotent, tracks.isEmpty-guarded synthesis —
+                // details for this release just landed, so a release with no tracks yet can
+                // get them now instead of waiting for the next launch's backfill.
+                _ = recordingsCoordinator.synthesizeTracksForOrphanRelease(entity)
                 newlyCachedCount += 1
                 saveCounter += 1
             } catch {

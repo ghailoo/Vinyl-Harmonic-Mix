@@ -94,10 +94,24 @@ final class CollectionViewModel {
 
         if let data = try? JSONEncoder().encode(result) {
             context.insert(ReleaseDetailEntity(releaseId: releaseId, jsonData: data))
+            synthesizeTracksIfNeeded(instanceId: item.id)
             try? context.save()
         }
 
         return result
+    }
+
+    /// Details were just cached for a release that had none before — if it has no
+    /// TrackEntity rows yet, synthesize them from the Discogs tracklist now instead of
+    /// waiting for the next launch's backfill. Idempotent; never touches a release that
+    /// already has tracks (ponytail: reuses RecordingsScanCoordinator's existing guard).
+    private func synthesizeTracksIfNeeded(instanceId: Int) {
+        var descriptor = FetchDescriptor<CollectionItemEntity>(
+            predicate: #Predicate { $0.instanceId == instanceId }
+        )
+        descriptor.fetchLimit = 1
+        guard let entity = try? context.fetch(descriptor).first else { return }
+        _ = RecordingsScanCoordinator(context: context).synthesizeTracksForOrphanRelease(entity)
     }
 
     // MARK: - Persistence helpers

@@ -348,6 +348,24 @@ struct CollectionDetailView: View {
             .padding(.top, 20)
             .padding(.bottom, 4)
 
+            if trackEntities.isEmpty, detail.tracklist.contains(where: { !$0.position.isEmpty }) {
+                HStack(spacing: 8) {
+                    Text("Tracks not created yet")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Create tracks from tracklist") {
+                        guard let e = itemEntity else { return }
+                        _ = recordingsCoordinator.synthesizeTracksForOrphanRelease(e)
+                        try? modelContext.save()
+                        loadTrackEntities()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 8)
+            }
+
             ForEach(Array(detail.tracklist.enumerated()), id: \.offset) { index, track in
                 let rmbid = recordingMBID(forPosition: track.position, fallbackIndex: index)
                 let matchedTrack = rmbid.flatMap { r in trackEntities.first { $0.recordingMBID == r } }
