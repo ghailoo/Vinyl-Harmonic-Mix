@@ -6,7 +6,6 @@ import SwiftData
 struct UnifiedTopBar: View {
     @Environment(SyncOrchestrator.self) private var syncOrchestrator
     @Environment(MBIDScanCoordinator.self) private var scanCoordinator
-    @Environment(AudioFeaturesScanCoordinator.self) private var audioFeaturesCoordinator
     @Environment(FileMatchCoordinator.self) private var fileMatchCoordinator
     @Environment(CueDetectionCoordinator.self) private var cueCoordinator
     @Environment(LocalAnalysisCoordinator.self) private var localAnalysisCoordinator
@@ -36,8 +35,6 @@ struct UnifiedTopBar: View {
             let _ = syncOrchestrator.syncStatus
             let _ = scanCoordinator.scanned
             let _ = scanCoordinator.phase
-            let _ = audioFeaturesCoordinator.batchesProcessed
-            let _ = audioFeaturesCoordinator.phase
             let _ = fileMatchCoordinator.phase
             let _ = fileMatchCoordinator.waveformsPausing
             let _ = cueCoordinator.phase
@@ -193,16 +190,6 @@ struct UnifiedTopBar: View {
             ))
         }
 
-        if case .scanning = audioFeaturesCoordinator.phase {
-            result.append(.simple(
-                name: "Web BPM/Key",
-                icon: "waveform.circle",
-                isRunning: true,
-                count: audioFeaturesCoordinator.batchesProcessed,
-                total: audioFeaturesCoordinator.batchesTotal
-            ))
-        }
-
         if let fileMatch = fileMatchStatus() {
             result.append(fileMatch)
         }
@@ -264,7 +251,6 @@ struct UnifiedTopBar: View {
         switch title {
         case "Update All":     return .blue
         case "Find IDs":       return .purple
-        case "Web BPM/Key":    return .teal
         case "Link Files":     return .orange
         case "Detect BPM/Key": return .mint
         case "Find Cues":      return .pink
@@ -310,8 +296,6 @@ struct UnifiedTopBar: View {
                           icon: "arrow.triangle.2.circlepath", disabled: false, action: { syncOrchestrator.startSync() }),
             LibraryAction(title: "Find IDs", tooltip: "Look up MusicBrainz IDs all releases",
                           icon: "magnifyingglass.circle", disabled: false, action: { scanCoordinator.start() }),
-            LibraryAction(title: "Web BPM/Key", tooltip: "Fetch BPM key online (needs IDs)",
-                          icon: "waveform.circle", disabled: false, action: { audioFeaturesCoordinator.start() }),
             LibraryAction(title: "Link Files", tooltip: "Link tracks audio files on NAS",
                           icon: "link.circle", disabled: !driveMonitor.isAvailable, action: { fileMatchCoordinator.startFullScan() }),
             LibraryAction(title: "Detect BPM/Key", tooltip: "Analyze own files BPM key (needs NAS)",
@@ -372,8 +356,6 @@ struct UnifiedTopBar: View {
                           icon: "arrow.triangle.2.circlepath", showsLabel: showsLabels) { syncOrchestrator.startSync() }
             libraryBubble(title: "Find IDs", tooltip: "Look up MusicBrainz IDs all releases",
                           icon: "magnifyingglass.circle", showsLabel: showsLabels) { scanCoordinator.start() }
-            libraryBubble(title: "Web BPM/Key", tooltip: "Fetch BPM key online (needs IDs)",
-                          icon: "waveform.circle", showsLabel: showsLabels) { audioFeaturesCoordinator.start() }
             libraryBubble(title: "Link Files", tooltip: "Link tracks audio files on NAS",
                           icon: "link.circle",
                           disabled: !driveMonitor.isAvailable, showsLabel: showsLabels) { fileMatchCoordinator.startFullScan() }
@@ -402,7 +384,6 @@ struct UnifiedTopBar: View {
         var active: Set<String> = []
         if syncOrchestrator.isSyncing { active.insert("Update All") }
         if case .scanning = scanCoordinator.phase { active.insert("Find IDs") }
-        if case .scanning = audioFeaturesCoordinator.phase { active.insert("Web BPM/Key") }
         switch fileMatchCoordinator.phase {
         case .indexing, .matching, .generatingWaveforms, .generatingWaveformsPaused:
             active.insert("Link Files")
