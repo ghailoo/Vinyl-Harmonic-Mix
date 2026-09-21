@@ -14,7 +14,6 @@ final class SyncOrchestrator {
     private let collectionViewModel: CollectionViewModel
     private let mbidCoordinator: MBIDScanCoordinator
     private let recordingsCoordinator: RecordingsScanCoordinator
-    private let audioFeaturesCoordinator: AudioFeaturesScanCoordinator
     private let fileMatchCoordinator: FileMatchCoordinator
     private let localAnalysisCoordinator: LocalAnalysisCoordinator
     private let context: ModelContext
@@ -26,7 +25,6 @@ final class SyncOrchestrator {
         collectionViewModel: CollectionViewModel,
         mbidCoordinator: MBIDScanCoordinator,
         recordingsCoordinator: RecordingsScanCoordinator,
-        audioFeaturesCoordinator: AudioFeaturesScanCoordinator,
         fileMatchCoordinator: FileMatchCoordinator,
         localAnalysisCoordinator: LocalAnalysisCoordinator,
         context: ModelContext
@@ -34,7 +32,6 @@ final class SyncOrchestrator {
         self.collectionViewModel = collectionViewModel
         self.mbidCoordinator = mbidCoordinator
         self.recordingsCoordinator = recordingsCoordinator
-        self.audioFeaturesCoordinator = audioFeaturesCoordinator
         self.fileMatchCoordinator = fileMatchCoordinator
         self.localAnalysisCoordinator = localAnalysisCoordinator
         self.context = context
@@ -101,21 +98,14 @@ final class SyncOrchestrator {
                     guard !Task.isCancelled else { break }
                     await recordingsCoordinator.startForSingle(entity)
                 }
-
-                // Step 4: Audio features for new releases (needs recording MBIDs from step 3)
-                syncStatus = "Fetching audio features…"
-                for entity in newEntities {
-                    guard !Task.isCancelled else { break }
-                    await audioFeaturesCoordinator.startForSingle(entity)
-                }
             }
 
-            // Step 5: File index + match — incremental Phase 1 inserts only new files;
+            // Step 4: File index + match — incremental Phase 1 inserts only new files;
             // Phase 2 re-matches all tracks. Covers both new-release tracks and new NAS files.
             syncStatus = "Indexing & matching files…"
             await fileMatchCoordinator.startAndAwaitFullScan()
 
-            // Step 6: Count pending analysis before running so the count is visible upfront
+            // Step 5: Count pending analysis before running so the count is visible upfront
             let pending = await localAnalysisCoordinator.pendingFileAnalysisCount()
 
             if pending > 0 {

@@ -92,7 +92,6 @@ struct VinylHarmonicMixApp: App {
             collectionViewModel:       cv,
             mbidCoordinator:           scan,
             recordingsCoordinator:     recs,
-            audioFeaturesCoordinator:  audio,
             fileMatchCoordinator:      files,
             localAnalysisCoordinator:  local,
             context:                   ctx
