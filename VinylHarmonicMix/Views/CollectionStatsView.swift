@@ -644,10 +644,17 @@ struct CollectionStatsView: View {
         // Only count features whose owning track is still confident-matched — a track can
         // fall out of "confident" (re-match, manual unlink) after being analyzed, leaving a
         // stale LocalAudioFeaturesEntity row that no longer belongs in this ratio.
-        let analyzed  = localFeatureEntities.filter { $0.track?.fileMatchState == "confident" }.count
-        let remaining = max(0, confident - analyzed)
+        let settledAnalyzed = localFeatureEntities.filter { $0.track?.fileMatchState == "confident" }.count
+        let remaining = max(0, confident - settledAnalyzed)
         let isRunning = localAnalysisCoordinator.phase == .analyzing
                      || localAnalysisCoordinator.phase == .paused
+        let isRunningTracks = isRunning && localAnalysisCoordinator.currentMode == .tracks
+        // While a track-mode analysis is running, read the coordinator's published counters
+        // instead of the @Query — they're updated per-track in runAnalysis() regardless of
+        // save cadence, so the header stays live even once flushResults() batches its saves.
+        // (Also correct for a limited "Test (first 10)" run, where totalCount != confident.)
+        let analyzed      = isRunningTracks ? localAnalysisCoordinator.analyzedCount : settledAnalyzed
+        let progressTotal = isRunningTracks ? localAnalysisCoordinator.totalCount : confident
         let fileTotal      = localAnalysisCoordinator.inScopeFileCount
         let fileUnanalyzed = localAnalysisCoordinator.unanalyzedFileCount
         let fileAnalyzed   = max(0, fileTotal - fileUnanalyzed)
@@ -661,9 +668,9 @@ struct CollectionStatsView: View {
                     .foregroundStyle(.secondary)
             } else {
                 VStack(alignment: .leading, spacing: 8) {
-                    progressRow(count: analyzed, total: confident, noun: "confident tracks analyzed locally")
+                    progressRow(count: analyzed, total: progressTotal, noun: "confident tracks analyzed locally")
 
-                    if analyzed > 0 {
+                    if settledAnalyzed > 0 {
                         localBpmRangeRow
                         localTopCamelotRow
                     }
