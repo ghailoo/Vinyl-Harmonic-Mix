@@ -334,12 +334,8 @@ private struct ReviewMasterDetailView: View {
     private var filterAndBatchBar: some View {
         HStack(spacing: 8) {
             ForEach(MixCheck.allCases, id: \.self) { chip($0) }
-            Spacer()
-            if selection.count > 1 {
-                Button("Confirm \(selectedNonDuplicateCount) selected") { confirmSelected() }
-                    .controlSize(.small)
-                    .disabled(selectedNonDuplicateCount == 0)
-            }
+            // Lives right next to the mix-check chips it depends on, not off at the far
+            // edge disconnected from the state that determines its count.
             if !matchingMixCandidates.isEmpty {
                 Button("Confirm \(matchingMixCandidates.count) same-mix matches") {
                     confirmBatchDialog = true
@@ -353,6 +349,12 @@ private struct ReviewMasterDetailView: View {
                     Button("Cancel", role: .cancel) {}
                 }
             }
+            Spacer()
+            if selection.count > 1 {
+                Button("Confirm \(selectedNonDuplicateCount) selected") { confirmSelected() }
+                    .controlSize(.small)
+                    .disabled(selectedNonDuplicateCount == 0)
+            }
         }
     }
 
@@ -363,10 +365,11 @@ private struct ReviewMasterDetailView: View {
             if active { mixFilters.remove(filter) } else { mixFilters.insert(filter) }
         } label: {
             Text("\(filter.symbol) \(filter.label)")
-                .font(.caption)
+                .font(.caption.weight(active ? .semibold : .regular))
                 .padding(.horizontal, 8).padding(.vertical, 4)
-                .background(active ? filter.tint.opacity(0.25) : Color.secondary.opacity(0.08), in: Capsule())
-                .foregroundStyle(active ? filter.tint : Color.secondary)
+                .background(active ? filter.tint : Color.secondary.opacity(0.10), in: Capsule())
+                .foregroundStyle(active ? Color.white : Color.secondary)
+                .overlay(Capsule().strokeBorder(active ? Color.clear : Color.secondary.opacity(0.25), lineWidth: 0.5))
         }
         .buttonStyle(.plain)
     }
