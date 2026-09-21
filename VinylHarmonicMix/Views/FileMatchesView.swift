@@ -44,6 +44,14 @@ struct FileMatchesView: View {
     private var filteredReview: [TrackEntity] { filtered(reviewTracks) }
     private var filteredNoMatch: [TrackEntity] { filtered(noMatchTracks) }
 
+    private var segmentHeading: String {
+        switch segment {
+        case .confident: return "Confident matches · \(filteredConfident.count)"
+        case .review:    return "Needs review · \(filteredReview.count)"
+        case .noMatch:   return "No match found · \(filteredNoMatch.count)"
+        }
+    }
+
     // MARK: - Search field
 
     private var searchField: some View {
@@ -80,10 +88,6 @@ struct FileMatchesView: View {
                 emptyState
             } else {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("File Matches")
-                        .font(.system(size: 28, weight: .bold))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
                     searchField
 
                     Picker("Section", selection: $segment) {
@@ -93,6 +97,12 @@ struct FileMatchesView: View {
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
+
+                    // Middle typographic tier between the window's navigationTitle and the
+                    // table's small row text, so that jump isn't so abrupt.
+                    Text(segmentHeading)
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.secondary)
 
                     Group {
                         switch segment {
