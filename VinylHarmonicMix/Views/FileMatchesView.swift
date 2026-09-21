@@ -434,9 +434,20 @@ private struct ReviewMasterDetailView: View {
         } else if let row = currentRow {
             singleRowDetailPane(row)
         } else {
-            Text("Select a track to review")
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            VStack(spacing: 10) {
+                Spacer()
+                Image(systemName: "checklist")
+                    .font(.system(size: 34))
+                    .foregroundStyle(.secondary)
+                Text("Select a track to review")
+                    .font(.title3.weight(.semibold))
+                    .tracking(-0.2)
+                Text("↑↓ move · ↩ confirm · S skip · Space preview · 1–5 pick candidate")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
