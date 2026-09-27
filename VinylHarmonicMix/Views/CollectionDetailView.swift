@@ -975,7 +975,7 @@ struct CollectionDetailView: View {
     }
 
     private func libraryRootURL() -> URL? {
-        guard let path = UserDefaults.standard.string(forKey: LocalLibraryService.displayPathKey) else { return nil }
+        guard let path = LocalLibraryService.folders().first?.displayPath else { return nil }
         return URL(fileURLWithPath: path)
     }
 

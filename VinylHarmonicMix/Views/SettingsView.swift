@@ -90,8 +90,17 @@ struct SettingsView: View {
     @Environment(FileMatchCoordinator.self) private var fileMatchCoordinator
     @Environment(FingerprintScanCoordinator.self) private var fingerprintCoordinator
     @Environment(LocalAnalysisCoordinator.self) private var localAnalysisCoordinator
+    @Environment(DriveMonitor.self) private var driveMonitor
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+
+    /// Folder awaiting "Remove" confirmation, with what belongs to it (D2).
+    private struct PendingRemoval {
+        let folder: LibraryFolder
+        let fileCount: Int
+        let matchCount: Int
+    }
+    @State private var pendingRemoval: PendingRemoval?
 
     @State private var mbSavedConfirmation = false
     @State private var showResetSheet = false
@@ -150,40 +159,75 @@ struct SettingsView: View {
 
             // MARK: Local Audio Library
             Section("Local Audio Library") {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Library folder")
-                        .font(.headline)
-                    if settings.localLibraryDisplayPath.isEmpty {
-                        Text("Not selected")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text(settings.localLibraryDisplayPath)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                            .truncationMode(.middle)
+                if driveMonitor.folders.isEmpty {
+                    Text("No library folder selected")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                ForEach(driveMonitor.folders) { state in
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(state.isReachable ? Color.green : Color.orange)
+                            .frame(width: 8, height: 8)
+                            .help(state.isReachable ? "Reachable" : "Missing — not mounted or unreachable")
+                            .accessibilityLabel(state.isReachable ? "Reachable" : "Missing")
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(state.folder.displayPath)
+                                .font(.caption)
+                                .lineLimit(2)
+                                .truncationMode(.middle)
+                            if settings.scanProgress == nil {
+                                libraryTestLabel(settings.libraryTestStatus[state.id])
+                            }
+                        }
+
+                        Spacer()
+
+                        Picker("Kind", selection: Binding(
+                            get: { state.folder.kind },
+                            set: { kind in
+                                LocalLibraryService.setKind(kind, for: state.id)
+                                driveMonitor.refreshAvailability()
+                            }
+                        )) {
+                            ForEach(LibraryFolder.Kind.allCases, id: \.self) { Text($0.label).tag($0) }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                        .accessibilityLabel("Kind for \(state.folder.displayPath)")
+
+                        Button("Remove") { prepareRemoval(of: state.folder) }
+                            .disabled(settings.isTestingLibrary)
                     }
                 }
 
                 HStack(spacing: 8) {
 #if os(macOS)
-                    Button("Choose folder…") {
+                    Button("Add folder…") {
                         let panel = NSOpenPanel()
                         panel.canChooseDirectories = true
                         panel.canChooseFiles = false
                         panel.allowsMultipleSelection = false
-                        panel.message = "Select your music library root folder"
-                        panel.prompt = "Select"
+                        panel.message = "Select a music library folder"
+                        panel.prompt = "Add"
                         if panel.runModal() == .OK, let url = panel.url {
-                            settings.setLibraryBookmark(from: url)
+                            settings.addLibraryFolder(url, kind: .other)
+                            driveMonitor.refreshAvailability()
                         }
                     }
 #endif
                     Button("Test access") {
-                        settings.testLibraryAccess()
+                        settings.testLibraryAccess(folders: driveMonitor.folders.map(\.folder))
                     }
-                    .disabled(settings.localLibraryDisplayPath.isEmpty || settings.isTestingLibrary)
+                    .disabled(driveMonitor.folders.isEmpty || settings.isTestingLibrary)
+                }
+
+                if let error = settings.libraryFolderError {
+                    Label(error, systemImage: "xmark.circle.fill")
+                        .foregroundStyle(.red)
+                        .font(.caption)
                 }
 
                 if let progress = settings.scanProgress {
@@ -191,25 +235,21 @@ struct SettingsView: View {
                         settings.cancelLibraryScan()
                     }
                 }
-
-                if settings.scanProgress == nil {
-                    switch settings.libraryTestStatus {
-                    case .idle:
-                        EmptyView()
-                    case .accessible(let count):
-                        Label("Accessible · \(count.formatted()) audio files found",
-                              systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                    case .unreachable:
-                        Label("Cannot access folder — it may be unmounted. Re-select it.",
-                              systemImage: "xmark.circle.fill")
-                            .foregroundStyle(.red)
-                    case .empty:
-                        Label("Folder accessible but no audio files found",
-                              systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.orange)
-                    }
+            }
+            .confirmationDialog(
+                "Remove this library folder?",
+                isPresented: Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } }),
+                presenting: pendingRemoval
+            ) { removal in
+                Button("Remove and keep matches") {
+                    LocalLibraryService.removeFolder(id: removal.folder.id)
+                    driveMonitor.refreshAvailability()
+                    settings.libraryTestStatus[removal.folder.id] = nil
                 }
+                .keyboardShortcut(.defaultAction)
+                Button("Cancel", role: .cancel) {}
+            } message: { removal in
+                Text("\(removal.folder.displayPath)\n\n\(removal.fileCount.formatted()) indexed files and \(removal.matchCount.formatted()) confirmed matches belong to this folder. They are kept — the folder just stops being indexed and checked for missing files.")
             }
 
             Section {
@@ -516,6 +556,41 @@ struct SettingsView: View {
                 Text(resetFailure.errorDescription ?? "Reset failed.")
             }
         }
+    }
+
+    @ViewBuilder
+    private func libraryTestLabel(_ status: SettingsViewModel.LibraryTestStatus?) -> some View {
+        switch status {
+        case .none, .idle?:
+            EmptyView()
+        case .accessible(let count)?:
+            Label("Accessible · \(count.formatted()) audio files found", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+                .font(.caption)
+        case .unreachable?:
+            Label("Cannot access folder — it may be unmounted. Remove and re-add it.", systemImage: "xmark.circle.fill")
+                .foregroundStyle(.red)
+                .font(.caption)
+        case .empty?:
+            Label("Folder accessible but no audio files found", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .font(.caption)
+        }
+    }
+
+    /// Counts what belongs to the folder (by stamped ID or by path, so rows not yet stamped
+    /// still count) before asking. Read-only — removal never touches the index or matches.
+    private func prepareRemoval(of folder: LibraryFolder) {
+        var fd = FetchDescriptor<LocalFileEntity>()
+        fd.propertiesToFetch = [\.filePath, \.libraryFolderID]
+        let id = folder.id.uuidString
+        let fileCount = ((try? modelContext.fetch(fd)) ?? [])
+            .filter { $0.libraryFolderID == id || folder.contains(path: $0.filePath) }.count
+        let confident = (try? modelContext.fetch(FetchDescriptor<TrackEntity>(
+            predicate: #Predicate { $0.fileMatchState == "confident" }
+        ))) ?? []
+        let matchCount = confident.filter { folder.contains(path: $0.primaryLocalFilePath ?? "") }.count
+        pendingRemoval = PendingRemoval(folder: folder, fileCount: fileCount, matchCount: matchCount)
     }
 
     private func performReset() {

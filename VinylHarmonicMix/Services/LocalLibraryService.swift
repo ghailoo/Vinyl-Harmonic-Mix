@@ -112,13 +112,6 @@ enum LocalLibraryService {
         return url
     }
 
-    // ponytail: single-folder shims for callers not yet ported — removed once DriveMonitor/Settings move to the list.
-    static func resolveLibraryBookmark() -> URL? { folders().first.flatMap { resolve($0) } }
-    static func saveBookmark(for url: URL) throws {
-        saveFolders([])
-        try addFolder(url, kind: .other)
-    }
-
     /// Case-insensitive (APFS/SMB default) so "/Volumes/Music" and "/volumes/music/x" overlap.
     nonisolated static func isPath(_ path: String, within root: String) -> Bool {
         let p = path.lowercased(), r = root.lowercased()

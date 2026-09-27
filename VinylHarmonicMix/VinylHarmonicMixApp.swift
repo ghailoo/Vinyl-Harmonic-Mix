@@ -161,6 +161,7 @@ struct VinylHarmonicMixApp: App {
             .environment(fileMatchCoordinator)
             .environment(fingerprintCoordinator)
             .environment(localAnalysisCoordinator)
+            .environment(driveMonitor)
         }
         .modelContainer(container)
 #endif

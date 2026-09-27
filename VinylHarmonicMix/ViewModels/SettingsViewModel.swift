@@ -17,9 +17,9 @@ final class SettingsViewModel {
     var mbErrorMessage: String? = nil
 
     // MARK: - Local Audio Library
-    var localLibraryDisplayPath: String = ""
+    var libraryFolderError: String? = nil
     var acoustIDKey: String = ""
-    var libraryTestStatus: LibraryTestStatus = .idle
+    var libraryTestStatus: [UUID: LibraryTestStatus] = [:]   // per folder, D3
     var acoustIDTestStatus: AcoustIDTestStatus = .idle
     var isTestingLibrary = false
     var isTestingAcoustID = false
@@ -70,7 +70,6 @@ final class SettingsViewModel {
         token = keychain.load(for: .token) ?? ""
         username = keychain.load(for: .username) ?? ""
         mbContactEmail = keychain.load(for: .musicbrainzContactEmail) ?? ""
-        localLibraryDisplayPath = UserDefaults.standard.string(forKey: LocalLibraryService.displayPathKey) ?? ""
         acoustIDKey = keychain.load(for: .acoustIDKey) ?? ""
         checkFpcalc()
     }
@@ -103,96 +102,97 @@ final class SettingsViewModel {
 
     // MARK: - Local Audio Library actions
 
-    func setLibraryBookmark(from url: URL) {
+    func addLibraryFolder(_ url: URL, kind: LibraryFolder.Kind) {
+        libraryFolderError = nil
         do {
-            try LocalLibraryService.saveBookmark(for: url)
-            localLibraryDisplayPath = url.path
-            libraryTestStatus = .idle
+            try LocalLibraryService.addFolder(url, kind: kind)
         } catch {
-            libraryTestStatus = .unreachable
+            libraryFolderError = error.localizedDescription
         }
     }
 
-    func testLibraryAccess() {
+    /// Walks each folder in turn and records a result per folder, so one unreachable
+    /// folder shows as such without hiding the others' results.
+    func testLibraryAccess(folders: [LibraryFolder]) {
         libraryScanTask?.cancel()
         scanProgress = LibraryScanProgress()
-        libraryTestStatus = .idle
+        libraryTestStatus = [:]
         isTestingLibrary = true
 
         libraryScanTask = Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
-
-            guard let url = LocalLibraryService.resolveLibraryBookmark() else {
-                await MainActor.run {
-                    self.libraryTestStatus = .unreachable
-                    self.scanProgress = nil
-                    self.isTestingLibrary = false
-                }
-                return
-            }
-
-            let didAccess = url.startAccessingSecurityScopedResource()
-            defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
-
             let audioExtensions: Set<String> = ["flac","mp3","aiff","aif","wav","m4a","mp4","ogg","opus"]
             let skipDirs: Set<String> = ["#recycle","@eaDir",".Trashes",".Spotlight-V100"]
+            var totalAudio = 0
 
-            guard let enumerator = FileManager().enumerator(
-                at: url,
-                includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey],
-                options: [.skipsHiddenFiles]
-            ) else {
-                await MainActor.run {
-                    self.libraryTestStatus = .unreachable
-                    self.scanProgress = nil
-                    self.isTestingLibrary = false
-                }
-                return
-            }
-
-            var audioCount = 0
-            var examined = 0
-
-            // Use nextObject() — for-in over NSDirectoryEnumerator is unavailable in async contexts.
-            while let obj = enumerator.nextObject() {
-                guard let fileURL = obj as? URL else { continue }
-
-                if Task.isCancelled {
-                    await MainActor.run {
-                        self.scanProgress = nil
-                        self.isTestingLibrary = false
-                    }
-                    return
-                }
-
-                examined += 1
-
-                if skipDirs.contains(fileURL.lastPathComponent) {
-                    enumerator.skipDescendants()
+            for folder in folders {
+                guard let url = await MainActor.run(body: { LocalLibraryService.resolve(folder) }),
+                      DriveMonitor.isDeepAccessible(url: url, expectedPath: folder.displayPath) else {
+                    await MainActor.run { self.libraryTestStatus[folder.id] = .unreachable }
                     continue
                 }
 
-                if audioExtensions.contains(fileURL.pathExtension.lowercased()) {
-                    audioCount += 1
+                let didAccess = url.startAccessingSecurityScopedResource()
+                defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+
+                guard let enumerator = FileManager().enumerator(
+                    at: url,
+                    includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey],
+                    options: [.skipsHiddenFiles]
+                ) else {
+                    await MainActor.run { self.libraryTestStatus[folder.id] = .unreachable }
+                    continue
                 }
 
-                if examined % 250 == 0 {
-                    let snap = (audio: audioCount, examined: examined,
-                                folder: fileURL.deletingLastPathComponent().lastPathComponent)
-                    await MainActor.run {
-                        self.scanProgress?.audioFilesFound = snap.audio
-                        self.scanProgress?.itemsExamined = snap.examined
-                        self.scanProgress?.currentFolder = snap.folder
+                var audioCount = 0
+                var examined = 0
+
+                // Use nextObject() — for-in over NSDirectoryEnumerator is unavailable in async contexts.
+                while let obj = enumerator.nextObject() {
+                    guard let fileURL = obj as? URL else { continue }
+
+                    if Task.isCancelled {
+                        await MainActor.run {
+                            self.scanProgress = nil
+                            self.isTestingLibrary = false
+                        }
+                        return
                     }
+
+                    examined += 1
+
+                    if skipDirs.contains(fileURL.lastPathComponent) {
+                        enumerator.skipDescendants()
+                        continue
+                    }
+
+                    if audioExtensions.contains(fileURL.pathExtension.lowercased()) {
+                        audioCount += 1
+                    }
+
+                    if examined % 250 == 0 {
+                        let snap = (audio: totalAudio + audioCount, examined: examined,
+                                    folder: fileURL.deletingLastPathComponent().lastPathComponent)
+                        await MainActor.run {
+                            self.scanProgress?.audioFilesFound = snap.audio
+                            self.scanProgress?.itemsExamined = snap.examined
+                            self.scanProgress?.currentFolder = snap.folder
+                        }
+                    }
+                }
+
+                totalAudio += audioCount
+                let count = audioCount
+                await MainActor.run {
+                    self.libraryTestStatus[folder.id] = count > 0 ? .accessible(count: count) : .empty
                 }
             }
 
-            let finalCount = audioCount
+            let finalCount = totalAudio
             await MainActor.run {
                 self.scanProgress?.audioFilesFound = finalCount
                 self.scanProgress?.isComplete = true
                 self.scanProgress?.finalCount = finalCount
-                self.libraryTestStatus = finalCount > 0 ? .accessible(count: finalCount) : .empty
                 self.isTestingLibrary = false
             }
 
