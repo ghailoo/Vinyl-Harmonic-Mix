@@ -74,8 +74,8 @@ struct VinylHarmonicMixApp: App {
         let audio   = AudioFeaturesScanCoordinator(context: ctx)
         let monitor = DriveMonitor()
         let files   = FileMatchCoordinator(context: ctx, driveMonitor: monitor)
-        let local   = LocalAnalysisCoordinator(context: ctx)
-        let cue     = CueDetectionCoordinator(context: ctx)
+        let local   = LocalAnalysisCoordinator(context: ctx, driveMonitor: monitor)
+        let cue     = CueDetectionCoordinator(context: ctx, driveMonitor: monitor)
 
         _collectionViewModel        = State(initialValue: cv)
         _scanCoordinator            = State(initialValue: scan)

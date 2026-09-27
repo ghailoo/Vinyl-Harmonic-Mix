@@ -12,6 +12,7 @@ final class LocalFileEntity {
     var durationSeconds: Int?
     var durationMs: Int = 0       // populated by AVAsset during indexing; 0 = unknown
     var artistFolder: String = "" // first path component under "Tracks/" root; "" until backfilled
+    var libraryFolderID: String = "" // LibraryFolder.id.uuidString it was indexed from; "" until assigned
     var fingerprint: String?
     var acoustIDRecordingMBIDs: [String]
     var matchScore: Double?

@@ -75,6 +75,7 @@ final class LocalAnalysisCoordinator {
     var lastError: String? = nil
     var inScopeFileCount: Int = 0
     var unanalyzedFileCount: Int = 0
+    var skippedFolderCount: Int = 0
 
     var shouldShowPanel: Bool { phase != .idle }
 
@@ -93,10 +94,23 @@ final class LocalAnalysisCoordinator {
     // MARK: - Private
 
     private let context: ModelContext
+    private let driveMonitor: DriveMonitor?
     private var scanTask: Task<Void, Never>?
     private var pendingLimit: Int? = nil
 
-    init(context: ModelContext) { self.context = context }
+    init(context: ModelContext, driveMonitor: DriveMonitor? = nil) {
+        self.context = context
+        self.driveMonitor = driveMonitor
+    }
+
+    /// C3: folders unreachable right now. Files under them are skipped (not failed, not
+    /// marked) so a sleeping NAS doesn't poison analysis state; the count is shown in the toolbar.
+    private func missingFolders() -> [LibraryFolder] {
+        driveMonitor?.refreshAvailability()
+        let missing = driveMonitor?.missingFolders ?? []
+        skippedFolderCount = missing.count
+        return missing
+    }
 
     // MARK: - Analysis controls
 
@@ -141,8 +155,10 @@ final class LocalAnalysisCoordinator {
             Set(FuzzyMatch.normalize(name).split(separator: " ").map(String.init)).filter { $0.count >= 2 }
         }
         let allFiles = (try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
+        let missing = missingFolders()
         let summaries: [LocalFileSummary] = allFiles.compactMap { file in
-            guard !file.artistFolder.isEmpty else { return nil }
+            guard !file.artistFolder.isEmpty,
+                  !missing.contains(where: { $0.contains(path: file.filePath) }) else { return nil }
             return LocalFileSummary(
                 id: file.persistentModelID,
                 filePath: file.filePath,
@@ -327,8 +343,10 @@ final class LocalAnalysisCoordinator {
             predicate: #Predicate { $0.fileMatchState == "confident" }
         ))) ?? []
 
-        let unanalyzed = allConfident.filter {
-            $0.localAudioFeatures == nil && ($0.primaryLocalFilePath ?? "").isEmpty == false
+        let missing = missingFolders()
+        let unanalyzed = allConfident.filter { t in
+            guard t.localAudioFeatures == nil, let path = t.primaryLocalFilePath, !path.isEmpty else { return false }
+            return !missing.contains { $0.contains(path: path) }
         }
         let scoped = limit.map { Array(unanalyzed.prefix($0)) } ?? unanalyzed
 
@@ -529,8 +547,10 @@ final class LocalAnalysisCoordinator {
         }
 
         let allFiles = (try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
+        let missing = missingFolders()
         let summaries: [LocalFileSummary] = allFiles.compactMap { file in
-            guard !file.artistFolder.isEmpty else { return nil }
+            guard !file.artistFolder.isEmpty,
+                  !missing.contains(where: { $0.contains(path: file.filePath) }) else { return nil }
             return LocalFileSummary(
                 id: file.persistentModelID,
                 filePath: file.filePath,

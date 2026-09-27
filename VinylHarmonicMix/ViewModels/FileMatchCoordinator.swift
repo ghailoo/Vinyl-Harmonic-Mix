@@ -24,13 +24,20 @@ struct ScoredCandidate: Sendable {
     let durationMs: Int       // file duration in ms; 0 = unknown / not yet read
     let durationScore: Double // step-function on |trackMs−fileMs|; 0.5 when either is unknown
     let combinedScore: Double // = baseScore * 0.7 + versionScore * 0.3
+    let kindBoost: Double     // folder-kind preference; ranking only — never in combinedScore/tier
+
+    /// Added to a candidate's ranking (not its displayed/stored score) when its library folder's
+    /// kind fits the release: Compilations folder for a compilation, Albums/Singles otherwise.
+    /// Small on purpose — a wrong-folder file that scores clearly better still wins.
+    nonisolated static let folderKindBoostWeight = 0.05
+    var rankScore: Double { combinedScore + kindBoost }
 
     // nonisolated required: called from _scoreCandidates (nonisolated static).
     // Without this, Swift 6 infers the init as @MainActor-isolated and the call is a data race.
     nonisolated init(fileID: PersistentIdentifier?, filePath: String, fileName: String, format: String,
                      artistScore: Double, titleScore: Double,
                      versionScore: Double, version: String?,
-                     durationMs: Int = 0, durationScore: Double = 0.5) {
+                     durationMs: Int = 0, durationScore: Double = 0.5, kindBoost: Double = 0) {
         self.fileID        = fileID
         self.filePath      = filePath
         self.fileName      = fileName
@@ -43,6 +50,7 @@ struct ScoredCandidate: Sendable {
         self.durationMs    = durationMs
         self.durationScore = durationScore
         self.combinedScore = self.baseScore * 0.7 + versionScore * 0.3
+        self.kindBoost     = kindBoost
     }
 }
 
@@ -78,6 +86,7 @@ final class FileMatchCoordinator {
     var currentTrackLabel: String = ""
     var lastError: String? = nil
     var orphanSweepSummary: String? = nil
+    var skippedFolderCount: Int = 0   // library folders not reachable at scan start (C3 report)
     var onScanCompleted: (() -> Void)? = nil
 
     // Sub-step progress within Phase 0/1 (orphan sweep, NAS walk, dedup, backfills,
@@ -331,6 +340,8 @@ final class FileMatchCoordinator {
                                           parentFolder: parentFolder,
                                           grandparentFolder: grandparentFolder,
                                           format: ext, fileSizeBytes: nil)
+            newFile.libraryFolderID = driveMonitor.folders
+                .first { $0.folder.contains(path: path) }?.folder.id.uuidString ?? ""
             context.insert(newFile)
         }
         linkFile(filePath: path, toTrackMBID: trackMBID, score: 1.0, method: "manual")
@@ -496,21 +507,37 @@ final class FileMatchCoordinator {
     ///          staleConfidentRecords for the post-Phase-2 outcome report.
     /// SAFETY: never touches files that DO exist; never clears a confident track whose file is present.
     private func runPhase0() async {
-        // Interim (single-folder shim): only the first folder is indexed, so only it may be swept.
-        guard let first = LocalLibraryService.folders().first,
-              driveMonitor.verifyAccessible().contains(first.id) else {
-            print("[PHASE 0] ABORTED — drive not verified accessible. Refusing to sweep orphans.")
+        // SAFETY: scope is the set of folders verified reachable RIGHT NOW (deep check). A folder
+        // that is asleep/unplugged/remounted elsewhere is simply absent from this set, and every
+        // row belonging to it — plus its matches — is left untouched. "Missing" ≠ "deleted".
+        let reachableIDs = driveMonitor.verifyAccessible()
+        let reachable = driveMonitor.folders.map(\.folder).filter { reachableIDs.contains($0.id) }
+        skippedFolderCount = driveMonitor.folders.count - reachable.count
+        guard !reachable.isEmpty else {
+            print("[PHASE 0] ABORTED — no library folder verified accessible. Refusing to sweep orphans.")
             print("[PHASE 0] If this is incorrect, ensure the music library is mounted and reachable, then re-run.")
             return
         }
-        print("[PHASE 0] Drive verified accessible. Proceeding with orphan sweep.")
+        print("[PHASE 0] \(reachable.count) folder(s) verified accessible, \(skippedFolderCount) skipped. Sweeping only the verified ones.")
+        assignLibraryFolderIDs()
+        await runOrphanSweep(over: reachable)
+    }
 
+    /// Orphan sweep restricted to rows that belong to `folders` — by stamped libraryFolderID AND by
+    /// path, so a row can only be swept if both say it lives in a folder the caller verified.
+    /// Rows with no/unknown folder ID (removed folders, manual picks outside the library) are
+    /// never swept. internal (not private) so tests can drive it with a fixed reachable set.
+    func runOrphanSweep(over folders: [LibraryFolder]) async {
         orphanSweepSummary = nil
         staleConfidentRecords = []
         currentTrackLabel = "Checking for moved/deleted files…"
 
         // ── Snapshot (MainActor) ───────────────────────────────────────────────
-        let allFiles = (try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
+        let folderByID = Dictionary(uniqueKeysWithValues: folders.map { ($0.id.uuidString, $0) })
+        let allFiles = ((try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []).filter { file in
+            guard let folder = folderByID[file.libraryFolderID] else { return false }
+            return folder.contains(path: file.filePath)
+        }
         let confidentTracks = (try? context.fetch(FetchDescriptor<TrackEntity>(
             predicate: #Predicate { $0.fileMatchState == "confident" }
         ))) ?? []
@@ -557,7 +584,7 @@ final class FileMatchCoordinator {
                             count: total, total: total, force: true)
 
         guard !deadItems.isEmpty else {
-            print("[ORPHAN SWEEP] All \(checkItems.count) indexed files verified on disk.")
+            print("[ORPHAN SWEEP] All \(checkItems.count) indexed files in \(folders.count) verified folder(s) are on disk.")
             currentTrackLabel = ""
             return
         }
@@ -629,6 +656,7 @@ final class FileMatchCoordinator {
     // MARK: - Phase 1: Index local audio files
 
     private struct FileInfo: Sendable {
+        let folderID: String
         let path: String
         let name: String
         let parentFolder: String      // direct parent folder (album or artist)
@@ -642,7 +670,13 @@ final class FileMatchCoordinator {
         repairOrphanedConfidentTracks()   // reset confident tracks whose file link was stolen by a prior run
         backfillFolderNames()             // ensure parentFolder + grandparentFolder set for all rows
 
-        guard let url = LocalLibraryService.resolveLibraryBookmark() else { return }
+        assignLibraryFolderIDs()
+
+        // Walk only folders deep-verified reachable now; unreachable ones are skipped, not emptied.
+        let reachableIDs = driveMonitor.verifyAccessible()
+        let reachable = driveMonitor.folders.map(\.folder).filter { reachableIDs.contains($0.id) }
+        skippedFolderCount = driveMonitor.folders.count - reachable.count
+        guard !reachable.isEmpty else { return }
 
         let existing: Set<String> = {
             let all = (try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
@@ -652,30 +686,58 @@ final class FileMatchCoordinator {
 
         // Always walk the library so newly added files are picked up.
         // collectAudioFiles skips paths already in `existing`, so this is incremental.
-        updateIndexingStep("Scanning library folder…", force: true)
-        let scanProgressCallback: @Sendable (Int) async -> Void = { [weak self] count in
-            await MainActor.run { [weak self] in
-                self?.updateIndexingStep("Scanning library folder… \(count.formatted())", count: count)
+        var inserted = 0
+        for folder in reachable {
+            guard let url = LocalLibraryService.resolve(folder) else { continue }
+            let name = url.lastPathComponent
+            updateIndexingStep("Scanning \(name)…", force: true)
+            let scanProgressCallback: @Sendable (Int) async -> Void = { [weak self] count in
+                await MainActor.run { [weak self] in
+                    self?.updateIndexingStep("Scanning \(name)… \(count.formatted())", count: count)
+                }
             }
-        }
-        let filesToInsert = await Task.detached(priority: .userInitiated) {
-            await FileMatchCoordinator.collectAudioFiles(at: url, skipping: existing, onProgress: scanProgressCallback)
-        }.value
+            let folderID = folder.id.uuidString
+            let filesToInsert = await Task.detached(priority: .userInitiated) {
+                await FileMatchCoordinator.collectAudioFiles(at: url, folderID: folderID, skipping: existing,
+                                                             onProgress: scanProgressCallback)
+            }.value
+            if Task.isCancelled { return }
 
-        if !filesToInsert.isEmpty {
             for f in filesToInsert {
-                context.insert(LocalFileEntity(filePath: f.path, fileName: f.name,
-                                               parentFolder: f.parentFolder,
-                                               grandparentFolder: f.grandparentFolder,
-                                               format: f.format, fileSizeBytes: f.size))
+                let entity = LocalFileEntity(filePath: f.path, fileName: f.name,
+                                             parentFolder: f.parentFolder,
+                                             grandparentFolder: f.grandparentFolder,
+                                             format: f.format, fileSizeBytes: f.size)
+                entity.libraryFolderID = f.folderID
+                context.insert(entity)
             }
-            indexedCount = existing.count + filesToInsert.count
-            try? context.save()
+            inserted += filesToInsert.count
+            indexedCount = existing.count + inserted
+            if !filesToInsert.isEmpty { try? context.save() }
         }
 
         // Backfill artistFolder AFTER inserting new files so newly indexed rows are covered.
         backfillArtistFoldersIfNeeded()
-        await backfillDurationsIfNeeded()  // fill durationMs == 0 rows
+        await backfillDurationsIfNeeded(in: reachable)  // fill durationMs == 0 rows
+    }
+
+    /// Stamps libraryFolderID on rows that lack a current one (pre-multifolder rows, rows of a
+    /// removed-then-re-added folder) by path. Rows under no current folder keep what they have.
+    /// Path-only — no disk I/O. Folders never overlap (addFolder rejects it), so at most one matches.
+    private func assignLibraryFolderIDs() {
+        let folders = driveMonitor.folders.map(\.folder)
+        let currentIDs = Set(folders.map(\.id.uuidString))
+        let all = (try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
+        var changed = 0
+        for file in all where !currentIDs.contains(file.libraryFolderID) {
+            if let folder = folders.first(where: { $0.contains(path: file.filePath) }) {
+                file.libraryFolderID = folder.id.uuidString
+                changed += 1
+            }
+        }
+        guard changed > 0 else { return }
+        try? context.save()
+        print("[FOLDERS] Assigned library folder to \(changed) rows")
     }
 
     /// Remove duplicate LocalFileEntity rows (same filePath), keeping the matched one when possible.
@@ -761,13 +823,19 @@ final class FileMatchCoordinator {
         print("[REPAIR] Reset \(repaired) orphaned confident tracks to unscanned")
     }
 
-    /// Returns the first path component after "Tracks/" in filePath, or "" if not found.
-    /// Pure string operation — no disk I/O.
-    nonisolated static func extractArtistFolder(from filePath: String) -> String {
+    /// Returns the first path component after "Tracks/" in filePath; failing that, the first
+    /// component under `root` (the file's library folder), so folders without a "Tracks" level
+    /// still get an artist folder. "" if neither applies. Pure string operation — no disk I/O.
+    nonisolated static func extractArtistFolder(from filePath: String, root: String? = nil) -> String {
         let components = filePath.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
-        guard let idx = components.firstIndex(where: { $0.caseInsensitiveCompare("Tracks") == .orderedSame }),
-              idx + 1 < components.count else { return "" }
-        return components[idx + 1]
+        if let idx = components.firstIndex(where: { $0.caseInsensitiveCompare("Tracks") == .orderedSame }),
+           idx + 1 < components.count {
+            return components[idx + 1]
+        }
+        guard let root, LocalLibraryService.isPath(filePath, within: root) else { return "" }
+        let rootCount = root.split(separator: "/", omittingEmptySubsequences: true).count
+        // Needs a folder between root and file — a file sitting directly in root has no artist folder.
+        return components.count > rootCount + 1 ? components[rootCount] : ""
     }
 
     /// Backfill artistFolder for any LocalFileEntity where it is still empty.
@@ -777,8 +845,10 @@ final class FileMatchCoordinator {
             .filter { $0.artistFolder.isEmpty }
         guard !needs.isEmpty else { return }
         updateIndexingStep("Backfilling artist folders", force: true)
+        let folders = driveMonitor.folders.map(\.folder)
         for file in needs {
-            file.artistFolder = FileMatchCoordinator.extractArtistFolder(from: file.filePath)
+            let root = folders.first { $0.contains(path: file.filePath) }?.displayPath
+            file.artistFolder = FileMatchCoordinator.extractArtistFolder(from: file.filePath, root: root)
         }
         try? context.save()
         print("[BACKFILL] Set artistFolder on \(needs.count) rows")
@@ -787,10 +857,13 @@ final class FileMatchCoordinator {
     /// Reads AVAsset duration for every LocalFileEntity that still has durationMs == 0.
     /// First call after the app update processes all existing rows; subsequent calls are near-instant
     /// because only genuinely unreadable files remain at 0.
-    private func backfillDurationsIfNeeded() async {
-        let needsDuration = (try? context.fetch(FetchDescriptor<LocalFileEntity>(
+    /// Only rows in `folders` (verified reachable): reading an unreachable file would fail and
+    /// permanently mark it -1.
+    private func backfillDurationsIfNeeded(in folders: [LibraryFolder]) async {
+        let folderIDs = Set(folders.map(\.id.uuidString))
+        let needsDuration = ((try? context.fetch(FetchDescriptor<LocalFileEntity>(
             predicate: #Predicate { $0.durationMs == 0 }
-        ))) ?? []
+        ))) ?? []).filter { folderIDs.contains($0.libraryFolderID) }
         guard !needsDuration.isEmpty else { return }
         print("[DURATION] Backfilling durations for \(needsDuration.count) files…")
         updateIndexingStep("Reading durations 0 / \(needsDuration.count.formatted())",
@@ -848,7 +921,7 @@ final class FileMatchCoordinator {
     }
 
     /// Synchronous directory walk — no actor state, safe for Task.detached.
-    nonisolated private static func collectAudioFiles(at url: URL,
+    nonisolated private static func collectAudioFiles(at url: URL, folderID: String,
                                                        skipping existing: Set<String>,
                                                        onProgress: @Sendable (Int) async -> Void) async -> [FileInfo] {
         let audioExts: Set<String> = ["flac","mp3","aiff","aif","wav","m4a","mp4","ogg","opus"]
@@ -874,7 +947,7 @@ final class FileMatchCoordinator {
             let parentFolder      = fileURL.deletingLastPathComponent().lastPathComponent
             let grandparentFolder = fileURL.deletingLastPathComponent()
                                            .deletingLastPathComponent().lastPathComponent
-            files.append(FileInfo(path: path, name: name,
+            files.append(FileInfo(folderID: folderID, path: path, name: name,
                                   parentFolder: parentFolder, grandparentFolder: grandparentFolder,
                                   format: ext, size: size))
             if files.count % 200 == 0 { await onProgress(files.count) }
@@ -891,6 +964,7 @@ final class FileMatchCoordinator {
         let artist: String
         let title: String
         let durationMs: Int  // 0 = unknown (TrackEntity.durationMs is Int?)
+        let isCompilation: Bool
     }
 
     // internal (not private): constructed by tests exercising scoreFile() directly.
@@ -903,6 +977,7 @@ final class FileMatchCoordinator {
         let format: String
         let durationMs: Int  // 0 = not yet backfilled or AVAsset failed
         let artistFolder: String     // first path component under "Tracks/" root
+        var folderKind: LibraryFolder.Kind? = nil  // kind of the library folder it came from; nil = unknown
     }
 
     // MatchResult carries PersistentIdentifiers so write-back never touches the context
@@ -945,7 +1020,8 @@ final class FileMatchCoordinator {
         trackTitleTokens: Set<String>,
         trackVersion: String?,
         trackDurationMs: Int,
-        artistScore: Double
+        artistScore: Double,
+        kindBoost: Double = 0
     ) -> ScoredCandidate? {
         let titleScore = FuzzyMatch.similarity(tokensA: trackTitleTokens, tokensB: stemTokens)
         guard titleScore >= 0.2 else { return nil }
@@ -968,14 +1044,25 @@ final class FileMatchCoordinator {
         return ScoredCandidate(fileID: file.id, filePath: file.filePath, fileName: file.fileName,
                                format: file.format, artistScore: artistScore, titleScore: titleScore,
                                versionScore: ver, version: version,
-                               durationMs: file.durationMs, durationScore: durScore)
+                               durationMs: file.durationMs, durationScore: durScore,
+                               kindBoost: kindBoost)
+    }
+
+    /// C2 ranking boost: a compilation prefers files from Compilations folders, anything else
+    /// prefers Albums/Singles. Other/unknown folders are neutral. Never a filter.
+    nonisolated static func folderKindBoost(isCompilation: Bool, kind: LibraryFolder.Kind?) -> Double {
+        switch kind {
+        case .compilations:     return isCompilation ? ScoredCandidate.folderKindBoostWeight : 0
+        case .albums, .singles: return isCompilation ? 0 : ScoredCandidate.folderKindBoostWeight
+        case .other, nil:       return 0
+        }
     }
 
     /// Best-candidate-first ordering — same comparator the live scan uses, shared so
     /// rehydrated candidates sort identically to a fresh scan's results.
     nonisolated static func sortCandidates(_ candidates: [ScoredCandidate]) -> [ScoredCandidate] {
         candidates.sorted { lhs, rhs in
-            if abs(lhs.combinedScore - rhs.combinedScore) > 0.01 { return lhs.combinedScore > rhs.combinedScore }
+            if abs(lhs.rankScore - rhs.rankScore) > 0.01 { return lhs.rankScore > rhs.rankScore }
             if abs(lhs.durationScore - rhs.durationScore) > 0.05 { return lhs.durationScore > rhs.durationScore }
             return (formatPriority[lhs.format] ?? 99) < (formatPriority[rhs.format] ?? 99)
         }
@@ -1021,6 +1108,15 @@ final class FileMatchCoordinator {
             : track.artistCredit
     }
 
+    /// Same "Various" convention as RecordingsScanCoordinator / SetBuilderView.isCompilation.
+    private func isCompilation(_ track: TrackEntity) -> Bool {
+        track.collectionItem?.basicInformation?.artists.first?.name.lowercased() == "various"
+    }
+
+    private func folderKindsByID() -> [String: LibraryFolder.Kind] {
+        Dictionary(uniqueKeysWithValues: driveMonitor.folders.map { ($0.folder.id.uuidString, $0.folder.kind) })
+    }
+
     private func runPhase2(limit: Int?) async {
         // ── Snapshot: extract Sendable value types from SwiftData models ──────────────
         // All model access happens HERE on the MainActor. The scoring step below is
@@ -1036,18 +1132,21 @@ final class FileMatchCoordinator {
             return TrackSummary(id: t.persistentModelID,
                                 trackMBID: t.trackMBID, recordingMBID: t.recordingMBID,
                                 artist: effectiveArtist(t), title: t.title,
-                                durationMs: t.durationMs ?? 0)
+                                durationMs: t.durationMs ?? 0,
+                                isCompilation: isCompilation(t))
         }
 
         // Load files into the context's identity map so context.model(for:) in
         // applyResults is O(1) — no predicate fetch needed at write-back time.
         let allFiles = (try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
+        let kinds = folderKindsByID()
         let files: [FileSummary] = allFiles.map { f in
             FileSummary(id: f.persistentModelID,
                         filePath: f.filePath, fileName: f.fileName,
                         parentFolder: f.parentFolder, grandparentFolder: f.grandparentFolder,
                         format: f.format, durationMs: f.durationMs,
-                        artistFolder: f.artistFolder)
+                        artistFolder: f.artistFolder,
+                        folderKind: kinds[f.libraryFolderID])
         }
 
         if tracks.isEmpty || files.isEmpty { return }
@@ -1237,7 +1336,8 @@ final class FileMatchCoordinator {
             let scored: [ScoredCandidate] = sortCandidates(matchedFiles.compactMap { file -> ScoredCandidate? in
                 scoreFile(file.summary, stemTokens: file.stemTokens, version: file.version,
                          trackTitleTokens: trackTitleTokens, trackVersion: trackVersion,
-                         trackDurationMs: track.durationMs, artistScore: bestFolderScore)
+                         trackDurationMs: track.durationMs, artistScore: bestFolderScore,
+                         kindBoost: folderKindBoost(isCompilation: track.isCompilation, kind: file.summary.folderKind))
             })
 
             let top = scored.first
@@ -1344,8 +1444,10 @@ final class FileMatchCoordinator {
         fileByPath.reserveCapacity(allFiles.count)
         for f in allFiles { fileByPath[f.filePath] = f }
 
+        let kinds = folderKindsByID()
         for track in reviewTracks where reviewCandidates[track.trackMBID] == nil {
             let artist = effectiveArtist(track)
+            let compilation = isCompilation(track)
             let (trackBase, trackVersion) = FuzzyMatch.splitVersion(track.title)
             let trackTitleTokens = Set(trackBase.split(separator: " ").map(String.init))
             let trackDurationMs = track.durationMs ?? 0
@@ -1362,12 +1464,15 @@ final class FileMatchCoordinator {
                 let summary = FileSummary(id: file.persistentModelID, filePath: file.filePath,
                                           fileName: file.fileName, parentFolder: file.parentFolder,
                                           grandparentFolder: file.grandparentFolder, format: file.format,
-                                          durationMs: file.durationMs, artistFolder: file.artistFolder)
+                                          durationMs: file.durationMs, artistFolder: file.artistFolder,
+                                          folderKind: kinds[file.libraryFolderID])
                 return FileMatchCoordinator.scoreFile(summary, stemTokens: stemTokens, version: version,
                                                       trackTitleTokens: trackTitleTokens,
                                                       trackVersion: trackVersion,
                                                       trackDurationMs: trackDurationMs,
-                                                      artistScore: artistScore)
+                                                      artistScore: artistScore,
+                                                      kindBoost: FileMatchCoordinator.folderKindBoost(
+                                                          isCompilation: compilation, kind: summary.folderKind))
             }
             if !candidates.isEmpty {
                 reviewCandidates[track.trackMBID] = FileMatchCoordinator.sortCandidates(candidates)

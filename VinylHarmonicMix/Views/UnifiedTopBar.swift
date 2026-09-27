@@ -200,7 +200,9 @@ struct UnifiedTopBar: View {
                 icon: "waveform.badge.magnifyingglass",
                 isRunning: true,
                 count: localAnalysisCoordinator.analyzedCount,
-                total: localAnalysisCoordinator.totalCount
+                total: localAnalysisCoordinator.totalCount,
+                statusText: skippedText(localAnalysisCoordinator.analyzedCount, localAnalysisCoordinator.totalCount,
+                                        skipped: localAnalysisCoordinator.skippedFolderCount)
             ))
         }
 
@@ -210,11 +212,22 @@ struct UnifiedTopBar: View {
                 icon: "scope",
                 isRunning: true,
                 count: cueCoordinator.processedCount,
-                total: cueCoordinator.totalCount
+                total: cueCoordinator.totalCount,
+                statusText: skippedText(cueCoordinator.processedCount, cueCoordinator.totalCount,
+                                        skipped: cueCoordinator.skippedFolderCount)
             ))
         }
 
         return result
+    }
+
+    /// "count / total · N folders skipped" when folders were skipped; nil keeps the default label.
+    private func skippedText(_ count: Int, _ total: Int, skipped: Int) -> String? {
+        skipped > 0 ? "\(count) / \(total) · \(Self.foldersSkipped(skipped))" : nil
+    }
+
+    private static func foldersSkipped(_ n: Int) -> String {
+        "\(n) folder\(n == 1 ? "" : "s") skipped"
     }
 
     private func fileMatchStatus() -> OperationStatus? {
@@ -223,12 +236,14 @@ struct UnifiedTopBar: View {
         case .indexing:
             return .simple(name: "Link Files", icon: "link", isRunning: true,
                            count: c.indexingStepCount, total: c.indexingStepTotal,
-                           statusText: c.indexingStep.isEmpty
+                           statusText: (c.indexingStep.isEmpty
                                ? "Indexing \(c.indexedCount.formatted())"
                                : c.indexingStep)
+                               + (c.skippedFolderCount > 0 ? " · \(Self.foldersSkipped(c.skippedFolderCount))" : ""))
         case .matching:
             return .simple(name: "Link Files", icon: "link", isRunning: true,
-                           count: c.processedTracks, total: c.totalTracks)
+                           count: c.processedTracks, total: c.totalTracks,
+                           statusText: skippedText(c.processedTracks, c.totalTracks, skipped: c.skippedFolderCount))
         case .generatingWaveforms, .generatingWaveformsPaused:
             return OperationStatus(
                 name: "Waveforms",

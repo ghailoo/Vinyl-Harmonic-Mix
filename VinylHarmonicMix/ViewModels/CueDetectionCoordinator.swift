@@ -34,16 +34,30 @@ final class CueDetectionCoordinator {
     var detectedCount: Int = 0
     var skippedCount: Int = 0
     var failedCount: Int = 0
+    var skippedFolderCount: Int = 0
 
     var shouldShowPanel: Bool { phase != .idle }
 
     // MARK: - Private
     private let context: ModelContext
+    private let driveMonitor: DriveMonitor?
     private var scanTask: Task<Void, Never>?
     private var pendingScope: CueDetectionScope = .all
     private var pendingLimit: Int? = nil
 
-    init(context: ModelContext) { self.context = context }
+    init(context: ModelContext, driveMonitor: DriveMonitor? = nil) {
+        self.context = context
+        self.driveMonitor = driveMonitor
+    }
+
+    /// C3: folders unreachable right now. Files under them are skipped (not failed, not
+    /// marked) so a sleeping NAS doesn't poison analysis state; the count is shown in the toolbar.
+    private func missingFolders() -> [LibraryFolder] {
+        driveMonitor?.refreshAvailability()
+        let missing = driveMonitor?.missingFolders ?? []
+        skippedFolderCount = missing.count
+        return missing
+    }
 
     // MARK: - Controls
 
@@ -141,7 +155,10 @@ final class CueDetectionCoordinator {
         case .unmatched: scopeMatches = { $0.matchMethod == "unmatched" }
         case .all:       scopeMatches = { _ in true }
         }
-        let candidates = allFiles.filter {
+        let missing = missingFolders()
+        let candidates = allFiles.filter { file in
+            !missing.contains { $0.contains(path: file.filePath) }
+        }.filter {
             $0.bpm > 0
             && !$0.filePath.isEmpty
             && ($0.cueAnalyzedAt == nil || $0.cueAnalyzerVersion != Self.currentCueVersion)
