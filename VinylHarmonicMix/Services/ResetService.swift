@@ -124,10 +124,11 @@ enum ResetService {
     }
 
     /// Discogs token/username and the AcoustID key live in the Keychain, not UserDefaults,
-    /// so they survive automatically. Only the library folder bookmark + display path need
+    /// so they survive automatically. Only the library folder list (and legacy bookmark keys) need
     /// an explicit allow-list entry here.
     private static func clearUserDefaults() {
-        let preserve: Set<String> = [LocalLibraryService.bookmarkKey, LocalLibraryService.displayPathKey]
+        let preserve: Set<String> = [LocalLibraryService.bookmarkKey, LocalLibraryService.displayPathKey,
+                                     LocalLibraryService.foldersKey]
         guard let bundleID = Bundle.main.bundleIdentifier,
               let domain = UserDefaults.standard.persistentDomain(forName: bundleID) else { return }
         for key in domain.keys where !preserve.contains(key) {

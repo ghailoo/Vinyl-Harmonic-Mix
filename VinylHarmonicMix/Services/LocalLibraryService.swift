@@ -1,39 +1,130 @@
 import Foundation
 
+/// One library root the user picked. `id` is stamped onto every LocalFileEntity indexed
+/// from it (`libraryFolderID`) so per-folder operations (orphan sweep) can be scoped.
+nonisolated struct LibraryFolder: Codable, Identifiable, Equatable, Sendable {
+    enum Kind: String, Codable, CaseIterable, Sendable {
+        case albums, compilations, singles, other
+        var label: String { rawValue.capitalized }
+    }
+
+    var id: UUID
+    var bookmark: Data
+    var displayPath: String
+    var kind: Kind
+
+    /// True when `path` is this folder's root or anything beneath it.
+    func contains(path: String) -> Bool {
+        LocalLibraryService.isPath(path, within: displayPath)
+    }
+}
+
 enum LocalLibraryService {
 
+    // Legacy single-folder keys (pre-v2.1). Still read for migration and left in place,
+    // so rolling back to the v2.1-pre-multifolder tag keeps working.
     static let bookmarkKey    = "localLibraryBookmark"
     static let displayPathKey = "localLibraryDisplayPath"
+    static let foldersKey     = "localLibraryFolders"
 
     private static let audioExtensions: Set<String> = [
         "flac", "mp3", "aiff", "aif", "wav", "m4a", "mp4", "ogg", "opus"
     ]
     private static let junkFolderNames: Set<String> = ["#recycle", "@eaDir"]
 
-    // MARK: - Bookmark management
+    // MARK: - Library folders
 
-    static func saveBookmark(for url: URL) throws {
-        let data = try url.bookmarkData(
-            options: [.withSecurityScope],
-            includingResourceValuesForKeys: nil,
-            relativeTo: nil
-        )
-        UserDefaults.standard.set(data, forKey: bookmarkKey)
-        UserDefaults.standard.set(url.path, forKey: displayPathKey)
+    enum FolderError: LocalizedError {
+        case overlaps(existing: String)
+        var errorDescription: String? {
+            switch self {
+            case .overlaps(let existing):
+                return "This folder is the same as, inside, or contains \(existing). Indexing it twice would duplicate files."
+            }
+        }
     }
 
-    /// Resolves the stored bookmark. Caller must balance with stopAccessingSecurityScopedResource().
-    static func resolveLibraryBookmark() -> URL? {
-        guard let data = UserDefaults.standard.data(forKey: bookmarkKey) else { return nil }
+    /// Ordered folder list. First call after upgrading migrates the legacy single bookmark
+    /// into entry #1 (kind = other) — same bookmark bytes, so access carries over untouched.
+    static func folders(defaults: UserDefaults = .standard) -> [LibraryFolder] {
+        if let data = defaults.data(forKey: foldersKey) {
+            // Undecodable list → no folders (nothing gets swept), never a re-migration over it.
+            return (try? JSONDecoder().decode([LibraryFolder].self, from: data)) ?? []
+        }
+        guard let legacy = defaults.data(forKey: bookmarkKey) else { return [] }
+        let migrated = [LibraryFolder(id: UUID(), bookmark: legacy,
+                                      displayPath: defaults.string(forKey: displayPathKey) ?? "",
+                                      kind: .other)]
+        saveFolders(migrated, defaults: defaults)
+        print("[LIBRARY] Migrated legacy bookmark → folder list (\(migrated[0].displayPath))")
+        return migrated
+    }
+
+    static func saveFolders(_ folders: [LibraryFolder], defaults: UserDefaults = .standard) {
+        defaults.set(try? JSONEncoder().encode(folders), forKey: foldersKey)
+    }
+
+    @discardableResult
+    static func addFolder(_ url: URL, kind: LibraryFolder.Kind, defaults: UserDefaults = .standard) throws -> LibraryFolder {
+        var list = folders(defaults: defaults)
+        let path = url.standardizedFileURL.path
+        if let clash = list.first(where: { isPath(path, within: $0.displayPath) || isPath($0.displayPath, within: path) }) {
+            throw FolderError.overlaps(existing: clash.displayPath)
+        }
+        let data = try url.bookmarkData(options: [.withSecurityScope],
+                                        includingResourceValuesForKeys: nil, relativeTo: nil)
+        let folder = LibraryFolder(id: UUID(), bookmark: data, displayPath: path, kind: kind)
+        list.append(folder)
+        saveFolders(list, defaults: defaults)
+        return folder
+    }
+
+    /// Drops the entry only. Index rows and matches are left alone — rows keep their
+    /// now-dangling libraryFolderID, which the orphan sweep never matches, so they're never swept.
+    static func removeFolder(id: UUID, defaults: UserDefaults = .standard) {
+        saveFolders(folders(defaults: defaults).filter { $0.id != id }, defaults: defaults)
+    }
+
+    static func setKind(_ kind: LibraryFolder.Kind, for id: UUID, defaults: UserDefaults = .standard) {
+        var list = folders(defaults: defaults)
+        guard let i = list.firstIndex(where: { $0.id == id }) else { return }
+        list[i].kind = kind
+        saveFolders(list, defaults: defaults)
+    }
+
+    /// Resolves a folder's bookmark. Caller must balance with stopAccessingSecurityScopedResource().
+    static func resolve(_ folder: LibraryFolder, defaults: UserDefaults = .standard) -> URL? {
         var isStale = false
         guard let url = try? URL(
-            resolvingBookmarkData: data,
+            resolvingBookmarkData: folder.bookmark,
             options: [.withSecurityScope],
             relativeTo: nil,
             bookmarkDataIsStale: &isStale
         ) else { return nil }
-        if isStale { try? saveBookmark(for: url) }
+        if isStale, let fresh = try? url.bookmarkData(options: [.withSecurityScope],
+                                                       includingResourceValuesForKeys: nil, relativeTo: nil) {
+            var list = folders(defaults: defaults)
+            if let i = list.firstIndex(where: { $0.id == folder.id }) {
+                list[i].bookmark = fresh   // displayPath deliberately NOT rewritten — see DriveMonitor
+                saveFolders(list, defaults: defaults)
+            }
+        }
         return url
+    }
+
+    // ponytail: single-folder shims for callers not yet ported — removed once DriveMonitor/Settings move to the list.
+    static func resolveLibraryBookmark() -> URL? { folders().first.flatMap { resolve($0) } }
+    static func saveBookmark(for url: URL) throws {
+        saveFolders([])
+        try addFolder(url, kind: .other)
+    }
+
+    /// Case-insensitive (APFS/SMB default) so "/Volumes/Music" and "/volumes/music/x" overlap.
+    nonisolated static func isPath(_ path: String, within root: String) -> Bool {
+        let p = path.lowercased(), r = root.lowercased()
+        guard !r.isEmpty else { return false }
+        let rootSlash = r.hasSuffix("/") ? r : r + "/"
+        return p == r || p.hasPrefix(rootSlash)
     }
 
     // MARK: - Audio file count
