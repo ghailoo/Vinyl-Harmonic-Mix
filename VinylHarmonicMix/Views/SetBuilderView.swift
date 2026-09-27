@@ -629,6 +629,7 @@ struct SetBuilderView: View {
                                 .foregroundStyle(.white)
                                 .frame(width: 22, height: 22)
                                 .background(Circle().fill(Color.accentColor))
+                                .hitTarget()
                         }
                         .buttonStyle(.plain)
                         .help("Change current track")

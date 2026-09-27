@@ -66,3 +66,12 @@ extension Color {
         })
     }
 }
+
+// MARK: - Hit targets
+
+extension View {
+    /// Grows the clickable area to at least 28×28 without changing the glyph. Apply inside a Button label.
+    func hitTarget() -> some View {
+        frame(minWidth: 28, minHeight: 28).contentShape(Rectangle())
+    }
+}
