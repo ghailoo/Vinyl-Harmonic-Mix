@@ -2,6 +2,7 @@ import SwiftUI
 import SwiftData
 
 struct NowPlayingBar: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(AudioPlaybackController.self) private var playback
     @Environment(\.modelContext) private var modelContext
     @State private var coverArtURL: URL? = nil
@@ -45,7 +46,7 @@ struct NowPlayingBar: View {
                     Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
                         .font(.subheadline.weight(.semibold))
                         .frame(width: 12)
-                        .contentTransition(.symbolEffect(.replace))
+                        .contentTransition(reduceMotion ? .opacity : .symbolEffect(.replace))
                 }
                 .buttonStyle(.plain)
                 .help(playback.isPlaying ? "Pause" : "Resume")

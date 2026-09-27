@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct DriveUnavailableBanner: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(DriveMonitor.self) private var driveMonitor
 
     var body: some View {
@@ -31,7 +32,7 @@ struct DriveUnavailableBanner: View {
             .padding(.vertical, 10)
             .background(Color.orange.opacity(0.10))
             .overlay(alignment: .bottom) { Divider() }
-            .transition(.move(edge: .top).combined(with: .opacity))
+            .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
         }
     }
 

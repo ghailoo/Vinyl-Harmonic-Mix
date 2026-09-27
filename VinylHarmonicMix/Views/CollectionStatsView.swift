@@ -2,6 +2,7 @@ import SwiftUI
 import SwiftData
 
 struct CollectionStatsView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(DetailCacheCoordinator.self) private var cacheCoordinator
     @Environment(RecordingsScanCoordinator.self) private var recordingsCoordinator
     @Environment(AudioFeaturesScanCoordinator.self) private var audioFeaturesCoordinator
@@ -83,7 +84,7 @@ struct CollectionStatsView: View {
                             .padding(.top, 12)
                             .padding(.bottom, 8)
                             .frame(maxWidth: .infinity)
-                            .transition(.move(edge: .top).combined(with: .opacity))
+                            .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
                     }
                     ScrollView {
                         VStack(alignment: .leading, spacing: 14) {
@@ -108,7 +109,7 @@ struct CollectionStatsView: View {
                         .padding(.vertical, 20)
                     }
                 }
-                .animation(.snappy, value: cacheCoordinator.shouldShowPanel)
+                .animation(reduceMotion ? nil : .snappy, value: cacheCoordinator.shouldShowPanel)
             }
         }
         .navigationTitle("Stats")

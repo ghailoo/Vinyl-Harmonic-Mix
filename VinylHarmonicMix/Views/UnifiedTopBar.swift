@@ -430,6 +430,7 @@ struct LibraryBubbleButtonStyle: ButtonStyle {
     /// True while this bubble's operation is running, so it visibly links to its
     /// status bubble on the right without any other connection between the two.
     var isActive: Bool = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
 
     func makeBody(configuration: Configuration) -> some View {
@@ -450,7 +451,7 @@ struct LibraryBubbleButtonStyle: ButtonStyle {
                         .animation(.snappy, value: isActive)
                 }
             )
-            .scaleEffect(configuration.isPressed ? 0.96 : 1.0)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1.0)
             .animation(.snappy, value: configuration.isPressed)
             .onHover { hovering in
                 isHovering = hovering
@@ -463,12 +464,13 @@ struct LibraryBubbleButtonStyle: ButtonStyle {
 /// `LibraryBubbleButtonStyle`, this doesn't impose a capsule, just a hover brighten
 /// and a press scale-down so it works on any shape.
 struct InteractiveTileButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .brightness(isHovering ? 0.06 : 0)
-            .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1.0)
             .animation(.snappy, value: isHovering)
             .animation(.snappy, value: configuration.isPressed)
             .onHover { hovering in

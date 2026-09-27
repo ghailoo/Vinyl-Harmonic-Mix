@@ -2,6 +2,7 @@ import SwiftUI
 
 @MainActor
 struct DetailCachePanelView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let coordinator: DetailCacheCoordinator
 
     @State private var isExpanded: Bool = true
@@ -23,7 +24,7 @@ struct DetailCachePanelView: View {
                 .strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5)
         )
         .shadow(color: .black.opacity(0.12), radius: 12, x: 0, y: 3)
-        .animation(.snappy, value: isExpanded)
+        .animation(reduceMotion ? nil : .snappy, value: isExpanded)
     }
 
     // MARK: - Expanded

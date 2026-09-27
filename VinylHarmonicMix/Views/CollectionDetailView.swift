@@ -5,6 +5,7 @@ import AppKit
 #endif
 
 struct CollectionDetailView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let item: CollectionItem
     var onPromoteToCurrent: ((MixTrack) -> Void)? = nil
 
@@ -413,7 +414,7 @@ struct CollectionDetailView: View {
                                 Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
                                     .font(.title3)
                                     .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
-                                    .contentTransition(.symbolEffect(.replace))
+                                    .contentTransition(reduceMotion ? .opacity : .symbolEffect(.replace))
                             }
                             .buttonStyle(.plain)
                             .help(isPlaying ? "Pause" : "Play")

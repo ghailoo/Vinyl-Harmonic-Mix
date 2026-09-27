@@ -2,6 +2,7 @@ import SwiftUI
 
 @MainActor
 struct AudioFeaturesScanResultsView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let coordinator: AudioFeaturesScanCoordinator
     let onOpenItem: (Int) -> Void
 
@@ -25,7 +26,7 @@ struct AudioFeaturesScanResultsView: View {
                 .strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5)
         )
         .shadow(color: .black.opacity(0.12), radius: 12, x: 0, y: 3)
-        .animation(.snappy, value: isExpanded)
+        .animation(reduceMotion ? nil : .snappy, value: isExpanded)
         .overlay(alignment: .bottom) {
             if let msg = toastMessage {
                 Text(msg)
@@ -34,10 +35,10 @@ struct AudioFeaturesScanResultsView: View {
                     .padding(.vertical, 8)
                     .background(.thinMaterial, in: Capsule())
                     .padding(.bottom, 12)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(.snappy, value: toastMessage)
+        .animation(reduceMotion ? .easeInOut(duration: 0.2) : .snappy, value: toastMessage)
     }
 
     // MARK: - Expanded

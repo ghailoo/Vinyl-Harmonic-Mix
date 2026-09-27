@@ -139,6 +139,7 @@ struct OperationStatusBubble: View {
 
 /// Thin fixed-fraction bar for operations where both count and total are known.
 private struct DeterminateBar: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let fraction: Double
     let color: Color
 
@@ -151,7 +152,7 @@ private struct DeterminateBar: View {
             }
         }
         .frame(height: 3)
-        .animation(.easeInOut(duration: 0.3), value: fraction)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: fraction)
     }
 }
 

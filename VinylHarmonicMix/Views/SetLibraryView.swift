@@ -3,6 +3,7 @@ import SwiftData
 import AppKit
 
 struct SetLibraryView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let setlist: SetlistEntity
 
     @Environment(\.modelContext) private var modelContext
@@ -126,7 +127,7 @@ struct SetLibraryView: View {
                     Image(systemName: playback.isPlaying ? "speaker.wave.2.fill" : "speaker.fill")
                         .font(.subheadline)
                         .foregroundStyle(Color.accentColor)
-                        .symbolEffect(.variableColor, isActive: playback.isPlaying)
+                        .symbolEffect(.variableColor, isActive: playback.isPlaying && !reduceMotion)
                 }
                 if idx == total - 1 && total > 1 {
                     Text("last")

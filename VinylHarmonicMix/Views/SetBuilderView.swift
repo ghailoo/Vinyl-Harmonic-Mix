@@ -8,6 +8,7 @@ private struct HarmonicEntry: Identifiable {
 }
 
 struct SetBuilderView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.modelContext) private var modelContext
     @Environment(AudioPlaybackController.self) private var playback
     @Environment(CollectionViewModel.self) private var viewModel
@@ -101,7 +102,7 @@ struct SetBuilderView: View {
                         .frame(height: 220)
                 }
             }
-            .animation(.snappy, value: currentTrack == nil)
+            .animation(reduceMotion ? nil : .snappy, value: currentTrack == nil)
 
             // Suggestions panel — only when draft is non-empty
             suggestionsPanel
@@ -576,7 +577,7 @@ struct SetBuilderView: View {
                     guard let instanceId = filePathToInstanceId[track.filePath ?? ""] else { return }
                     activeFilterRaw = CollectionFilter.all.rawValue
                     highlightedItemId = instanceId
-                    withAnimation(.smooth) {
+                    withAnimation(reduceMotion ? nil : .smooth) {
                         proxy.scrollTo(instanceId, anchor: .center)
                     }
                 } label: {
@@ -682,7 +683,7 @@ struct SetBuilderView: View {
                         Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
                             .font(.title)
                             .foregroundStyle(isActive ? Color.accentColor : Color.secondary.opacity(0.5))
-                            .contentTransition(.symbolEffect(.replace))
+                            .contentTransition(reduceMotion ? .opacity : .symbolEffect(.replace))
                     }
                     .buttonStyle(.plain)
 
