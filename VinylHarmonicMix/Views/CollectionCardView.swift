@@ -77,7 +77,7 @@ struct CollectionCardView: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 2)
-                        .background(Capsule().fill(Color(red: 0.15, green: 0.55, blue: 0.30)))
+                        .background(Capsule().fill(Color.statusComplete))
                         .help("\(badgeLocalCovered) of \(badgeTotal) tracks analyzed from local audio files")
                         .accessibilityLabel("\(badgeLocalCovered) of \(badgeTotal) tracks analyzed from local audio files")
                 }
@@ -112,8 +112,8 @@ struct CollectionCardView: View {
 
     private var coverageColor: Color {
         badgeCovered == badgeTotal
-            ? Color(red: 0.20, green: 0.65, blue: 0.40)
-            : Color(red: 0.95, green: 0.65, blue: 0.20)
+            ? Color.statusComplete
+            : Color.statusPartial
     }
 
     private var linkPip: some View {
@@ -137,8 +137,8 @@ struct CollectionCardView: View {
             .background(
                 LinearGradient(
                     colors: [
-                        Color(red: 0.35, green: 0.55, blue: 1.0),
-                        Color(red: 0.55, green: 0.40, blue: 0.95)
+                        Color.badgeIdentified,
+                        Color.badgeIdentifiedEnd
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing

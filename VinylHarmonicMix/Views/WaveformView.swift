@@ -158,14 +158,14 @@ struct WaveformView: View {
         // Cue markers — drawn on top of bars
         guard duration > 0, !cueMarkers.isEmpty else { return }
 
-        let amber = Color(red: 1.0, green: 0.75, blue: 0.05)
+        let amber = Color.cueSwitchIn
         let switchInTimes = cueMarkers.filter { $0.type == "switch_in" }.map(\.timeSec)
 
         func structuralColor(_ dir: String) -> Color {
             switch dir {
-            case "rise":  return Color(red: 0.1,  green: 0.9,  blue: 0.7)
-            case "fall":  return Color(red: 0.55, green: 0.45, blue: 1.0)
-            default:      return Color(red: 0.6,  green: 0.65, blue: 0.75)
+            case "rise":  return .cueEnergyRise
+            case "fall":  return .cueEnergyFall
+            default:      return .cueEnergyNeutral
             }
         }
 

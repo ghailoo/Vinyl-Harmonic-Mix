@@ -748,7 +748,7 @@ struct SetBuilderView: View {
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 6).padding(.vertical, 3)
-                .background(Capsule().fill(Color(red: 0.15, green: 0.55, blue: 0.30)))
+                .background(Capsule().fill(Color.statusComplete))
                 .help("BPM & key analyzed from your local audio file (Essentia)")
                 .accessibilityLabel("BPM & key analyzed from your local audio file (Essentia)")
         case .ab:
@@ -756,7 +756,7 @@ struct SetBuilderView: View {
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 6).padding(.vertical, 3)
-                .background(Capsule().fill(Color(red: 0.35, green: 0.45, blue: 0.65)))
+                .background(Capsule().fill(Color.badgeSecondarySource))
                 .help("BPM & key from AcousticBrainz")
                 .accessibilityLabel("BPM & key from AcousticBrainz")
         case .none:

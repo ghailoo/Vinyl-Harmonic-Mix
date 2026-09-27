@@ -28,7 +28,7 @@ enum HarmonicGroup: String, CaseIterable {
 
     var color: Color {
         switch self {
-        case .perfectMatch: return Color(red: 0.15, green: 0.55, blue: 0.30)
+        case .perfectMatch: return .statusCompleteForeground
         case .energyBoost:  return .orange
         case .energyDrop:   return .blue
         case .moodSwitch:   return .purple
@@ -105,7 +105,7 @@ enum BlendGrade {
 
     var color: Color {
         switch self {
-        case .perfect:  return Color(red: 0.15, green: 0.55, blue: 0.30)
+        case .perfect:  return .statusCompleteForeground
         case .good:     return .blue
         case .workable: return .orange
         case .hardCut:  return Color.secondary

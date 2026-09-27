@@ -53,8 +53,8 @@ struct StripTileView: View {
                         .font(.callout).foregroundStyle(.tertiary).lineLimit(1)
                 }
                 HStack(spacing: 4) {
-                    badge("\(Int(track.bpm.rounded()))", bg: Color(red: 0.15, green: 0.55, blue: 0.30))
-                    badge(track.camelot, bg: Color(red: 0.15, green: 0.55, blue: 0.30))
+                    badge("\(Int(track.bpm.rounded()))", bg: Color.statusComplete)
+                    badge(track.camelot, bg: Color.statusComplete)
                     badge(badgeLabel, bg: group.color.opacity(0.2), fg: group.color)
                 }
             }

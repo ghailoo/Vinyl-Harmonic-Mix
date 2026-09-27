@@ -445,7 +445,7 @@ struct CollectionDetailView: View {
                             } label: {
                                 Image(systemName: "plus.circle.fill")
                                     .font(.title3)
-                                    .foregroundStyle(Color(red: 0.15, green: 0.55, blue: 0.30))
+                                    .foregroundStyle(Color.statusCompleteForeground)
                             }
                             .buttonStyle(.plain)
                             .help("Set as Current Track in Set Builder")
@@ -1057,7 +1057,7 @@ struct CollectionDetailView: View {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
-                    .background(Capsule().fill(Color(red: 0.15, green: 0.55, blue: 0.30)))
+                    .background(Capsule().fill(Color.statusComplete))
                     .help("BPM & key analyzed from your local audio file")
                     .accessibilityLabel("BPM & key analyzed from your local audio file")
                 Text("\(Int(bpm)) BPM")
@@ -1126,7 +1126,7 @@ struct CollectionDetailView: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
-                        .background(Capsule().fill(Color(red: 0.15, green: 0.55, blue: 0.30)))
+                        .background(Capsule().fill(Color.statusComplete))
                         .help("BPM & key analyzed from your local audio file")
                         .accessibilityLabel("BPM & key analyzed from your local audio file")
                 } else if source == .ab {
@@ -1135,7 +1135,7 @@ struct CollectionDetailView: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
-                        .background(Capsule().fill(Color(red: 0.35, green: 0.45, blue: 0.65)))
+                        .background(Capsule().fill(Color.badgeSecondarySource))
                         .help("BPM & key from the AcousticBrainz database")
                         .accessibilityLabel("BPM & key from the AcousticBrainz database")
                 }
@@ -1166,7 +1166,7 @@ struct CollectionDetailView: View {
                         .foregroundStyle(.white)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
-                        .background(Capsule().fill(Color(red: 0.25, green: 0.50, blue: 0.90)))
+                        .background(Capsule().fill(Color.badgeFileFormat))
                 } else if matchedTrack?.fileMatchState == "review" {
                     Text("?")
                         .font(.subheadline.weight(.bold))

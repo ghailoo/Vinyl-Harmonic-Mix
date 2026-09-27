@@ -69,7 +69,7 @@ struct SpinningRecordView: View {
             // ③ Center label — cover art if available, warm orange fallback
             ZStack {
                 Circle()
-                    .fill(Color(red: 0.62, green: 0.38, blue: 0.12))
+                    .fill(Color.recordLabel)
 
                 if let url = coverArtURL {
                     AsyncImage(url: url) { phase in
