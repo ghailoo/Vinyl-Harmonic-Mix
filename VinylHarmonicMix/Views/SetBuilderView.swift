@@ -287,7 +287,7 @@ struct SetBuilderView: View {
                 Toggle("Stop playback when changing track", isOn: $stopOnTrackChange)
             } label: {
                 Image(systemName: "gearshape")
-                    .font(.system(size: 14))
+                    .font(.body)
                     .foregroundStyle(.secondary)
             }
             .menuStyle(.borderlessButton)
@@ -430,7 +430,7 @@ struct SetBuilderView: View {
         VStack(spacing: 10) {
             Spacer()
             Image(systemName: "exclamationmark.magnifyingglass")
-                .font(.system(size: 34))
+                .font(.iconLarge)
                 .foregroundStyle(.secondary)
             VStack(spacing: 4) {
                 Text("No compatible tracks nearby")
@@ -459,12 +459,12 @@ struct SetBuilderView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 10) {
                     Image(systemName: "wand.and.stars")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.body.weight(.semibold))
                         .foregroundStyle(.tint)
                     Text("Next in Set")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.body.weight(.semibold))
                     Text("\(workingSetTracks.count) so far · anchored to '\(anchor.displayTitle)'")
-                        .font(.system(size: 11))
+                        .font(.callout)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                     Spacer()
@@ -487,7 +487,7 @@ struct SetBuilderView: View {
     private func suggestionsContent(anchor: MixTrack) -> some View {
         if anchor.camelot.isEmpty || anchor.bpm <= 0 {
             Text("Last track has no harmonic data — no suggestions available.")
-                .font(.system(size: 12))
+                .font(.callout)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 20)
                 .padding(.vertical, 8)
@@ -496,7 +496,7 @@ struct SetBuilderView: View {
             if candidates.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("No compatible tracks at ±\(Int(bpmTolerancePct))% BPM tolerance.")
-                        .font(.system(size: 12))
+                        .font(.callout)
                         .foregroundStyle(.secondary)
                     HStack(spacing: 8) {
                         Button("Widen to ±10%") { bpmTolerancePct = 10 }
@@ -552,7 +552,7 @@ struct SetBuilderView: View {
         VStack(spacing: 10) {
             Spacer()
             Image(systemName: "rectangle.stack.badge.plus")
-                .font(.system(size: 34))
+                .font(.iconLarge)
                 .foregroundStyle(.secondary)
             VStack(spacing: 4) {
                 Text("Choose a track below to start building a set.")
@@ -588,7 +588,7 @@ struct SetBuilderView: View {
                             ZStack {
                                 Color.secondary.opacity(0.10)
                                 Image(systemName: "music.note")
-                                    .font(.system(size: 36))
+                                    .font(.iconLarge)
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -624,7 +624,7 @@ struct SetBuilderView: View {
                             playback.setLoadedFile(workingSetTracks.last?.filePath)
                         } label: {
                             Image(systemName: "arrow.triangle.2.circlepath")
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(.white)
                                 .frame(width: 22, height: 22)
                                 .background(Circle().fill(Color.accentColor))
@@ -680,7 +680,7 @@ struct SetBuilderView: View {
                         playback.play(filePath: fp)
                     } label: {
                         Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                            .font(.system(size: 22))
+                            .font(.title)
                             .foregroundStyle(isActive ? Color.accentColor : Color.secondary.opacity(0.5))
                             .contentTransition(.symbolEffect(.replace))
                     }
@@ -700,7 +700,7 @@ struct SetBuilderView: View {
                                 .frame(width: 22, height: 22)
                         } else {
                             Image(systemName: "waveform.path.ecg")
-                                .font(.system(size: 18))
+                                .font(.title2)
                                 .foregroundStyle(Color.secondary.opacity(0.8))
                                 .frame(width: 22, height: 22)
                         }
@@ -725,8 +725,8 @@ struct SetBuilderView: View {
     private func heroBadge(_ text: String, monospaced: Bool) -> some View {
         Text(text)
             .font(monospaced
-                  ? .system(size: 12, weight: .semibold).monospacedDigit()
-                  : .system(size: 12))
+                  ? .callout.weight(.semibold).monospacedDigit()
+                  : .callout)
             .padding(.horizontal, 8).padding(.vertical, 3)
             .background(Capsule().fill(Color.secondary.opacity(0.12)))
     }
@@ -734,7 +734,7 @@ struct SetBuilderView: View {
     @ViewBuilder
     private func heroCamelotPill(_ code: String) -> some View {
         Text(code)
-            .font(.system(size: 12, weight: .bold).monospacedDigit())
+            .font(.callout.weight(.bold).monospacedDigit())
             .foregroundStyle(CamelotColor.text(for: code))
             .padding(.horizontal, 8).padding(.vertical, 3)
             .background(Capsule().fill(CamelotColor.background(for: code)))
@@ -745,7 +745,7 @@ struct SetBuilderView: View {
         switch source {
         case .local:
             Text("ES")
-                .font(.system(size: 10, weight: .bold))
+                .font(.subheadline.weight(.bold))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 6).padding(.vertical, 3)
                 .background(Capsule().fill(Color(red: 0.15, green: 0.55, blue: 0.30)))
@@ -753,7 +753,7 @@ struct SetBuilderView: View {
                 .accessibilityLabel("BPM & key analyzed from your local audio file (Essentia)")
         case .ab:
             Text("AB")
-                .font(.system(size: 10, weight: .bold))
+                .font(.subheadline.weight(.bold))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 6).padding(.vertical, 3)
                 .background(Capsule().fill(Color(red: 0.35, green: 0.45, blue: 0.65)))
@@ -770,15 +770,15 @@ struct SetBuilderView: View {
         HStack(spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 13))
+                    .font(.body)
                     .foregroundStyle(.secondary)
                 TextField("Search artist, title, year…", text: $searchQuery)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 13))
+                    .font(.body)
                 if !searchQuery.isEmpty {
                     Button { searchQuery = "" } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 13))
+                            .font(.body)
                             .foregroundStyle(Color.secondary.opacity(0.6))
                     }
                     .buttonStyle(.plain)
@@ -794,13 +794,13 @@ struct SetBuilderView: View {
 
             HStack(spacing: 4) {
                 Image(systemName: "square.grid.3x3")
-                    .font(.system(size: 10))
+                    .font(.caption)
                     .foregroundStyle(.tertiary)
                 Slider(value: $cardSize, in: 0...1)
                     .frame(width: 64)
                     .controlSize(.mini)
                 Image(systemName: "square.grid.2x2")
-                    .font(.system(size: 13))
+                    .font(.body)
                     .foregroundStyle(.tertiary)
             }
 
@@ -877,11 +877,11 @@ struct SetBuilderView: View {
     private func sectionHeader(title: String, count: Int) -> some View {
         HStack(spacing: 10) {
             Text(title)
-                .font(.system(size: 16, weight: .semibold))
+                .font(.title3.weight(.semibold))
                 .foregroundStyle(.primary)
 
             Text("\(count)")
-                .font(.system(size: 13, weight: .medium))
+                .font(.body.weight(.medium))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 2)
@@ -911,8 +911,8 @@ struct SetBuilderView: View {
             }
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: activeSort.icon).font(.system(size: 12, weight: .semibold))
-                Text(activeSort.rawValue).font(.system(size: 13))
+                Image(systemName: activeSort.icon).font(.callout.weight(.semibold))
+                Text(activeSort.rawValue).font(.body)
             }
             .padding(.horizontal, 10).padding(.vertical, 5)
             .background(Capsule().fill(Color.secondary.opacity(0.12)))
@@ -939,8 +939,8 @@ struct SetBuilderView: View {
             }
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: activeFilter.icon).font(.system(size: 12, weight: .semibold))
-                Text("\(activeFilter.rawValue) (\(filterCount(for: activeFilter)))").font(.system(size: 13))
+                Image(systemName: activeFilter.icon).font(.callout.weight(.semibold))
+                Text("\(activeFilter.rawValue) (\(filterCount(for: activeFilter)))").font(.body)
             }
             .padding(.horizontal, 10).padding(.vertical, 5)
             .background(Capsule().fill(activeFilter == .all
@@ -961,7 +961,7 @@ struct SetBuilderView: View {
         VStack(spacing: 16) {
             Spacer()
             Image(systemName: "line.3.horizontal.decrease.circle")
-                .font(.system(size: 48)).foregroundStyle(.secondary)
+                .font(.iconHero).foregroundStyle(.secondary)
             Text("No releases match the current filter.").foregroundStyle(.secondary)
             Button("Clear filter") { activeFilterRaw = CollectionFilter.all.rawValue }.buttonStyle(.bordered)
             Spacer()
@@ -972,7 +972,7 @@ struct SetBuilderView: View {
     private var emptyState: some View {
         VStack(spacing: 16) {
             Spacer()
-            Image(systemName: "record.circle").font(.system(size: 48)).foregroundStyle(.secondary)
+            Image(systemName: "record.circle").font(.iconHero).foregroundStyle(.secondary)
             Text("Your collection will appear here.").foregroundStyle(.secondary)
             Spacer()
         }

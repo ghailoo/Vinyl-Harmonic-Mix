@@ -69,7 +69,7 @@ struct CollectionStatsView: View {
             if entities.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "tray")
-                        .font(.system(size: 48))
+                        .font(.iconHero)
                         .foregroundStyle(.secondary)
                     Text("Import your collection first.")
                         .foregroundStyle(.secondary)
@@ -88,7 +88,7 @@ struct CollectionStatsView: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 14) {
                             Text("Stats")
-                                .font(.system(size: 28, weight: .bold))
+                                .font(.largeTitle.weight(.bold))
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.bottom, 4)
 
@@ -160,7 +160,7 @@ struct CollectionStatsView: View {
         let isComplete = total > 0 && count >= total
         return VStack(alignment: .leading, spacing: 8) {
             Text("\(count.formatted()) of \(total.formatted()) \(noun) (\(pct)%)")
-                .font(.system(size: 14))
+                .font(.body)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.secondary.opacity(0.15)).frame(height: 8)
@@ -180,7 +180,7 @@ struct CollectionStatsView: View {
 
     private func sectionHeader(title: String) -> some View {
         Text(title)
-            .font(.system(size: 17, weight: .semibold))
+            .font(.title2.weight(.semibold))
             .padding(.bottom, 10)
     }
 
@@ -207,7 +207,7 @@ struct CollectionStatsView: View {
     private func statTile(value: String, label: String, accent: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(value)
-                .font(.system(size: 32, weight: .bold, design: .rounded).monospacedDigit())
+                .font(.statValue.monospacedDigit())
                 .foregroundStyle(accent ? Color.accentColor : Color.primary)
             Text(label)
                 .font(.caption)
@@ -230,12 +230,12 @@ struct CollectionStatsView: View {
             }
             if let icon {
                 Image(systemName: icon)
-                    .font(.system(size: 13))
+                    .font(.body)
                     .foregroundStyle(.secondary)
                     .frame(width: 16, alignment: .center)
             }
             Text(label)
-                .font(.system(size: 14))
+                .font(.body)
                 .lineLimit(1)
                 .frame(width: 110, alignment: .leading)
             GeometryReader { geo in
@@ -251,7 +251,7 @@ struct CollectionStatsView: View {
             }
             .frame(height: 6)
             Text(count.formatted())
-                .font(.system(size: 13).monospacedDigit())
+                .font(.body.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 44, alignment: .trailing)
         }
@@ -411,7 +411,7 @@ struct CollectionStatsView: View {
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
                 Text("Tracks & duration")
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.title2.weight(.semibold))
                 if cachedDetailCount > 0 && !effectivelyComplete {
                     HStack(spacing: 4) {
                         Image(systemName: "info.circle").font(.caption)
@@ -431,18 +431,18 @@ struct CollectionStatsView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     if allCached {
                         Text("\(cachedTrackCount.formatted()) tracks across all \(totalCount.formatted()) releases")
-                            .font(.system(size: 14))
+                            .font(.body)
                     } else {
                         Text("\(cachedTrackCount.formatted()) tracks across \(cachedDetailCount.formatted()) of \(totalCount.formatted()) releases (\(cachePercent)%)")
-                            .font(.system(size: 14))
+                            .font(.body)
                         if !effectivelyComplete, let est = estimatedTotalTracks {
                             Text("Estimated total: \(est.formatted()) tracks (extrapolated)")
-                                .font(.system(size: 13))
+                                .font(.body)
                                 .foregroundStyle(.secondary)
                         }
                     }
                     Text("Recorded duration: \(cachedDurationLabel) (from cached data)")
-                        .font(.system(size: 13))
+                        .font(.body)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -516,14 +516,14 @@ struct CollectionStatsView: View {
         HStack(spacing: 8) {
             Image(systemName: icon)
                 .foregroundStyle(count > 0 ? iconColor : Color.secondary.opacity(0.3))
-                .font(.system(size: 13))
+                .font(.body)
                 .frame(width: 16)
             Text(label)
-                .font(.system(size: 13))
+                .font(.body)
                 .foregroundStyle(count > 0 ? .primary : .secondary)
             Spacer()
             Text(count.formatted())
-                .font(.system(size: 13).monospacedDigit())
+                .font(.body.monospacedDigit())
                 .foregroundStyle(.secondary)
         }
     }
@@ -709,7 +709,7 @@ struct CollectionStatsView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Detect BPM/Key — all files")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.title3.weight(.semibold))
 
                 if fileTotal > 0 {
                     progressRow(count: fileAnalyzed, total: fileTotal, noun: "files analyzed")
@@ -772,7 +772,7 @@ struct CollectionStatsView: View {
         if let minBPM = bpms.first, let maxBPM = bpms.last {
             let median = bpms[bpms.count / 2]
             Text("BPM range: \(Int(minBPM))–\(Int(maxBPM))  (median \(Int(median)))")
-                .font(.system(size: 13))
+                .font(.body)
                 .foregroundStyle(.secondary)
         }
     }
@@ -788,7 +788,7 @@ struct CollectionStatsView: View {
                 return "\(code) (\(desc)): \(count)"
             }.joined(separator: "  ·  ")
             Text("Most common keys:  \(parts)")
-                .font(.system(size: 13))
+                .font(.body)
                 .foregroundStyle(.secondary)
         }
     }
@@ -797,14 +797,14 @@ struct CollectionStatsView: View {
         HStack(spacing: 8) {
             Image(systemName: icon)
                 .foregroundStyle(count > 0 ? iconColor : Color.secondary.opacity(0.3))
-                .font(.system(size: 13))
+                .font(.body)
                 .frame(width: 16)
             Text(label)
-                .font(.system(size: 13))
+                .font(.body)
                 .foregroundStyle(count > 0 ? .primary : .secondary)
             Spacer()
             Text(count.formatted())
-                .font(.system(size: 13).monospacedDigit())
+                .font(.body.monospacedDigit())
                 .foregroundStyle(.secondary)
         }
     }
@@ -815,7 +815,7 @@ struct CollectionStatsView: View {
         if let minBPM = bpms.first, let maxBPM = bpms.last {
             let median = bpms[bpms.count / 2]
             Text("BPM range: \(Int(minBPM))–\(Int(maxBPM))  (median \(Int(median)))")
-                .font(.system(size: 13))
+                .font(.body)
                 .foregroundStyle(.secondary)
         }
     }
@@ -831,7 +831,7 @@ struct CollectionStatsView: View {
                 return "\(code) (\(desc)): \(count)"
             }.joined(separator: "  ·  ")
             Text("Most common keys:  \(parts)")
-                .font(.system(size: 13))
+                .font(.body)
                 .foregroundStyle(.secondary)
         }
     }

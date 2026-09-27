@@ -334,7 +334,7 @@ struct UnifiedTopBar: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.body.weight(.medium))
                         .foregroundStyle(.secondary)
                 }
                 .menuStyle(.borderlessButton)
@@ -404,11 +404,11 @@ struct UnifiedTopBar: View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Image(systemName: icon)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.body.weight(.medium))
                     .foregroundStyle(disabled ? Color.secondary : tint)
                 if showsLabel {
                     Text(title)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.callout.weight(.medium))
                         .foregroundStyle(disabled ? Color.secondary : Color.primary)
                         .lineLimit(1)
                         .fixedSize()

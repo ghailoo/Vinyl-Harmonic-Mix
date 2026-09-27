@@ -81,7 +81,7 @@ struct SetsView: View {
         } else {
             VStack(spacing: 8) {
                 Image(systemName: "list.bullet.rectangle")
-                    .font(.system(size: 40))
+                    .font(.iconHero)
                     .foregroundStyle(.tertiary)
                 Text("Select a set")
                     .font(.title3)
@@ -96,7 +96,7 @@ struct SetsView: View {
     private var emptyState: some View {
         VStack(spacing: 12) {
             Image(systemName: "list.bullet.rectangle")
-                .font(.system(size: 48))
+                .font(.iconHero)
                 .foregroundStyle(.tertiary)
             Text("No Sets Yet")
                 .font(.title3.bold())
@@ -171,10 +171,10 @@ private struct SetlistRowView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(setlist.name)
-                .font(.system(size: 13, weight: .medium))
+                .font(.body.weight(.medium))
                 .lineLimit(1)
             Text(subtitle)
-                .font(.system(size: 11))
+                .font(.callout)
                 .foregroundStyle(.secondary)
         }
         .padding(.vertical, 2)

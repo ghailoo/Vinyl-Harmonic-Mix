@@ -175,14 +175,14 @@ struct AudioFeaturesScanResultsView: View {
         HStack(spacing: 8) {
             Image(systemName: icon)
                 .foregroundStyle(count > 0 ? iconColor : Color.secondary.opacity(0.3))
-                .font(.system(size: 13))
+                .font(.body)
                 .frame(width: 16)
             Text(label)
-                .font(.system(size: 13))
+                .font(.body)
                 .foregroundStyle(count > 0 ? .primary : .secondary)
             Spacer()
             Text("\(count)")
-                .font(.system(size: 13).monospacedDigit())
+                .font(.body.monospacedDigit())
                 .foregroundStyle(.secondary)
         }
     }
@@ -204,9 +204,9 @@ struct AudioFeaturesScanResultsView: View {
                     HStack(spacing: 8) {
                         Image(systemName: "exclamationmark.triangle")
                             .foregroundStyle(.orange)
-                            .font(.system(size: 13))
+                            .font(.body)
                         Text("\(coordinator.tracksFailed) tracks in batches that failed")
-                            .font(.system(size: 13))
+                            .font(.body)
                     }
                     Text("These will be retried on the next scan.")
                         .font(.caption)

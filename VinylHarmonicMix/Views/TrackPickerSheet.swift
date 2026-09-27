@@ -33,7 +33,7 @@ struct TrackPickerSheet: View {
             if mixableTracks.isEmpty {
                 VStack(spacing: 12) {
                     Spacer()
-                    Image(systemName: "waveform.slash").font(.system(size: 36)).foregroundStyle(.tertiary)
+                    Image(systemName: "waveform.slash").font(.iconLarge).foregroundStyle(.tertiary)
                     Text("No tracks with BPM and key data").foregroundStyle(.secondary)
                     Text("Run audio analysis to make tracks mixer-ready.")
                         .font(.caption).foregroundStyle(.tertiary)
@@ -59,26 +59,26 @@ struct TrackPickerSheet: View {
                     } label: {
                         HStack(spacing: 10) {
                             Text(track.position)
-                                .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                                .font(.callout.weight(.semibold).monospacedDigit())
                                 .foregroundStyle(.secondary)
                                 .frame(width: 28, alignment: .trailing)
                             if let bpm = track.effectiveBpm, let cam = track.effectiveCamelot {
                                 camelotPill(cam)
                                 Text("\(Int(bpm.rounded()))")
-                                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                                    .font(.callout.weight(.semibold).monospacedDigit())
                                     .foregroundStyle(.secondary)
                                     .frame(width: 32, alignment: .trailing)
                             }
                             VStack(alignment: .leading, spacing: 1) {
-                                Text(track.title).font(.system(size: 13)).lineLimit(1)
+                                Text(track.title).font(.body).lineLimit(1)
                                 if !track.artistCredit.isEmpty {
                                     Text(track.artistCredit)
-                                        .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                                        .font(.callout).foregroundStyle(.secondary).lineLimit(1)
                                 }
                             }
                             Spacer()
                             Image(systemName: "plus.circle")
-                                .font(.system(size: 14))
+                                .font(.body)
                                 .foregroundStyle(Color.accentColor.opacity(0.7))
                         }
                         .contentShape(Rectangle())
@@ -95,7 +95,7 @@ struct TrackPickerSheet: View {
     @ViewBuilder
     private func camelotPill(_ code: String) -> some View {
         Text(code)
-            .font(.system(size: 9, weight: .bold).monospacedDigit())
+            .font(.subheadline.weight(.bold).monospacedDigit())
             .foregroundStyle(CamelotColor.text(for: code))
             .padding(.horizontal, 5).padding(.vertical, 2)
             .background(Capsule().fill(CamelotColor.background(for: code)))
@@ -143,12 +143,12 @@ struct DeckAReleasePicker: View {
             Divider()
 
             HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").font(.system(size: 13)).foregroundStyle(.secondary)
-                TextField("Search releases…", text: $searchText).textFieldStyle(.plain).font(.system(size: 13))
+                Image(systemName: "magnifyingglass").font(.body).foregroundStyle(.secondary)
+                TextField("Search releases…", text: $searchText).textFieldStyle(.plain).font(.body)
                 if !searchText.isEmpty {
                     Button { searchText = "" } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 13))
+                            .font(.body)
                             .foregroundStyle(Color.secondary.opacity(0.6))
                     }
                     .buttonStyle(.plain)
@@ -166,16 +166,16 @@ struct DeckAReleasePicker: View {
                     HStack(spacing: 10) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(entity.basicInformation?.title ?? "Unknown")
-                                .font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                                .font(.body.weight(.semibold)).lineLimit(1)
                             Text(entity.basicInformation?.artists.map(\.name).joined(separator: " & ") ?? "")
-                                .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                                .font(.callout).foregroundStyle(.secondary).lineLimit(1)
                         }
                         Spacer()
                         let count = mixableCount[entity.instanceId] ?? 0
                         Text("\(count) track\(count == 1 ? "" : "s")")
-                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                            .font(.callout).foregroundStyle(.secondary)
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 11)).foregroundStyle(.tertiary)
+                            .font(.subheadline).foregroundStyle(.tertiary)
                     }
                     .contentShape(Rectangle())
                 }

@@ -28,7 +28,7 @@ struct StripTileView: View {
                     default:
                         ZStack {
                             Color.secondary.opacity(0.12)
-                            Image(systemName: "music.note").font(.system(size: 26)).foregroundStyle(.secondary)
+                            Image(systemName: "music.note").font(.largeTitle).foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -45,12 +45,12 @@ struct StripTileView: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(track.displayTitle)
-                    .font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                    .font(.callout.weight(.semibold)).lineLimit(1)
                 Text(track.displayArtist)
-                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                    .font(.callout).foregroundStyle(.secondary).lineLimit(1)
                 if let release = releaseName {
                     Text("from \(release)")
-                        .font(.system(size: 10)).foregroundStyle(.tertiary).lineLimit(1)
+                        .font(.callout).foregroundStyle(.tertiary).lineLimit(1)
                 }
                 HStack(spacing: 4) {
                     badge("\(Int(track.bpm.rounded()))", bg: Color(red: 0.15, green: 0.55, blue: 0.30))
@@ -71,7 +71,7 @@ struct StripTileView: View {
     @ViewBuilder
     private func badge(_ text: String, bg: Color, fg: Color = .white) -> some View {
         Text(text)
-            .font(.system(size: 9, weight: .bold).monospacedDigit())
+            .font(.subheadline.weight(.bold).monospacedDigit())
             .foregroundStyle(fg)
             .padding(.horizontal, 5).padding(.vertical, 2)
             .background(Capsule().fill(bg))

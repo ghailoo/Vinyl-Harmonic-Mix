@@ -51,9 +51,9 @@ struct SetLibraryView: View {
             VStack(alignment: .leading, spacing: 2) {
                 let count = sortedItems.count
                 Text("\(count) track\(count == 1 ? "" : "s")")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.callout.weight(.semibold))
                 Text(journeySummary)
-                    .font(.system(size: 11))
+                    .font(.callout)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
@@ -104,33 +104,33 @@ struct SetLibraryView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Text("\(idx + 1)")
-                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    .font(.callout.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
                     .frame(width: 20, alignment: .trailing)
-                camelotPill(item.camelot, fontSize: 9)
+                camelotPill(item.camelot)
                 Text("\(Int(item.bpm.rounded()))")
-                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    .font(.callout.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
                     .frame(width: 28, alignment: .trailing)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(item.displayTitle)
-                        .font(.system(size: 12))
+                        .font(.callout)
                         .lineLimit(1)
                     Text(item.displayArtist)
-                        .font(.system(size: 11))
+                        .font(.callout)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
                 Spacer()
                 if isNowPlaying {
                     Image(systemName: playback.isPlaying ? "speaker.wave.2.fill" : "speaker.fill")
-                        .font(.system(size: 11))
+                        .font(.subheadline)
                         .foregroundStyle(Color.accentColor)
                         .symbolEffect(.variableColor, isActive: playback.isPlaying)
                 }
                 if idx == total - 1 && total > 1 {
                     Text("last")
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
@@ -138,7 +138,7 @@ struct SetLibraryView: View {
                 }
                 Button(role: .destructive) { removeItem(item) } label: {
                     Image(systemName: "minus.circle.fill")
-                        .font(.system(size: 13))
+                        .font(.body)
                         .foregroundStyle(Color.red.opacity(0.65))
                 }
                 .buttonStyle(.plain)
@@ -156,7 +156,7 @@ struct SetLibraryView: View {
                         .frame(width: 1, height: 10)
                         .padding(.leading, 23)
                     Text("\(info.bpmDelta) · \(info.label)")
-                        .font(.system(size: 10))
+                        .font(.callout)
                         .foregroundStyle(info.group?.color ?? Color.secondary.opacity(0.7))
                 }
                 .padding(.bottom, 2)
@@ -171,7 +171,7 @@ struct SetLibraryView: View {
         VStack(spacing: 12) {
             Spacer()
             Image(systemName: "music.note.list")
-                .font(.system(size: 40))
+                .font(.iconHero)
                 .foregroundStyle(.tertiary)
             Text("No tracks in this set")
                 .font(.title3)
@@ -230,9 +230,9 @@ struct SetLibraryView: View {
     // MARK: - Sub-components
 
     @ViewBuilder
-    private func camelotPill(_ code: String, fontSize: CGFloat) -> some View {
+    private func camelotPill(_ code: String) -> some View {
         Text(code)
-            .font(.system(size: fontSize, weight: .bold).monospacedDigit())
+            .font(.subheadline.weight(.bold).monospacedDigit())
             .foregroundStyle(CamelotColor.text(for: code))
             .padding(.horizontal, 5)
             .padding(.vertical, 2)

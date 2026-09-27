@@ -194,19 +194,19 @@ struct TransitionBubbleView: View {
         VStack(spacing: 0) {
             // Hero: BPM% — the first thing the eye hits
             Text(String(format: "%.1f%%", bpmPct))
-                .font(.system(size: 22, weight: .black).monospacedDigit())
+                .font(.title.weight(.black).monospacedDigit())
                 .foregroundStyle(grade.color)
                 .padding(.bottom, 2)
 
             Text(info.bpmDelta)
-                .font(.system(size: 10, weight: .medium).monospacedDigit())
+                .font(.callout.weight(.medium).monospacedDigit())
                 .foregroundStyle(.secondary)
                 .padding(.bottom, 10)
 
             // Camelot key transition
             if !anchor.camelot.isEmpty, !candidate.camelot.isEmpty {
                 Text("\(anchor.camelot) → \(candidate.camelot)")
-                    .font(.system(size: 13, weight: .bold).monospacedDigit())
+                    .font(.body.weight(.bold).monospacedDigit())
                     .foregroundStyle(.primary)
                     .padding(.bottom, 10)
             }
@@ -219,7 +219,7 @@ struct TransitionBubbleView: View {
             // Group label
             if let group = info.group {
                 Text(group.rawValue)
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.callout.weight(.semibold))
                     .foregroundStyle(grade.color.opacity(0.9))
                     .multilineTextAlignment(.center)
                     .padding(.bottom, 7)
@@ -281,7 +281,7 @@ struct TransitionBubbleView: View {
                 }
             }
             Text(grade.label)
-                .font(.system(size: 9, weight: .semibold))
+                .font(.callout.weight(.semibold))
                 .foregroundStyle(grade.color.opacity(0.7))
         }
     }

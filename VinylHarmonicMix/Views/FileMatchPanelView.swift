@@ -8,7 +8,7 @@ struct FileMatchPanelView: View {
             HStack(spacing: 8) {
                 phaseIcon
                 Text(phaseLabel)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.body.weight(.semibold))
                 Spacer()
             }
 
@@ -38,7 +38,7 @@ struct FileMatchPanelView: View {
 
             if coordinator.phase == .indexing {
                 Text("\(coordinator.indexedCount.formatted()) files indexed")
-                    .font(.system(size: 12).monospacedDigit())
+                    .font(.callout.monospacedDigit())
             }
 
             if coordinator.phase == .generatingWaveforms || coordinator.phase == .generatingWaveformsPaused {
@@ -115,7 +115,7 @@ struct FileMatchPanelView: View {
     private func countBadge(label: String, count: Int, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(count.formatted())
-                .font(.system(size: 16, weight: .bold).monospacedDigit())
+                .font(.title3.weight(.bold).monospacedDigit())
                 .foregroundStyle(count > 0 ? color : Color.secondary.opacity(0.5))
             Text(label).font(.caption2).foregroundStyle(.secondary)
         }

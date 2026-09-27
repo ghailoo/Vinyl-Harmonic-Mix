@@ -250,14 +250,14 @@ struct MBIDScanResultsView: View {
             HStack(spacing: 8) {
                 Image(systemName: icon)
                     .foregroundStyle(tappable ? iconColor : Color.secondary.opacity(0.3))
-                    .font(.system(size: 13))
+                    .font(.body)
                     .frame(width: 16)
                 Text(label)
-                    .font(.system(size: 13))
+                    .font(.body)
                     .foregroundStyle(tappable ? .primary : .secondary)
                 Spacer()
                 Text("\(count)")
-                    .font(.system(size: 13).monospacedDigit())
+                    .font(.body.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
             .contentShape(Rectangle())
@@ -448,7 +448,7 @@ private struct FailedRowView: View {
         Button { showPopover = true } label: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.body.weight(.medium))
                     .lineLimit(1)
                 Text(item.artist)
                     .font(.caption)
@@ -466,7 +466,7 @@ private struct FailedRowView: View {
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(item.title)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.body.weight(.semibold))
                         .lineLimit(2)
                     Text(item.artist)
                         .font(.caption)
@@ -523,7 +523,7 @@ private struct NeedsReviewRowView: View {
         Button { showPopover = true } label: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.body.weight(.medium))
                     .lineLimit(1)
                 Text(item.artist)
                     .font(.caption)
@@ -541,7 +541,7 @@ private struct NeedsReviewRowView: View {
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(item.title)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.body.weight(.semibold))
                         .lineLimit(2)
                     Text(item.artist)
                         .font(.caption)
@@ -583,7 +583,7 @@ private struct NeedsReviewRowView: View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(candidate.title)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.callout.weight(.medium))
                     .lineLimit(1)
                 Text(candidate.artist)
                     .font(.caption2)

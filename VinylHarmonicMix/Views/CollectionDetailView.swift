@@ -74,7 +74,7 @@ struct CollectionDetailView: View {
                 dismiss()
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 20))
+                    .font(.title)
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
@@ -180,7 +180,7 @@ struct CollectionDetailView: View {
                         galleryIndex = galleryIndex > 0 ? galleryIndex - 1 : galleryURLs.count - 1
                     } label: {
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(.body.weight(.semibold))
                             .foregroundStyle(.white)
                             .padding(8)
                             .background(Circle().fill(.black.opacity(0.5)))
@@ -195,7 +195,7 @@ struct CollectionDetailView: View {
                         galleryIndex = galleryIndex < galleryURLs.count - 1 ? galleryIndex + 1 : 0
                     } label: {
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(.body.weight(.semibold))
                             .foregroundStyle(.white)
                             .padding(8)
                             .background(Circle().fill(.black.opacity(0.5)))
@@ -226,13 +226,13 @@ struct CollectionDetailView: View {
     private func infoStack(detail: ReleaseDetail) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(item.basicInformation.title)
-                .font(.system(size: 24, weight: .semibold))
+                .font(.largeTitle.weight(.semibold))
                 .fixedSize(horizontal: false, vertical: true)
 
             let artistLine = item.basicInformation.artists.map(\.name).joined(separator: " & ")
             if !artistLine.isEmpty {
                 Text(artistLine)
-                    .font(.system(size: 16))
+                    .font(.title3)
                     .foregroundStyle(.secondary)
             }
 
@@ -242,7 +242,7 @@ struct CollectionDetailView: View {
             }()
             if !yearCountry.isEmpty {
                 Text(yearCountry)
-                    .font(.system(size: 13))
+                    .font(.body)
                     .foregroundStyle(.secondary)
             }
 
@@ -251,7 +251,7 @@ struct CollectionDetailView: View {
                !released.isEmpty,
                released != String(item.basicInformation.year) {
                 Text("Released: \(released)")
-                    .font(.system(size: 13))
+                    .font(.body)
                     .foregroundStyle(.secondary)
             }
 
@@ -268,7 +268,7 @@ struct CollectionDetailView: View {
                     ? ""
                     : " · " + group.catnos.joined(separator: ", ")
                 Text("\(group.name)\(catnos)")
-                    .font(.system(size: 13))
+                    .font(.body)
                     .foregroundStyle(.secondary)
             }
         }
@@ -287,7 +287,7 @@ struct CollectionDetailView: View {
         HStack(spacing: 3) {
             ForEach(1...5, id: \.self) { star in
                 Image(systemName: item.rating > 0 && star <= item.rating ? "star.fill" : "star")
-                    .font(.system(size: 14))
+                    .font(.body)
                     .foregroundStyle(
                         item.rating > 0 && star <= item.rating ? Color.accentColor : Color.secondary
                     )
@@ -303,7 +303,7 @@ struct CollectionDetailView: View {
     private func formatBadge(_ fmt: Format) -> some View {
         let parts = ([fmt.name] + (fmt.descriptions ?? [])).joined(separator: " · ")
         return Text(parts)
-            .font(.system(size: 12))
+            .font(.callout)
             .foregroundStyle(Color.accentColor)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
@@ -321,7 +321,7 @@ struct CollectionDetailView: View {
                 HStack(spacing: 6) {
                     ForEach(tags, id: \.self) { tag in
                         Text(tag)
-                            .font(.system(size: 12))
+                            .font(.callout)
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
@@ -341,7 +341,7 @@ struct CollectionDetailView: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Tracklist")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.title3.weight(.semibold))
                 Divider()
             }
             .padding(.horizontal, 20)
@@ -384,11 +384,11 @@ struct CollectionDetailView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(spacing: 0) {
                         Text(track.position)
-                            .font(.system(size: 13).monospaced())
+                            .font(.body.monospaced())
                             .foregroundStyle(.secondary)
                             .frame(width: 40, alignment: .leading)
                         Text(track.title)
-                            .font(.system(size: 14))
+                            .font(.body)
                             .lineLimit(2)
                         Spacer()
                         if let te = trackEntityByPos {
@@ -398,7 +398,7 @@ struct CollectionDetailView: View {
                                 recordingMBIDInputError = nil
                             } label: {
                                 Image(systemName: "waveform.badge.magnifyingglass")
-                                    .font(.system(size: 13))
+                                    .font(.body)
                                     .foregroundStyle(.quaternary)
                             }
                             .buttonStyle(.plain)
@@ -411,7 +411,7 @@ struct CollectionDetailView: View {
                                 playback.play(filePath: fp)
                             } label: {
                                 Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                                    .font(.system(size: 16))
+                                    .font(.title3)
                                     .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
                                     .contentTransition(.symbolEffect(.replace))
                             }
@@ -444,7 +444,7 @@ struct CollectionDetailView: View {
                                 dismiss()
                             } label: {
                                 Image(systemName: "plus.circle.fill")
-                                    .font(.system(size: 16))
+                                    .font(.title3)
                                     .foregroundStyle(Color(red: 0.15, green: 0.55, blue: 0.30))
                             }
                             .buttonStyle(.plain)
@@ -453,7 +453,7 @@ struct CollectionDetailView: View {
                             .padding(.trailing, 6)
                         }
                         Text(track.duration.isEmpty ? "—" : track.duration)
-                            .font(.system(size: 13).monospaced())
+                            .font(.body.monospaced())
                             .foregroundStyle(.secondary)
                             .frame(width: 50, alignment: .trailing)
                     }
@@ -521,7 +521,7 @@ struct CollectionDetailView: View {
         return VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Credits")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.title3.weight(.semibold))
                 Divider()
             }
             .padding(.horizontal, 20)
@@ -531,11 +531,11 @@ struct CollectionDetailView: View {
             ForEach(grouped, id: \.role) { entry in
                 HStack(alignment: .top, spacing: 0) {
                     Text(entry.role)
-                        .font(.system(size: 13))
+                        .font(.body)
                         .foregroundStyle(.secondary)
                         .frame(width: 120, alignment: .leading)
                     Text(entry.names)
-                        .font(.system(size: 13))
+                        .font(.body)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer()
                 }
@@ -550,10 +550,10 @@ struct CollectionDetailView: View {
     private func notesSection(notes: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Notes")
-                .font(.system(size: 16, weight: .semibold))
+                .font(.title3.weight(.semibold))
             Divider()
             Text(notes)
-                .font(.system(size: 13))
+                .font(.body)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -567,7 +567,7 @@ struct CollectionDetailView: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Identifiers")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.title3.weight(.semibold))
                 Divider()
             }
             .padding(.horizontal, 20)
@@ -577,11 +577,11 @@ struct CollectionDetailView: View {
             ForEach(identifiers, id: \.self) { identifier in
                 HStack(alignment: .top, spacing: 0) {
                     Text(identifier.type)
-                        .font(.system(size: 13))
+                        .font(.body)
                         .foregroundStyle(.secondary)
                         .frame(width: 120, alignment: .leading)
                     Text(identifier.value)
-                        .font(.system(size: 13))
+                        .font(.body)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer()
                 }
@@ -809,7 +809,7 @@ struct CollectionDetailView: View {
     private var mbidSectionHeader: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("MusicBrainz")
-                .font(.system(size: 16, weight: .semibold))
+                .font(.title3.weight(.semibold))
             Divider()
         }
         .padding(.horizontal, 20)
@@ -904,7 +904,7 @@ struct CollectionDetailView: View {
            let linkedPath = trackEntity.primaryLocalFilePath {
             HStack(spacing: 6) {
                 Image(systemName: "link")
-                    .font(.system(size: 10))
+                    .font(.caption)
                     .foregroundStyle(.secondary)
                 Text(URL(fileURLWithPath: linkedPath).lastPathComponent)
                     .font(.system(.caption2, design: .monospaced))
@@ -917,7 +917,7 @@ struct CollectionDetailView: View {
                         .controlSize(.mini)
                         .scaleEffect(0.7)
                     Text("Analyzing…")
-                        .font(.system(size: 10))
+                        .font(.callout)
                         .foregroundStyle(.secondary)
                 } else {
                     Button("Change") {
@@ -1053,7 +1053,7 @@ struct CollectionDetailView: View {
             HStack(spacing: 8) {
                 Spacer(minLength: 0)
                 Text("ES")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.subheadline.weight(.bold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
@@ -1061,11 +1061,11 @@ struct CollectionDetailView: View {
                     .help("BPM & key analyzed from your local audio file")
                     .accessibilityLabel("BPM & key analyzed from your local audio file")
                 Text("\(Int(bpm)) BPM")
-                    .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                    .font(.callout.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.primary)
                 if let code = trackEntity.effectiveCamelot {
                     Text(code)
-                        .font(.system(size: 11, weight: .bold).monospacedDigit())
+                        .font(.subheadline.weight(.bold).monospacedDigit())
                         .foregroundStyle(CamelotColor.text(for: code))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -1122,7 +1122,7 @@ struct CollectionDetailView: View {
                 // Source pill — styled like the format pill
                 if source == .local {
                     Text("ES")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.subheadline.weight(.bold))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
@@ -1131,7 +1131,7 @@ struct CollectionDetailView: View {
                         .accessibilityLabel("BPM & key analyzed from your local audio file")
                 } else if source == .ab {
                     Text("AB")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.subheadline.weight(.bold))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
@@ -1143,14 +1143,14 @@ struct CollectionDetailView: View {
                 // BPM — right side, prominent
                 if let bpm {
                     Text("\(Int(bpm)) BPM")
-                        .font(.system(size: 12, weight: .semibold).monospacedDigit())
+                        .font(.callout.weight(.semibold).monospacedDigit())
                         .foregroundStyle(.primary)
                 }
 
                 // Camelot pill — right side
                 if let code = camelot {
                     Text(code)
-                        .font(.system(size: 11, weight: .bold).monospacedDigit())
+                        .font(.subheadline.weight(.bold).monospacedDigit())
                         .foregroundStyle(CamelotColor.text(for: code))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -1162,14 +1162,14 @@ struct CollectionDetailView: View {
                    let filePath = matchedTrack?.primaryLocalFilePath {
                     let ext = URL(fileURLWithPath: filePath).pathExtension.uppercased()
                     Text(ext)
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.subheadline.weight(.bold))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
                         .background(Capsule().fill(Color(red: 0.25, green: 0.50, blue: 0.90)))
                 } else if matchedTrack?.fileMatchState == "review" {
                     Text("?")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.subheadline.weight(.bold))
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)

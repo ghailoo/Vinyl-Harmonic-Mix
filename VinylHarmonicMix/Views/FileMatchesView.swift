@@ -129,7 +129,7 @@ struct FileMatchesView: View {
     private var emptyState: some View {
         VStack(spacing: 12) {
             Image(systemName: "waveform.and.magnifyingglass")
-                .font(.system(size: 48))
+                .font(.iconHero)
                 .foregroundStyle(.secondary)
             Text("No matches yet.")
                 .foregroundStyle(.secondary)
@@ -198,11 +198,11 @@ private func compareLine(icon: String, original: String) -> some View {
             (Text(original[..<range.lowerBound])
              + Text(original[range]).bold().foregroundStyle(.orange)
              + Text(original[range.upperBound...]))
-                .font(.system(size: 13))
+                .font(.body)
                 .lineLimit(2)
         } else {
             Text(original)
-                .font(.system(size: 13))
+                .font(.body)
                 .lineLimit(2)
         }
     }
@@ -440,7 +440,7 @@ private struct ReviewMasterDetailView: View {
             VStack(spacing: 10) {
                 Spacer()
                 Image(systemName: "checklist")
-                    .font(.system(size: 34))
+                    .font(.iconLarge)
                     .foregroundStyle(.secondary)
                 Text("Select a track to review")
                     .font(.title3.weight(.semibold))
@@ -484,7 +484,7 @@ private struct ReviewMasterDetailView: View {
                 } else {
                     Divider()
                     Text("Candidates")
-                        .font(.system(size: 12, weight: .semibold)).foregroundStyle(.secondary)
+                        .font(.callout.weight(.semibold)).foregroundStyle(.secondary)
                     ForEach(Array(row.candidates.enumerated()), id: \.offset) { index, candidate in
                         candidateRow(row: row, index: index, candidate: candidate)
                     }
@@ -709,7 +709,7 @@ private struct NoMatchMasterDetailView: View {
         if let row = currentRow {
             VStack(alignment: .leading, spacing: 12) {
                 Text("\(row.track.artistCredit) – \(row.track.title)")
-                    .font(.system(size: 15, weight: .medium))
+                    .font(.title3.weight(.medium))
                 Spacer(minLength: 0)
                 HStack(spacing: 8) {
                     Button("Browse…") { browseFile(row) }.controlSize(.small)
@@ -808,7 +808,7 @@ private struct ConfidentMasterDetailView: View {
         if let row = currentRow {
             VStack(alignment: .leading, spacing: 12) {
                 Text("\(row.track.artistCredit) – \(row.track.title)")
-                    .font(.system(size: 15, weight: .medium))
+                    .font(.title3.weight(.medium))
                 Text(row.fileName)
                     .font(.caption).foregroundStyle(.secondary).lineLimit(2).truncationMode(.middle)
                 Spacer(minLength: 0)
@@ -902,7 +902,7 @@ private struct FileSearchSheet: View {
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(file.fileName)
-                                .font(.system(size: 13))
+                                .font(.body)
                                 .foregroundStyle(.primary)
                             Text(file.filePath)
                                 .font(.caption)

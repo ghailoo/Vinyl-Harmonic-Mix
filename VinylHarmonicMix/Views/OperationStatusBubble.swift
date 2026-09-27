@@ -65,7 +65,7 @@ struct OperationStatusBubble: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Image(systemName: status.isPaused ? "pause.circle.fill" : status.icon)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.callout.weight(.medium))
                     .foregroundStyle(tint)
                     // Gentle continuous rotation while progressing; frozen (isActive:
                     // false) the moment it stalls or reduce-motion is on, so a frozen
@@ -73,7 +73,7 @@ struct OperationStatusBubble: View {
                     .symbolEffect(.rotate, options: .repeating, isActive: isProgressing && !reduceMotion)
 
                 Text(isStalled ? "No progress for \(Int(elapsed))s" : label)
-                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .font(.callout.weight(.medium).monospacedDigit())
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .fixedSize()
@@ -81,18 +81,18 @@ struct OperationStatusBubble: View {
 
                 if let pauseAction = status.pauseAction, !status.isPaused, !status.isPausing {
                     Button(action: pauseAction) {
-                        Image(systemName: "pause.fill").font(.system(size: 10, weight: .bold))
+                        Image(systemName: "pause.fill").font(.caption.weight(.bold))
                     }
                     .buttonStyle(.plain)
                     .help("Pause")
                     .accessibilityLabel("Pause")
                 } else if status.isPausing {
                     Image(systemName: "ellipsis")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.caption.weight(.bold))
                         .opacity(0.5)
                 } else if status.isPaused, let resumeAction = status.resumeAction {
                     Button(action: resumeAction) {
-                        Image(systemName: "play.fill").font(.system(size: 10, weight: .bold))
+                        Image(systemName: "play.fill").font(.caption.weight(.bold))
                     }
                     .buttonStyle(.plain)
                     .help("Resume")

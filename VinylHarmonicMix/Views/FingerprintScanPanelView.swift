@@ -8,7 +8,7 @@ struct FingerprintScanPanelView: View {
             HStack(spacing: 8) {
                 phaseIcon
                 Text(phaseLabel)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.body.weight(.semibold))
                 Spacer()
             }
 
@@ -86,7 +86,7 @@ struct FingerprintScanPanelView: View {
     private func countBadge(label: String, count: Int, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(count.formatted())
-                .font(.system(size: 16, weight: .bold).monospacedDigit())
+                .font(.title3.weight(.bold).monospacedDigit())
                 .foregroundStyle(count > 0 ? color : Color.secondary.opacity(0.5))
             Text(label).font(.caption2).foregroundStyle(.secondary)
         }

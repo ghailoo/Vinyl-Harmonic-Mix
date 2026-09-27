@@ -14,10 +14,10 @@ struct SyncProgressView: View {
                 } else {
                     Image(systemName: orchestrator.lastResult.hasPrefix("Sync failed") ? "xmark.circle.fill" : "checkmark.circle.fill")
                         .foregroundStyle(orchestrator.lastResult.hasPrefix("Sync failed") ? Color.red : Color.green)
-                        .font(.system(size: 16))
+                        .font(.title3)
                 }
                 Text(orchestrator.isSyncing ? orchestrator.syncStatus : orchestrator.lastResult)
-                    .font(.system(size: 13))
+                    .font(.body)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 

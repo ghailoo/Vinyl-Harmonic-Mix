@@ -43,9 +43,9 @@ struct MBIDScanBanner: View {
     private var statusText: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(titleText)
-                .font(.system(size: 13, weight: .medium))
+                .font(.body.weight(.medium))
             Text(subtitleText)
-                .font(.system(size: 11))
+                .font(.callout)
                 .foregroundStyle(.secondary)
         }
     }

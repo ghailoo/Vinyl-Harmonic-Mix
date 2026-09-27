@@ -13,31 +13,31 @@ struct CueDetectionPanel: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 8) {
                     Text("Cue detection")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.body.weight(.semibold))
                     if coordinator.totalCount > 0 {
                         Text("\(coordinator.processedCount) / \(coordinator.totalCount)")
-                            .font(.system(size: 12).monospacedDigit())
+                            .font(.callout.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
                     if coordinator.detectedCount > 0 {
                         Text("✓ \(coordinator.detectedCount)")
-                            .font(.system(size: 11, weight: .medium))
+                            .font(.callout.weight(.medium))
                             .foregroundStyle(.green)
                     }
                     if coordinator.skippedCount > 0 {
                         Text("— \(coordinator.skippedCount) no intro")
-                            .font(.system(size: 11))
+                            .font(.callout)
                             .foregroundStyle(.secondary)
                     }
                     if coordinator.failedCount > 0 {
                         Text("✗ \(coordinator.failedCount)")
-                            .font(.system(size: 11, weight: .medium))
+                            .font(.callout.weight(.medium))
                             .foregroundStyle(.red)
                     }
                 }
                 if !coordinator.currentFileLabel.isEmpty {
                     Text(coordinator.currentFileLabel)
-                        .font(.system(size: 11))
+                        .font(.callout)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -62,7 +62,7 @@ struct CueDetectionPanel: View {
                         .tint(.red)
                 case .completed:
                     Text("Done")
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.callout.weight(.medium))
                         .foregroundStyle(.secondary)
                     Button("Dismiss") { coordinator.dismissPanel() }
                         .buttonStyle(.bordered)

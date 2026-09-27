@@ -21,7 +21,7 @@ struct NowPlayingBar: View {
                         playback.previousTrack()
                     } label: {
                         Image(systemName: "backward.end.fill")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.subheadline.weight(.semibold))
                     }
                     .buttonStyle(.plain)
                     .disabled(playback.playingSetIndex == 0)
@@ -33,7 +33,7 @@ struct NowPlayingBar: View {
                     playback.skipBackward10()
                 } label: {
                     Image(systemName: "gobackward.10")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.subheadline.weight(.semibold))
                 }
                 .buttonStyle(.plain)
                 .help("Skip back 10 seconds")
@@ -43,7 +43,7 @@ struct NowPlayingBar: View {
                     playback.play(filePath: path)
                 } label: {
                     Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.subheadline.weight(.semibold))
                         .frame(width: 12)
                         .contentTransition(.symbolEffect(.replace))
                 }
@@ -55,7 +55,7 @@ struct NowPlayingBar: View {
                     playback.stop()
                 } label: {
                     Image(systemName: "stop.fill")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -66,7 +66,7 @@ struct NowPlayingBar: View {
                     playback.skipForward10()
                 } label: {
                     Image(systemName: "goforward.10")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.subheadline.weight(.semibold))
                 }
                 .buttonStyle(.plain)
                 .help("Skip forward 10 seconds")
@@ -77,7 +77,7 @@ struct NowPlayingBar: View {
                         playback.nextTrack()
                     } label: {
                         Image(systemName: "forward.end.fill")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.subheadline.weight(.semibold))
                     }
                     .buttonStyle(.plain)
                     .disabled(
@@ -93,21 +93,21 @@ struct NowPlayingBar: View {
 
                 VStack(alignment: .leading, spacing: 0) {
                     Text(URL(fileURLWithPath: path).lastPathComponent)
-                        .font(.system(size: 11))
+                        .font(.callout)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .frame(maxWidth: 240, alignment: .leading)
                     if playback.isSmartExtensionActive {
                         HStack(spacing: 4) {
                             Image(systemName: "waveform.path")
-                                .font(.system(size: 9))
+                                .font(.caption)
                             Text("⇝ Library")
-                                .font(.system(size: 10))
+                                .font(.callout)
                         }
                         .foregroundStyle(.secondary)
                     } else if playback.duration > 0 {
                         Text("\(formatTime(playback.currentTime)) / \(formatTime(playback.duration))")
-                            .font(.system(size: 10).monospacedDigit())
+                            .font(.callout.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -117,7 +117,7 @@ struct NowPlayingBar: View {
 
             HStack(spacing: 4) {
                 Image(systemName: "speaker.fill")
-                    .font(.system(size: 10))
+                    .font(.caption)
                     .foregroundStyle(.tertiary)
                 Slider(
                     value: Binding(
@@ -129,7 +129,7 @@ struct NowPlayingBar: View {
                 .frame(width: 80)
                 .controlSize(.mini)
                 Image(systemName: "speaker.wave.3.fill")
-                    .font(.system(size: 10))
+                    .font(.caption)
                     .foregroundStyle(.tertiary)
             }
         }

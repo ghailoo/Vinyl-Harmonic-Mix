@@ -12,7 +12,7 @@ struct DriveUnavailableBanner: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Music library unavailable")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.body.weight(.semibold))
                     Text(bannerSubtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)

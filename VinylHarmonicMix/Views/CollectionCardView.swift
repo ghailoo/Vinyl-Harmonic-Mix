@@ -22,14 +22,14 @@ struct CollectionCardView: View {
         VStack(alignment: .leading, spacing: 6) {
             coverImage
             Text(item.basicInformation.title)
-                .font(.system(size: 14, weight: .semibold))
+                .font(.body.weight(.semibold))
                 .lineLimit(2, reservesSpace: true)
             Text(item.basicInformation.artists.map(\.name).joined(separator: " & "))
-                .font(.system(size: 12))
+                .font(.callout)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             Text(String(item.basicInformation.year))
-                .font(.system(size: 12))
+                .font(.callout)
                 .foregroundStyle(.secondary)
         }
         .contentShape(Rectangle())
@@ -59,7 +59,7 @@ struct CollectionCardView: View {
                 ZStack {
                     Color.secondary.opacity(0.15)
                     Image(systemName: "music.note")
-                        .font(.system(size: 28))
+                        .font(.largeTitle)
                         .foregroundStyle(.secondary)
                 }
             @unknown default:
@@ -73,17 +73,17 @@ struct CollectionCardView: View {
             HStack(spacing: 4) {
                 if badgeLocalCovered > 0 {
                     Text("ES")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.subheadline.weight(.bold))
                         .foregroundStyle(.white)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 3)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
                         .background(Capsule().fill(Color(red: 0.15, green: 0.55, blue: 0.30)))
                         .help("\(badgeLocalCovered) of \(badgeTotal) tracks analyzed from local audio files")
                         .accessibilityLabel("\(badgeLocalCovered) of \(badgeTotal) tracks analyzed from local audio files")
                 }
                 if badgeCovered > 0 && badgeTotal > 0 {
                     Text("\(badgeCovered)/\(badgeTotal)")
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .font(.system(.subheadline, design: .rounded, weight: .bold))
                         .monospacedDigit()
                         .foregroundStyle(.white)
                         .padding(.horizontal, 6)
@@ -118,9 +118,9 @@ struct CollectionCardView: View {
 
     private var linkPip: some View {
         Image(systemName: "link")
-            .font(.system(size: 9, weight: .semibold))
+            .font(.subheadline.weight(.semibold))
             .foregroundStyle(.white)
-            .padding(4)
+            .padding(3)
             .background(Circle().fill(Color.accentColor.opacity(0.85)))
             .shadow(color: .black.opacity(0.25), radius: 1, y: 0.5)
             .help("Local audio files linked to tracks")
@@ -129,11 +129,11 @@ struct CollectionCardView: View {
 
     private var mbidBadge: some View {
         Text("MBID")
-            .font(.system(size: 9, weight: .bold, design: .rounded))
+            .font(.system(.subheadline, design: .rounded, weight: .bold))
             .tracking(0.3)
             .foregroundStyle(.white)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
             .background(
                 LinearGradient(
                     colors: [

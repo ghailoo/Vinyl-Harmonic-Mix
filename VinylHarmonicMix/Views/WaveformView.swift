@@ -223,9 +223,9 @@ struct WaveformView: View {
             if marker.type == "switch_in" {
                 ctx.draw(
                     Text("\(i + 1)")
-                        .font(.system(size: 8, weight: .bold).monospacedDigit())
+                        .font(.subheadline.weight(.bold).monospacedDigit())
                         .foregroundStyle(color),
-                    at: CGPoint(x: x, y: 14),
+                    at: CGPoint(x: x, y: 20),
                     anchor: .center
                 )
             } else {
@@ -242,9 +242,9 @@ struct WaveformView: View {
                 }
                 ctx.draw(
                     Text("\(i + 1)\(arrowAndDelta)")
-                        .font(.system(size: 8, weight: .bold).monospacedDigit())
+                        .font(.subheadline.weight(.bold).monospacedDigit())
                         .foregroundStyle(color),
-                    at: CGPoint(x: x, y: 5),
+                    at: CGPoint(x: x, y: 7),
                     anchor: .center
                 )
             }

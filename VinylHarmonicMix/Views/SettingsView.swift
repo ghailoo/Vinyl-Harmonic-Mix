@@ -19,11 +19,11 @@ private struct LibraryScanProgressPanel: View {
                         .controlSize(.small)
                 }
                 Text(progress.isComplete ? "Scan complete" : "Scanning local library…")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.body.weight(.semibold))
             }
 
             Text("\(progress.audioFilesFound.formatted()) audio files found")
-                .font(.system(size: 12).monospacedDigit())
+                .font(.callout.monospacedDigit())
 
             if !progress.isComplete {
                 Text("Currently in: \(progress.currentFolder)")
