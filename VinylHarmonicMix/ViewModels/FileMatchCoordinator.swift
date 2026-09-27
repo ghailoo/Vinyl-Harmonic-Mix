@@ -724,7 +724,7 @@ final class FileMatchCoordinator {
     /// Stamps libraryFolderID on rows that lack a current one (pre-multifolder rows, rows of a
     /// removed-then-re-added folder) by path. Rows under no current folder keep what they have.
     /// Path-only — no disk I/O. Folders never overlap (addFolder rejects it), so at most one matches.
-    private func assignLibraryFolderIDs() {
+    func assignLibraryFolderIDs() {   // internal for tests
         let folders = driveMonitor.folders.map(\.folder)
         let currentIDs = Set(folders.map(\.id.uuidString))
         let all = (try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
