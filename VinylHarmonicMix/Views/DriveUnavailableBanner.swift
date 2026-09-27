@@ -5,16 +5,26 @@ struct DriveUnavailableBanner: View {
     @Environment(DriveMonitor.self) private var driveMonitor
 
     var body: some View {
-        if !driveMonitor.isAvailable {
+        let missing = driveMonitor.missingFolders
+        if !missing.isEmpty {
             HStack(spacing: 12) {
                 Image(systemName: "externaldrive.badge.xmark")
                     .foregroundStyle(.orange)
                     .font(.title3)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Music library unavailable")
+                    Text(driveMonitor.isAvailable
+                         ? "\(missing.count) of \(driveMonitor.folders.count) library folders unreachable"
+                         : "Music library unavailable")
                         .font(.body.weight(.semibold))
-                    Text(bannerSubtitle)
+                    Text(missing.map(\.displayPath).joined(separator: " · "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                    Text(driveMonitor.isAvailable
+                         ? "Link Files, Detect BPM/Key and Find Cues run on the reachable folders and skip these. Their files and matches are kept."
+                         : "Link Files, Detect BPM/Key and Find Cues are disabled. Files and matches are kept.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -34,12 +44,5 @@ struct DriveUnavailableBanner: View {
             .overlay(alignment: .bottom) { Divider() }
             .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
         }
-    }
-
-    private var bannerSubtitle: String {
-        let pathPart = driveMonitor.displayPath.isEmpty
-            ? "Drive not mounted or NAS unreachable."
-            : "Path: \(driveMonitor.displayPath)"
-        return "\(pathPart) Match Audio and Cue Detection are disabled."
     }
 }

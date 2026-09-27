@@ -496,7 +496,9 @@ final class FileMatchCoordinator {
     ///          staleConfidentRecords for the post-Phase-2 outcome report.
     /// SAFETY: never touches files that DO exist; never clears a confident track whose file is present.
     private func runPhase0() async {
-        guard driveMonitor.verifyAccessible() else {
+        // Interim (single-folder shim): only the first folder is indexed, so only it may be swept.
+        guard let first = LocalLibraryService.folders().first,
+              driveMonitor.verifyAccessible().contains(first.id) else {
             print("[PHASE 0] ABORTED — drive not verified accessible. Refusing to sweep orphans.")
             print("[PHASE 0] If this is incorrect, ensure the music library is mounted and reachable, then re-run.")
             return

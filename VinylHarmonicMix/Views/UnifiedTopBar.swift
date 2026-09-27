@@ -420,8 +420,8 @@ struct UnifiedTopBar: View {
         .buttonStyle(LibraryBubbleButtonStyle(tint: tint, isActive: isActive))
         .disabled(disabled)
         .opacity(disabled ? 0.5 : 1.0)
-        .help(disabled ? "\(title) (unavailable — drive not connected)" : tooltip)
-        .accessibilityLabel(disabled ? "\(title) (unavailable — drive not connected)" : tooltip)
+        .help(disabled ? "\(title) (unavailable — no library folder reachable)" : tooltip)
+        .accessibilityLabel(disabled ? "\(title) (unavailable — no library folder reachable)" : tooltip)
     }
 }
 
