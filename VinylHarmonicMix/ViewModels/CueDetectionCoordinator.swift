@@ -310,58 +310,18 @@ final class CueDetectionCoordinator {
         let python3 = LocalAnalysisCoordinator.python3Path
 
         return await Task.detached(priority: .utility) { () -> ScriptOutcome in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: python3)
-            process.arguments = [scriptPath, filePath]
-
-            let stdoutPipe = Pipe()
-            let stderrPipe = Pipe()
-            process.standardOutput = stdoutPipe
-            process.standardError  = stderrPipe
-
-            var stdoutData = Data()
-            var stderrData = Data()
-            let stdoutLock = NSLock()
-            let stderrLock = NSLock()
-
-            stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
-                let chunk = handle.availableData
-                if !chunk.isEmpty { stdoutLock.lock(); stdoutData.append(chunk); stdoutLock.unlock() }
-            }
-            stderrPipe.fileHandleForReading.readabilityHandler = { handle in
-                let chunk = handle.availableData
-                if !chunk.isEmpty { stderrLock.lock(); stderrData.append(chunk); stderrLock.unlock() }
-            }
-
-            do { try process.run() } catch {
+            let output: Subprocess.Output
+            do {
+                output = try await Subprocess.run(python3, arguments: [scriptPath, filePath], timeout: .seconds(120))
+            } catch {
                 return .failure("Process error: \(error.localizedDescription)")
             }
 
-            let timeoutSeconds: TimeInterval = 120
-            let startTime = Date()
-            while process.isRunning {
-                if Date().timeIntervalSince(startTime) > timeoutSeconds {
-                    process.terminate()
-                    Thread.sleep(forTimeInterval: 1)
-                    if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-                    break
-                }
-                Thread.sleep(forTimeInterval: 0.1)
-            }
-            process.waitUntilExit()
-
-            stdoutPipe.fileHandleForReading.readabilityHandler = nil
-            stderrPipe.fileHandleForReading.readabilityHandler = nil
-            let finalOut = stdoutPipe.fileHandleForReading.availableData
-            if !finalOut.isEmpty { stdoutLock.lock(); stdoutData.append(finalOut); stdoutLock.unlock() }
-            let finalErr = stderrPipe.fileHandleForReading.availableData
-            if !finalErr.isEmpty { stderrLock.lock(); stderrData.append(finalErr); stderrLock.unlock() }
-
-            guard let raw = String(data: stdoutData, encoding: .utf8)?
+            guard let raw = String(data: output.stdout, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines),
                   !raw.isEmpty else {
-                let stderrSnippet = String(data: stderrData.prefix(1024), encoding: .utf8) ?? ""
-                return .failure("Empty output (exit \(process.terminationStatus)) stderr=\(stderrSnippet)")
+                let stderrSnippet = String(data: output.stderr.prefix(1024), encoding: .utf8) ?? ""
+                return .failure("Empty output (exit \(output.status)) stderr=\(stderrSnippet)")
             }
 
             guard let jsonData = raw.data(using: .utf8),
