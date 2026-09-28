@@ -310,6 +310,44 @@ final class CollectionViewModel {
         return true
     }
 
+    // MARK: - Stats page cache
+    //
+    // CollectionStatsView is rebuilt on every sidebar switch, so it reads this snapshot
+    // instead of five unbounded @Query arrays. The snapshot is computed on a background
+    // ModelContext; the two expensive parts (decoding every cached Discogs JSON blob, and
+    // walking every release's basic info) are reused from the previous snapshot while
+    // their source row counts are unchanged — the same keys the view's .task(id:) used.
+    //
+    // `full` (on appear) recomputes everything, matching the old per-visit .task runs;
+    // save-triggered refreshes reuse the expensive parts, matching the old .task(id:) keys.
+    // The previous snapshot stays on screen meanwhile, so a revisit renders immediately.
+    private(set) var stats: CollectionStats?
+    private var statsRefreshRunning = false
+    private var statsRefreshPending: Bool?   // nil = none queued, else queued `full`
+
+    func refreshStats(full: Bool) {
+        guard !statsRefreshRunning else {
+            statsRefreshPending = (statsRefreshPending ?? false) || full
+            return
+        }
+        statsRefreshRunning = true
+        let container = context.container
+        let reuse = full ? nil : stats
+        Task {
+            PerfLog.begin("CollectionViewModel.refreshStats(full: \(full)) off-main")
+            let fresh = await Task.detached(priority: .userInitiated) {
+                CollectionStats.compute(container: container, reuse: reuse)
+            }.value
+            PerfLog.end("CollectionViewModel.refreshStats(full: \(full)) off-main")
+            stats = fresh
+            statsRefreshRunning = false
+            if let queuedFull = statsRefreshPending {
+                statsRefreshPending = nil
+                refreshStats(full: queuedFull)
+            }
+        }
+    }
+
     private func makeItem(from entity: CollectionItemEntity) -> CollectionItem? {
         guard let basic = entity.basicInformation else { return nil }
         let info = BasicInformation(
@@ -331,5 +369,178 @@ final class CollectionViewModel {
             dateAdded: entity.dateAdded,
             basicInformation: info
         )
+    }
+}
+
+// MARK: - Stats snapshot
+
+/// Every number CollectionStatsView displays, computed on a background ModelContext.
+/// Field comments name the expression the view used to evaluate over its @Query arrays.
+nonisolated struct CollectionStats: Sendable {
+    typealias Breakdown = [(label: String, count: Int)]
+
+    // CollectionItemEntity
+    var releaseCount = 0                 // entities.count
+    var formatCounts: Breakdown = []
+    var genreCounts: Breakdown = []
+    var decadeCounts: Breakdown = []
+    var labelCounts: Breakdown = []
+    var artistCounts: Breakdown = []
+    var validYears: [Int] = []
+    var recordingsFetched = 0
+    var recordingsSkipped = 0
+    var recordingsFailed = 0
+
+    // ReleaseDetailEntity
+    var detailRowCount = 0               // detailEntities.count
+    var decodedDetailCount = 0           // cachedDetails.count
+    var decodedTrackCount = 0            // cachedDetails' summed tracklist counts
+    var decodedDurationSeconds = 0       // cachedDetails' summed track durations
+
+    // TrackEntity
+    var trackCount = 0                   // trackEntities.count
+    var distinctRecordingMBIDCount = 0   // Set(trackEntities.map(\.recordingMBID)) minus ""
+
+    // RecordingFeaturesEntity (AcousticBrainz)
+    var featureCount = 0
+    var featuresWithBPM = 0
+    var featuresWithKey = 0
+    var featuresWithBoth = 0
+    var featureBPMsSorted: [Double] = []
+    var featureCamelotCounts: [String: Int] = [:]
+
+    // LocalAudioFeaturesEntity
+    var settledLocalAnalyzedCount = 0    // local features whose track is still confident
+    var localBPMsSorted: [Double] = []
+    var localCamelotCounts: [String: Int] = [:]
+
+    // LocalFileEntity
+    var totalLocalFileCount = 0
+    var localFilesWithCuesCount = 0
+    var analyzedLocalFileCount = 0
+
+    /// `reuse`: a previous snapshot whose breakdowns / decoded details are kept while
+    /// their source row counts are unchanged. Pass nil to recompute everything.
+    static func compute(container: ModelContainer, reuse: CollectionStats?) -> CollectionStats {
+        let ctx = ModelContext(container)
+        var s = CollectionStats()
+
+        // Releases
+        s.releaseCount = (try? ctx.fetchCount(FetchDescriptor<CollectionItemEntity>())) ?? 0
+        if let reuse, reuse.releaseCount == s.releaseCount {
+            s.formatCounts = reuse.formatCounts
+            s.genreCounts  = reuse.genreCounts
+            s.decadeCounts = reuse.decadeCounts
+            s.labelCounts  = reuse.labelCounts
+            s.artistCounts = reuse.artistCounts
+            s.validYears   = reuse.validYears
+        } else {
+            s.computeBreakdowns(ctx)
+        }
+        s.recordingsFetched = count(ctx, #Predicate<CollectionItemEntity> { $0.recordingsScanState == "fetched" })
+        s.recordingsSkipped = count(ctx, #Predicate<CollectionItemEntity> { $0.recordingsScanState == "skipped" })
+        s.recordingsFailed  = count(ctx, #Predicate<CollectionItemEntity> { $0.recordingsScanState == "failed" })
+
+        // Cached Discogs details — the JSON blobs are only loaded when the row count moved.
+        s.detailRowCount = (try? ctx.fetchCount(FetchDescriptor<ReleaseDetailEntity>())) ?? 0
+        if let reuse, reuse.detailRowCount == s.detailRowCount {
+            s.decodedDetailCount     = reuse.decodedDetailCount
+            s.decodedTrackCount      = reuse.decodedTrackCount
+            s.decodedDurationSeconds = reuse.decodedDurationSeconds
+        } else {
+            var fd = FetchDescriptor<ReleaseDetailEntity>()
+            fd.propertiesToFetch = [\.jsonData]
+            let decoder = JSONDecoder()
+            for entity in (try? ctx.fetch(fd)) ?? [] {
+                guard let detail = try? decoder.decode(ReleaseDetail.self, from: entity.jsonData) else { continue }
+                s.decodedDetailCount += 1
+                s.decodedTrackCount += detail.tracklist.count
+                for track in detail.tracklist { s.decodedDurationSeconds += parseDuration(track.duration) }
+            }
+        }
+
+        // Tracks
+        s.trackCount = (try? ctx.fetchCount(FetchDescriptor<TrackEntity>())) ?? 0
+        var trackFD = FetchDescriptor<TrackEntity>()
+        trackFD.propertiesToFetch = [\.recordingMBID]
+        s.distinctRecordingMBIDCount = Set(((try? ctx.fetch(trackFD)) ?? []).map(\.recordingMBID).filter { !$0.isEmpty }).count
+
+        // AcousticBrainz features
+        var featureFD = FetchDescriptor<RecordingFeaturesEntity>()
+        featureFD.propertiesToFetch = [\.bpm, \.keyNote, \.camelotCode]
+        let features = (try? ctx.fetch(featureFD)) ?? []
+        s.featureCount     = features.count
+        s.featuresWithBPM  = features.filter { $0.bpm != nil }.count
+        s.featuresWithKey  = features.filter { $0.keyNote != nil }.count
+        s.featuresWithBoth = features.filter { $0.bpm != nil && $0.keyNote != nil }.count
+        s.featureBPMsSorted = features.compactMap(\.bpm).sorted()
+        s.featureCamelotCounts = Dictionary(features.compactMap(\.camelotCode).map { ($0, 1) }, uniquingKeysWith: +)
+
+        // Local analysis. track ↔ localAudioFeatures is a one-to-one inverse pair, so
+        // "features whose track is confident" == "confident tracks that have features".
+        s.settledLocalAnalyzedCount = count(ctx, #Predicate<TrackEntity> {
+            $0.fileMatchState == "confident" && $0.localAudioFeatures != nil
+        })
+        var localFD = FetchDescriptor<LocalAudioFeaturesEntity>()
+        localFD.propertiesToFetch = [\.bpm, \.camelot]
+        let localFeatures = (try? ctx.fetch(localFD)) ?? []
+        s.localBPMsSorted = localFeatures.map(\.bpm).filter { $0 > 0 }.sorted()
+        s.localCamelotCounts = Dictionary(localFeatures.map(\.camelot).filter { !$0.isEmpty }.map { ($0, 1) }, uniquingKeysWith: +)
+
+        // Local files
+        s.totalLocalFileCount     = (try? ctx.fetchCount(FetchDescriptor<LocalFileEntity>())) ?? 0
+        s.localFilesWithCuesCount = count(ctx, #Predicate<LocalFileEntity> { $0.cuePoints.count > 0 })
+        s.analyzedLocalFileCount  = count(ctx, #Predicate<LocalFileEntity> { $0.bpm > 0 })
+        return s
+    }
+
+    /// Single pass over every release's basic info (was CollectionStatsView.recomputeBreakdowns).
+    private mutating func computeBreakdowns(_ ctx: ModelContext) {
+        let excludedArtists: Set<String> = ["various", "various artists", "unknown artist"]
+        var formats: [String: Int] = [:]
+        var genres: [String: Int] = [:]
+        var decades: [Int: Int] = [:]
+        var labels: [String: Int] = [:]
+        var artists: [String: Int] = [:]
+        var years: [Int] = []
+
+        var fd = FetchDescriptor<CollectionItemEntity>()
+        fd.propertiesToFetch = [\.instanceId]
+        fd.relationshipKeyPathsForPrefetching = [\.basicInformation]
+        for entity in (try? ctx.fetch(fd)) ?? [] {
+            let info = entity.basicInformation
+            formats[info?.formats.first?.name ?? "Unknown", default: 0] += 1
+            for genre in info?.genres ?? [] {
+                genres[genre, default: 0] += 1
+            }
+            if let year = info?.year, year > 0 {
+                years.append(year)
+                decades[(year / 10) * 10, default: 0] += 1
+            }
+            if let name = info?.labels.first?.name {
+                labels[name, default: 0] += 1
+            }
+            if let name = info?.artists.first?.name, !excludedArtists.contains(name.lowercased()) {
+                artists[name, default: 0] += 1
+            }
+        }
+
+        formatCounts = formats.sorted { $0.value > $1.value }.map { (label: $0.key, count: $0.value) }
+        genreCounts  = genres.sorted { $0.value > $1.value }.map { (label: $0.key, count: $0.value) }
+        decadeCounts = decades.sorted { $0.key < $1.key }.map { (label: "\($0.key)s", count: $0.value) }
+        labelCounts  = labels.sorted { $0.value > $1.value }.map { (label: $0.key, count: $0.value) }
+        artistCounts = artists.sorted { $0.value > $1.value }.map { (label: $0.key, count: $0.value) }
+        validYears   = years
+    }
+
+    private static func count<T: PersistentModel>(_ ctx: ModelContext, _ predicate: Predicate<T>) -> Int {
+        (try? ctx.fetchCount(FetchDescriptor<T>(predicate: predicate))) ?? 0
+    }
+
+    static func parseDuration(_ s: String) -> Int {
+        guard !s.isEmpty else { return 0 }
+        let parts = s.split(separator: ":").compactMap { Int($0) }
+        guard parts.count == 2 else { return 0 }
+        return parts[0] * 60 + parts[1]
     }
 }

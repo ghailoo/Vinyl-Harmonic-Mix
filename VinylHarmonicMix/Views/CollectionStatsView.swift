@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import Combine
 
 struct CollectionStatsView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -9,26 +10,9 @@ struct CollectionStatsView: View {
     @Environment(FileMatchCoordinator.self) private var fileMatchCoordinator
     @Environment(LocalAnalysisCoordinator.self) private var localAnalysisCoordinator
     @Environment(CueDetectionCoordinator.self) private var cueCoordinator
-    @Environment(\.modelContext) private var modelContext
-    @Query private var entities: [CollectionItemEntity]
-    @Query private var detailEntities: [ReleaseDetailEntity]
-    @Query private var trackEntities: [TrackEntity]
-    @Query private var featureEntities: [RecordingFeaturesEntity]
-    @Query private var localFeatureEntities: [LocalAudioFeaturesEntity]
+    @Environment(CollectionViewModel.self) private var viewModel
 
-    @State private var cachedDetails: [ReleaseDetail] = []
     @State private var showRefreshAlert = false
-
-    // MARK: - Cached breakdowns (A3)
-    //
-    // Recomputed once via recomputeBreakdowns() when `entities` actually changes,
-    // instead of on every body re-render.
-    @State private var cachedFormatCounts: [(label: String, count: Int)] = []
-    @State private var cachedGenreCounts: [(label: String, count: Int)] = []
-    @State private var cachedDecadeCounts: [(label: String, count: Int)] = []
-    @State private var cachedLabelCounts: [(label: String, count: Int)] = []
-    @State private var cachedArtistCounts: [(label: String, count: Int)] = []
-    @State private var cachedValidYears: [Int] = []
 
     // MARK: - "Show all" disclosure state (B4)
     @State private var showAllFormats = false
@@ -37,37 +21,18 @@ struct CollectionStatsView: View {
     @State private var showAllLabels = false
     @State private var showAllArtists = false
 
-    // MARK: - LocalFileEntity counts (A1)
-    //
-    // LocalFileEntity can have tens of thousands of rows. Every use of it here is a
-    // count (or predicate-filtered count), so fetchCount is used instead of a live
-    // @Query that would materialize every row (including large waveform blobs).
-    private var totalLocalFileCount: Int {
-        (try? modelContext.fetchCount(FetchDescriptor<LocalFileEntity>())) ?? 0
-    }
-
-    private var localFilesWithCuesCount: Int {
-        (try? modelContext.fetchCount(FetchDescriptor<LocalFileEntity>(
-            predicate: #Predicate { $0.cuePoints.count > 0 }
-        ))) ?? 0
-    }
-
-    private var analyzedLocalFileCount: Int {
-        (try? modelContext.fetchCount(FetchDescriptor<LocalFileEntity>(
-            predicate: #Predicate { $0.bpm > 0 }
-        ))) ?? 0
-    }
+    // Every number on this page comes from CollectionViewModel.stats, computed off the main
+    // actor and kept across sidebar switches — no @Query here, so a rebuild fetches nothing.
+    private var stats: CollectionStats { viewModel.stats ?? CollectionStats() }
 
     var body: some View {
         PerfLog.begin("CollectionStatsView.body")
         defer { PerfLog.end("CollectionStatsView.body") }
-        let _ = PerfLog.measure("CollectionStatsView.query.entities") { entities.count }
-        let _ = PerfLog.measure("CollectionStatsView.query.detailEntities") { detailEntities.count }
-        let _ = PerfLog.measure("CollectionStatsView.query.trackEntities") { trackEntities.count }
-        let _ = PerfLog.measure("CollectionStatsView.query.featureEntities") { featureEntities.count }
-        let _ = PerfLog.measure("CollectionStatsView.query.localFeatureEntities") { localFeatureEntities.count }
         return Group {
-            if entities.isEmpty {
+            if viewModel.stats == nil {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if stats.releaseCount == 0 {
                 VStack(spacing: 12) {
                     Image(systemName: "tray")
                         .font(.iconHero)
@@ -98,11 +63,11 @@ struct CollectionStatsView: View {
                             pipelineCard
 
                             LazyVGrid(columns: [GridItem(.adaptive(minimum: 420), spacing: 14)], alignment: .leading, spacing: 14) {
-                                if !cachedFormatCounts.isEmpty  { formatCard }
-                                if !cachedGenreCounts.isEmpty   { genreCard }
-                                if !cachedDecadeCounts.isEmpty  { decadeCard }
-                                if !cachedLabelCounts.isEmpty   { labelsCard }
-                                if !cachedArtistCounts.isEmpty  { artistsCard }
+                                if !stats.formatCounts.isEmpty  { formatCard }
+                                if !stats.genreCounts.isEmpty   { genreCard }
+                                if !stats.decadeCounts.isEmpty  { decadeCard }
+                                if !stats.labelCounts.isEmpty   { labelsCard }
+                                if !stats.artistCounts.isEmpty  { artistsCard }
                             }
                         }
                         .padding(.horizontal, 24)
@@ -113,17 +78,12 @@ struct CollectionStatsView: View {
             }
         }
         .navigationTitle("Stats")
-        .task(id: detailEntities.count) {
-            PerfLog.begin("CollectionStatsView.decodeCachedDetails")
-            cachedDetails = detailEntities.compactMap {
-                try? JSONDecoder().decode(ReleaseDetail.self, from: $0.jsonData)
-            }
-            PerfLog.end("CollectionStatsView.decodeCachedDetails")
-        }
-        .task(id: entities.count) {
-            PerfLog.begin("CollectionStatsView.recomputeBreakdowns")
-            recomputeBreakdowns()
-            PerfLog.end("CollectionStatsView.recomputeBreakdowns")
+        .onAppear { viewModel.refreshStats(full: true) }
+        // Replaces the old @Query liveness: any context's save (scans, analysis, caching)
+        // refreshes the snapshot off-main while this page is on screen.
+        .onReceive(NotificationCenter.default.publisher(for: ModelContext.didSave)
+            .debounce(for: .milliseconds(500), scheduler: RunLoop.main)) { _ in
+            viewModel.refreshStats(full: false)
         }
         .task {
             PerfLog.begin("CollectionStatsView.recomputeFileScope")
@@ -134,7 +94,7 @@ struct CollectionStatsView: View {
             Button("Refresh (~15 min)", role: .destructive) { cacheCoordinator.startRefresh() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("All \(entities.count.formatted()) releases are already cached. Re-fetching will overwrite existing data and take approximately 15 minutes.")
+            Text("All \(stats.releaseCount.formatted()) releases are already cached. Re-fetching will overwrite existing data and take approximately 15 minutes.")
         }
     }
 
@@ -188,16 +148,16 @@ struct CollectionStatsView: View {
     // MARK: - Summary tiles (B1)
 
     private var tracksTileValue: Int {
-        cachedTrackCount > 0 ? cachedTrackCount : trackEntities.count
+        stats.decodedTrackCount > 0 ? stats.decodedTrackCount : stats.trackCount
     }
 
     private var summaryTilesRow: some View {
         VStack(alignment: .leading, spacing: 6) {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 4), spacing: 16) {
-                statTile(value: entities.count.formatted(), label: "releases", accent: false)
+                statTile(value: stats.releaseCount.formatted(), label: "releases", accent: false)
                 statTile(value: tracksTileValue.formatted(), label: "tracks", accent: false)
                 statTile(value: fileMatchCoordinator.confidentFileCount.formatted(), label: "matched files", accent: true)
-                statTile(value: analyzedLocalFileCount.formatted(), label: "analyzed", accent: true)
+                statTile(value: stats.analyzedLocalFileCount.formatted(), label: "analyzed", accent: true)
             }
             Text("\(yearRangeLabel) · median age \(medianAge > 0 ? "\(medianAge)y" : "—")")
                 .font(.caption)
@@ -275,7 +235,7 @@ struct CollectionStatsView: View {
     // MARK: - Format card
 
     private var formatCard: some View {
-        let all = cachedFormatCounts
+        let all = stats.formatCounts
         let shown = showAllFormats ? all : Array(all.prefix(5))
         let maxCount = all.map(\.count).max() ?? 1
         return sectionCard {
@@ -304,7 +264,7 @@ struct CollectionStatsView: View {
     // MARK: - Genre card
 
     private var genreCard: some View {
-        let all = cachedGenreCounts
+        let all = stats.genreCounts
         let shown = showAllGenres ? all : Array(all.prefix(5))
         let maxCount = all.map(\.count).max() ?? 1
         return sectionCard {
@@ -323,7 +283,7 @@ struct CollectionStatsView: View {
     private var decadeCard: some View {
         // Chronological, not ranked by count — decades are a bounded timeline, so unlike
         // the other breakdowns there's no long tail to truncate with a "Show all" toggle.
-        let items = cachedDecadeCounts
+        let items = stats.decadeCounts
         let maxCount = items.map(\.count).max() ?? 1
         return sectionCard {
             sectionHeader(title: "Releases by decade")
@@ -338,7 +298,7 @@ struct CollectionStatsView: View {
     // MARK: - Labels card
 
     private var labelsCard: some View {
-        let all = cachedLabelCounts
+        let all = stats.labelCounts
         let shown = showAllLabels ? all : Array(all.prefix(5))
         let maxCount = all.map(\.count).max() ?? 1
         return sectionCard {
@@ -355,7 +315,7 @@ struct CollectionStatsView: View {
     // MARK: - Artists card
 
     private var artistsCard: some View {
-        let all = cachedArtistCounts
+        let all = stats.artistCounts
         let shown = showAllArtists ? all : Array(all.prefix(5))
         let maxCount = all.map(\.count).max() ?? 1
         return sectionCard {
@@ -392,13 +352,13 @@ struct CollectionStatsView: View {
     // MARK: - Tracks card
 
     private var cacheIsEffectivelyComplete: Bool {
-        guard entities.count > 0 else { return false }
-        return cachedDetailCount >= Int(Double(entities.count) * 0.95)
+        guard stats.releaseCount > 0 else { return false }
+        return stats.decodedDetailCount >= Int(Double(stats.releaseCount) * 0.95)
     }
 
     private var tracksCard: some View {
-        let cachedCount = detailEntities.count
-        let totalCount = entities.count
+        let cachedCount = stats.detailRowCount
+        let totalCount = stats.releaseCount
         let allCached = cachedCount >= totalCount && totalCount > 0
         let effectivelyComplete = cacheIsEffectivelyComplete
         let uncachedCount = max(0, totalCount - cachedCount)
@@ -413,7 +373,7 @@ struct CollectionStatsView: View {
             HStack(spacing: 6) {
                 Text("Tracks & duration")
                     .font(.title2.weight(.semibold))
-                if cachedDetailCount > 0 && !effectivelyComplete {
+                if stats.decodedDetailCount > 0 && !effectivelyComplete {
                     HStack(spacing: 4) {
                         Image(systemName: "info.circle").font(.caption)
                         Text("Partial data").font(.caption)
@@ -424,17 +384,17 @@ struct CollectionStatsView: View {
             }
             .padding(.bottom, 12)
 
-            if cachedDetailCount == 0 {
+            if stats.decodedDetailCount == 0 {
                 Text("No detail data yet. Cache all releases to see tracklists, duration, and credits (~15 min).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
                 VStack(alignment: .leading, spacing: 4) {
                     if allCached {
-                        Text("\(cachedTrackCount.formatted()) tracks across all \(totalCount.formatted()) releases")
+                        Text("\(stats.decodedTrackCount.formatted()) tracks across all \(totalCount.formatted()) releases")
                             .font(.body)
                     } else {
-                        Text("\(cachedTrackCount.formatted()) tracks across \(cachedDetailCount.formatted()) of \(totalCount.formatted()) releases (\(cachePercent)%)")
+                        Text("\(stats.decodedTrackCount.formatted()) tracks across \(stats.decodedDetailCount.formatted()) of \(totalCount.formatted()) releases (\(cachePercent)%)")
                             .font(.body)
                         if !effectivelyComplete, let est = estimatedTotalTracks {
                             Text("Estimated total: \(est.formatted()) tracks (extrapolated)")
@@ -470,11 +430,11 @@ struct CollectionStatsView: View {
     // MARK: - Recordings card
 
     private var recordingsCard: some View {
-        let fetchedCount = entities.filter { $0.recordingsScanState == "fetched" }.count
-        let skippedCount = entities.filter { $0.recordingsScanState == "skipped" }.count
-        let failedCount  = entities.filter { $0.recordingsScanState == "failed"  }.count
-        let trackCount   = trackEntities.count
-        let totalCached  = cachedDetails.reduce(0) { $0 + $1.tracklist.count }
+        let fetchedCount = stats.recordingsFetched
+        let skippedCount = stats.recordingsSkipped
+        let failedCount  = stats.recordingsFailed
+        let trackCount   = stats.trackCount
+        let totalCached  = stats.decodedTrackCount
         let isRunning: Bool = {
             switch recordingsCoordinator.phase {
             case .scanning, .paused: return true
@@ -532,13 +492,13 @@ struct CollectionStatsView: View {
     // MARK: - Audio Features card
 
     private var audioFeaturesCard: some View {
-        let withData    = featureEntities.filter { $0.bpm != nil }.count
-        let noData      = featureEntities.filter { $0.bpm == nil }.count
-        let withBPM     = featureEntities.filter { $0.bpm != nil }.count
-        let withKey     = featureEntities.filter { $0.keyNote != nil }.count
-        let withBoth    = featureEntities.filter { $0.bpm != nil && $0.keyNote != nil }.count
-        let totalMBIDs  = Set(trackEntities.map(\.recordingMBID).filter { !$0.isEmpty }).count
-        let notQueried  = max(0, totalMBIDs - featureEntities.count)
+        let withData    = stats.featuresWithBPM
+        let noData      = stats.featureCount - stats.featuresWithBPM
+        let withBPM     = stats.featuresWithBPM
+        let withKey     = stats.featuresWithKey
+        let withBoth    = stats.featuresWithBoth
+        let totalMBIDs  = stats.distinctRecordingMBIDCount
+        let notQueried  = max(0, totalMBIDs - stats.featureCount)
         let isRunning: Bool = {
             switch audioFeaturesCoordinator.phase {
             case .scanning, .paused: return true
@@ -554,7 +514,7 @@ struct CollectionStatsView: View {
                 .foregroundStyle(.secondary)
                 .padding(.bottom, 6)
 
-            if featureEntities.isEmpty {
+            if stats.featureCount == 0 {
                 Text("No audio features on file. Use \"Scan unqueried tracks\" below to query AcousticBrainz manually.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -607,7 +567,7 @@ struct CollectionStatsView: View {
         return VStack(alignment: .leading, spacing: 0) {
             sectionHeader(title: "Linked Files")
 
-            if totalLocalFileCount == 0 && confident == 0 {
+            if stats.totalLocalFileCount == 0 && confident == 0 {
                 Text("No files matched yet. Run 'Match all tracks' to link local audio files to collection tracks.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -619,7 +579,7 @@ struct CollectionStatsView: View {
                         recordingStateRow(icon: "checkmark.circle.fill",    iconColor: .green,    label: "Confident",     count: confident)
                         recordingStateRow(icon: "questionmark.circle.fill", iconColor: .orange,   label: "Needs review",  count: review)
                         recordingStateRow(icon: "circle",                   iconColor: .secondary, label: "No match",     count: noMatch)
-                        recordingStateRow(icon: "waveform",                 iconColor: .secondary, label: "Files indexed", count: totalLocalFileCount)
+                        recordingStateRow(icon: "waveform",                 iconColor: .secondary, label: "Files indexed", count: stats.totalLocalFileCount)
                     }
                     .padding(.top, 4)
                 }
@@ -649,7 +609,7 @@ struct CollectionStatsView: View {
         // Only count features whose owning track is still confident-matched — a track can
         // fall out of "confident" (re-match, manual unlink) after being analyzed, leaving a
         // stale LocalAudioFeaturesEntity row that no longer belongs in this ratio.
-        let settledAnalyzed = localFeatureEntities.filter { $0.track?.fileMatchState == "confident" }.count
+        let settledAnalyzed = stats.settledLocalAnalyzedCount
         let remaining = max(0, confident - settledAnalyzed)
         let isRunning = localAnalysisCoordinator.phase == .analyzing
                      || localAnalysisCoordinator.phase == .paused
@@ -769,7 +729,7 @@ struct CollectionStatsView: View {
 
     @ViewBuilder
     private var localBpmRangeRow: some View {
-        let bpms = localFeatureEntities.map(\.bpm).filter { $0 > 0 }.sorted()
+        let bpms = stats.localBPMsSorted
         if let minBPM = bpms.first, let maxBPM = bpms.last {
             let median = bpms[bpms.count / 2]
             Text("BPM range: \(Int(minBPM))–\(Int(maxBPM))  (median \(Int(median)))")
@@ -780,9 +740,8 @@ struct CollectionStatsView: View {
 
     @ViewBuilder
     private var localTopCamelotRow: some View {
-        let codes = localFeatureEntities.map(\.camelot).filter { !$0.isEmpty }
-        if !codes.isEmpty {
-            let counts = Dictionary(codes.map { ($0, 1) }, uniquingKeysWith: +)
+        let counts = stats.localCamelotCounts
+        if !counts.isEmpty {
             let top3 = counts.sorted { $0.value > $1.value }.prefix(3)
             let parts = top3.map { code, count -> String in
                 let desc = CamelotConverter.descriptions[code] ?? ""
@@ -812,7 +771,7 @@ struct CollectionStatsView: View {
 
     @ViewBuilder
     private var bpmRangeRow: some View {
-        let bpms = featureEntities.compactMap(\.bpm).sorted()
+        let bpms = stats.featureBPMsSorted
         if let minBPM = bpms.first, let maxBPM = bpms.last {
             let median = bpms[bpms.count / 2]
             Text("BPM range: \(Int(minBPM))–\(Int(maxBPM))  (median \(Int(median)))")
@@ -823,9 +782,8 @@ struct CollectionStatsView: View {
 
     @ViewBuilder
     private var topCamelotRow: some View {
-        let codes = featureEntities.compactMap(\.camelotCode)
-        if !codes.isEmpty {
-            let counts = Dictionary(codes.map { ($0, 1) }, uniquingKeysWith: +)
+        let counts = stats.featureCamelotCounts
+        if !counts.isEmpty {
             let top3 = counts.sorted { $0.value > $1.value }.prefix(3)
             let parts = top3.map { code, count -> String in
                 let desc = CamelotConverter.descriptions[code] ?? ""
@@ -840,91 +798,42 @@ struct CollectionStatsView: View {
     // MARK: - Computed stats
 
     private var yearRangeLabel: String {
-        guard let minY = cachedValidYears.min(), let maxY = cachedValidYears.max() else { return "—" }
+        guard let minY = stats.validYears.min(), let maxY = stats.validYears.max() else { return "—" }
         return "\(minY)–\(maxY)"
     }
 
     private var medianAge: Int {
-        let sorted = cachedValidYears.sorted()
+        let sorted = stats.validYears.sorted()
         guard !sorted.isEmpty else { return 0 }
         let median = sorted[sorted.count / 2]
         return Calendar.current.component(.year, from: Date()) - median
     }
 
-    /// Single pass over `entities` that fills every cached breakdown at once.
-    /// Called from `.task(id: entities.count)` instead of recomputing on every render.
-    private func recomputeBreakdowns() {
-        let excludedArtists: Set<String> = ["various", "various artists", "unknown artist"]
-        var formats: [String: Int] = [:]
-        var genres: [String: Int] = [:]
-        var decades: [Int: Int] = [:]
-        var labels: [String: Int] = [:]
-        var artists: [String: Int] = [:]
-        var years: [Int] = []
-
-        for entity in entities {
-            let info = entity.basicInformation
-            formats[info?.formats.first?.name ?? "Unknown", default: 0] += 1
-            for genre in info?.genres ?? [] {
-                genres[genre, default: 0] += 1
-            }
-            if let year = info?.year, year > 0 {
-                years.append(year)
-                decades[(year / 10) * 10, default: 0] += 1
-            }
-            if let name = info?.labels.first?.name {
-                labels[name, default: 0] += 1
-            }
-            if let name = info?.artists.first?.name, !excludedArtists.contains(name.lowercased()) {
-                artists[name, default: 0] += 1
-            }
-        }
-
-        cachedFormatCounts = formats.sorted { $0.value > $1.value }.map { (label: $0.key, count: $0.value) }
-        cachedGenreCounts  = genres.sorted { $0.value > $1.value }.map { (label: $0.key, count: $0.value) }
-        cachedDecadeCounts = decades.sorted { $0.key < $1.key }.map { (label: "\($0.key)s", count: $0.value) }
-        cachedLabelCounts  = labels.sorted { $0.value > $1.value }.map { (label: $0.key, count: $0.value) }
-        cachedArtistCounts = artists.sorted { $0.value > $1.value }.map { (label: $0.key, count: $0.value) }
-        cachedValidYears   = years
-    }
-
     // MARK: - Track stats (from decoded cache)
 
-    private var cachedDetailCount: Int { cachedDetails.count }
-
-    private var cachedTrackCount: Int {
-        cachedDetails.reduce(0) { $0 + $1.tracklist.count }
-    }
-
-    private var cachedDurationSeconds: Int {
-        cachedDetails.flatMap(\.tracklist).reduce(0) { total, track in
-            total + parseDuration(track.duration)
-        }
-    }
-
     private var estimatedTotalTracks: Int? {
-        guard cachedDetailCount > 0, cachedDetailCount < entities.count else { return nil }
-        return (cachedTrackCount / cachedDetailCount) * entities.count
+        guard stats.decodedDetailCount > 0, stats.decodedDetailCount < stats.releaseCount else { return nil }
+        return (stats.decodedTrackCount / stats.decodedDetailCount) * stats.releaseCount
     }
 
     private var cachePercent: Int {
-        guard entities.count > 0 else { return 0 }
-        return cachedDetailCount * 100 / entities.count
+        guard stats.releaseCount > 0 else { return 0 }
+        return stats.decodedDetailCount * 100 / stats.releaseCount
     }
 
     private var cachedDurationLabel: String {
-        let h = cachedDurationSeconds / 3600
-        let m = (cachedDurationSeconds % 3600) / 60
+        let h = stats.decodedDurationSeconds / 3600
+        let m = (stats.decodedDurationSeconds % 3600) / 60
         if h > 0 { return "\(h) h \(m) min" }
-        let s = cachedDurationSeconds % 60
+        let s = stats.decodedDurationSeconds % 60
         return "\(m) min \(s) sec"
     }
 
     // MARK: - Cue Point Detection card
 
     private var cueDetectionCard: some View {
-        let withCues = localFilesWithCuesCount
-        let analyzed = analyzedLocalFileCount
+        let withCues = stats.localFilesWithCuesCount
+        let analyzed = stats.analyzedLocalFileCount
         let isDetecting = cueCoordinator.phase == .detecting || cueCoordinator.phase == .paused
 
         return VStack(alignment: .leading, spacing: 0) {
@@ -965,12 +874,5 @@ struct CollectionStatsView: View {
             }
             .padding(.top, 10)
         }
-    }
-
-    private func parseDuration(_ s: String) -> Int {
-        guard !s.isEmpty else { return 0 }
-        let parts = s.split(separator: ":").compactMap { Int($0) }
-        guard parts.count == 2 else { return 0 }
-        return parts[0] * 60 + parts[1]
     }
 }

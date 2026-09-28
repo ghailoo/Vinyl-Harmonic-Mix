@@ -1,6 +1,6 @@
 import Foundation
 
-struct ArtistCredit: Codable, Hashable {
+nonisolated struct ArtistCredit: Codable, Hashable {
     let id: Int
     let name: String
 }

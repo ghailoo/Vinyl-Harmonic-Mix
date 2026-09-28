@@ -1,6 +1,6 @@
 import Foundation
 
-struct Credit: Codable, Hashable, Identifiable {
+nonisolated struct Credit: Codable, Hashable, Identifiable {
     var id: String { "\(name)-\(role)" }
     let name: String
     let role: String

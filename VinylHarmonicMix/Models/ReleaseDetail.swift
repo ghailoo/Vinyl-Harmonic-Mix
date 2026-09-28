@@ -1,12 +1,12 @@
 import Foundation
 
-struct DiscogsImage: Codable, Hashable {
+nonisolated struct DiscogsImage: Codable, Hashable {
     let uri: String
     let uri150: String?
     let type: String?
 }
 
-struct ReleaseDetail: Codable, Hashable {
+nonisolated struct ReleaseDetail: Codable, Hashable {
     let id: Int
     let title: String
     let year: Int?
