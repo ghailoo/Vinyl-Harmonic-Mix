@@ -257,57 +257,47 @@ final class CollectionViewModel {
 
     // MARK: - SetBuilder lookup cache
     //
-    // SetBuilderView is torn down and recreated on every sidebar switch, so its onAppear
-    // can't tell whether these derived lookups are already up to date. Caching them here
-    // (state that outlives the view) lets rebuildSetBuilderLookupsIfNeeded skip the O(n)
-    // rebuild when the underlying track/feature counts haven't changed since last time.
-    private(set) var setBuilderFeaturesByMBID: [String: RecordingFeaturesEntity] = [:]
+    // SetBuilderView is torn down and recreated on every sidebar switch, so the data it
+    // shows lives here (state that outlives the view) instead of in @Query arrays that
+    // re-materialize every table on each switch. refreshSetBuilderLookups() fetches on a
+    // background ModelContext; the O(n) track walk is skipped when the track/feature row
+    // counts haven't changed since last time (same key as before). Scan states are small
+    // (two fields per release) and always refreshed so the filter counts stay live.
     private(set) var setBuilderCoverageByInstanceId: [Int: (covered: Int, total: Int, localCovered: Int)] = [:]
     private(set) var setBuilderFilePathToInstanceId: [String: Int] = [:]
     private(set) var setBuilderThumbURLs: [String: URL] = [:]
     private(set) var setBuilderConfidentPool: [MixTrack] = []
+    private(set) var setBuilderScanStates: [Int: String] = [:]   // instanceId → mbidScanState
     private var setBuilderLastFeaturesCount = -1
     private var setBuilderLastTracksCount = -1
+    private var setBuilderRefreshRunning = false
+    private var setBuilderRefreshPending = false
 
-    @discardableResult
-    func rebuildSetBuilderLookupsIfNeeded(features: [RecordingFeaturesEntity], tracks: [TrackEntity]) -> Bool {
-        PerfLog.begin("CollectionViewModel.rebuildSetBuilderLookupsIfNeeded")
-        defer { PerfLog.end("CollectionViewModel.rebuildSetBuilderLookupsIfNeeded") }
-        guard features.count != setBuilderLastFeaturesCount || tracks.count != setBuilderLastTracksCount else {
-            return false
+    func refreshSetBuilderLookups() {
+        guard !setBuilderRefreshRunning else { setBuilderRefreshPending = true; return }
+        let featuresCount = (try? context.fetchCount(FetchDescriptor<RecordingFeaturesEntity>())) ?? 0
+        let tracksCount   = (try? context.fetchCount(FetchDescriptor<TrackEntity>())) ?? 0
+        let rebuild = featuresCount != setBuilderLastFeaturesCount || tracksCount != setBuilderLastTracksCount
+        setBuilderRefreshRunning = true
+        let container = context.container
+        Task {
+            PerfLog.begin("CollectionViewModel.refreshSetBuilderLookups(rebuild: \(rebuild)) off-main")
+            let result = await Task.detached(priority: .userInitiated) {
+                SetBuilderLookups.compute(container: container, rebuild: rebuild)
+            }.value
+            PerfLog.end("CollectionViewModel.refreshSetBuilderLookups(rebuild: \(rebuild)) off-main")
+            setBuilderScanStates = result.scanStates
+            if let r = result.rebuilt {
+                setBuilderLastFeaturesCount = featuresCount
+                setBuilderLastTracksCount = tracksCount
+                setBuilderCoverageByInstanceId = r.coverage
+                setBuilderFilePathToInstanceId = r.filePathToInstanceId
+                setBuilderThumbURLs = r.thumbURLs
+                setBuilderConfidentPool = r.confidentPool
+            }
+            setBuilderRefreshRunning = false
+            if setBuilderRefreshPending { setBuilderRefreshPending = false; refreshSetBuilderLookups() }
         }
-        setBuilderLastFeaturesCount = features.count
-        setBuilderLastTracksCount = tracks.count
-
-        var featuresByMBID: [String: RecordingFeaturesEntity] = [:]
-        featuresByMBID.reserveCapacity(features.count)
-        for f in features { featuresByMBID[f.recordingMBID] = f }
-
-        var totals: [Int: Int] = [:]
-        var coveredCounts: [Int: Int] = [:]
-        var localCounts: [Int: Int] = [:]
-        var fpToId: [String: Int] = [:]
-        fpToId.reserveCapacity(tracks.count)
-        for track in tracks {
-            guard let id = track.collectionItem?.instanceId else { continue }
-            totals[id, default: 0] += 1
-            let hasEffectiveBpm = track.effectiveBpm != nil
-            let hasLocalSource  = track.featureSource == .local
-            let f = featuresByMBID[track.recordingMBID]
-            let hasAbBpm = f?.bpm != nil && f?.camelotCode != nil
-            if hasEffectiveBpm || hasAbBpm { coveredCounts[id, default: 0] += 1 }
-            if hasLocalSource              { localCounts[id, default: 0] += 1 }
-            if let fp = track.primaryLocalFilePath, !fp.isEmpty { fpToId[fp] = id }
-        }
-
-        setBuilderFeaturesByMBID = featuresByMBID
-        setBuilderCoverageByInstanceId = Dictionary(uniqueKeysWithValues: totals.keys.map { id in
-            (id, (covered: coveredCounts[id] ?? 0, total: totals[id]!, localCovered: localCounts[id] ?? 0))
-        })
-        setBuilderFilePathToInstanceId = fpToId
-        setBuilderThumbURLs = MixCoverArt.thumbURLs(from: tracks)
-        setBuilderConfidentPool = MixTrackPool.confident(from: tracks)
-        return true
     }
 
     // MARK: - Stats page cache
@@ -542,5 +532,66 @@ nonisolated struct CollectionStats: Sendable {
         let parts = s.split(separator: ":").compactMap { Int($0) }
         guard parts.count == 2 else { return 0 }
         return parts[0] * 60 + parts[1]
+    }
+}
+
+// MARK: - SetBuilder lookups snapshot
+
+nonisolated struct SetBuilderLookups: Sendable {
+    struct Rebuilt: Sendable {
+        var coverage: [Int: (covered: Int, total: Int, localCovered: Int)]
+        var filePathToInstanceId: [String: Int]
+        var thumbURLs: [String: URL]
+        var confidentPool: [MixTrack]
+    }
+    var scanStates: [Int: String]
+    var rebuilt: Rebuilt?
+
+    static func compute(container: ModelContainer, rebuild: Bool) -> SetBuilderLookups {
+        let ctx = ModelContext(container)
+
+        var itemFD = FetchDescriptor<CollectionItemEntity>()
+        itemFD.propertiesToFetch = [\.instanceId, \.mbidScanState]
+        let scanStates = Dictionary(((try? ctx.fetch(itemFD)) ?? []).map { ($0.instanceId, $0.mbidScanState) },
+                                    uniquingKeysWith: { first, _ in first })
+        guard rebuild else { return SetBuilderLookups(scanStates: scanStates, rebuilt: nil) }
+
+        // Only "has AcousticBrainz BPM + Camelot" is ever read from the features.
+        var featureFD = FetchDescriptor<RecordingFeaturesEntity>()
+        featureFD.propertiesToFetch = [\.recordingMBID, \.bpm, \.camelotCode]
+        var abCovered = Set<String>()
+        for f in (try? ctx.fetch(featureFD)) ?? [] where f.bpm != nil && f.camelotCode != nil {
+            abCovered.insert(f.recordingMBID)
+        }
+
+        var trackFD = FetchDescriptor<TrackEntity>()
+        trackFD.relationshipKeyPathsForPrefetching = [\.collectionItem, \.localAudioFeatures]
+        let tracks = (try? ctx.fetch(trackFD)) ?? []
+
+        var totals: [Int: Int] = [:]
+        var coveredCounts: [Int: Int] = [:]
+        var localCounts: [Int: Int] = [:]
+        var fpToId: [String: Int] = [:]
+        fpToId.reserveCapacity(tracks.count)
+        for track in tracks {
+            guard let id = track.collectionItem?.instanceId else { continue }
+            totals[id, default: 0] += 1
+            let hasEffectiveBpm = track.effectiveBpm != nil
+            let hasLocalSource  = track.featureSource == .local
+            let hasAbBpm = abCovered.contains(track.recordingMBID)
+            if hasEffectiveBpm || hasAbBpm { coveredCounts[id, default: 0] += 1 }
+            if hasLocalSource              { localCounts[id, default: 0] += 1 }
+            if let fp = track.primaryLocalFilePath, !fp.isEmpty { fpToId[fp] = id }
+        }
+
+        let coverage = Dictionary(uniqueKeysWithValues: totals.keys.map { id in
+            (id, (covered: coveredCounts[id] ?? 0, total: totals[id]!, localCovered: localCounts[id] ?? 0))
+        })
+        return SetBuilderLookups(scanStates: scanStates, rebuilt: Rebuilt(
+            coverage: coverage,
+            filePathToInstanceId: fpToId,
+            thumbURLs: MixCoverArt.thumbURLs(from: tracks),
+            confidentPool: MixTrackPool.confident(from: tracks)
+        ))
     }
 }

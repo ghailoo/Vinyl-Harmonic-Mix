@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - filePath → release thumbnail URL lookup
 
-enum MixCoverArt {
+nonisolated enum MixCoverArt {
     /// Build a [filePath: thumbURL] map by walking TrackEntity rows.
     ///
     /// Chain: primaryLocalFilePath → collectionItem → basicInformation.thumb

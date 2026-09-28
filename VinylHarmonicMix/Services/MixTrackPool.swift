@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Shared pool-builder for Mix and Set Builder
 
-enum MixTrackPool {
+nonisolated enum MixTrackPool {
     /// Tracks with a confident file match and full BPM + Camelot data.
     /// Covers the ~879 Discogs-collection releases.
     static func confident(from tracks: [TrackEntity]) -> [MixTrack] {

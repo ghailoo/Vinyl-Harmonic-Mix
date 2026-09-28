@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import Combine
 
 private struct HarmonicEntry: Identifiable {
     let id: String
@@ -18,11 +19,6 @@ struct SetBuilderView: View {
     @Environment(AudioFeaturesScanCoordinator.self) private var audioFeaturesCoordinator
     @Environment(FileMatchCoordinator.self) private var fileMatchCoordinator
 
-    @Query private var allCollectionEntities: [CollectionItemEntity]
-    @Query private var allTrackEntities: [TrackEntity]
-    @Query private var allFeatures: [RecordingFeaturesEntity]
-    @Query private var allSets: [SetlistEntity]
-
     // State — Current Track is the user's focus
     @State private var currentTrack: MixTrack? = nil
 
@@ -38,11 +34,12 @@ struct SetBuilderView: View {
     @State private var sliderDragValue: Double = 5.0
     @State private var lastBpmLiveCommit: Date = .distantPast
 
-    // Grid state
-    @State private var featuresByMBID: [String: RecordingFeaturesEntity] = [:]
-    @State private var coverageByInstanceId: [Int: (covered: Int, total: Int, localCovered: Int)] = [:]
-    @State private var filePathToInstanceId: [String: Int] = [:]
-    @State private var playingInstanceId: Int? = nil
+    // Grid state — lookups live in CollectionViewModel (computed off-main, kept across
+    // sidebar switches); no @Query here, so rebuilding this view fetches nothing.
+    private var coverageByInstanceId: [Int: (covered: Int, total: Int, localCovered: Int)] { viewModel.setBuilderCoverageByInstanceId }
+    private var filePathToInstanceId: [String: Int] { viewModel.setBuilderFilePathToInstanceId }
+    private var thumbURLs: [String: URL] { viewModel.setBuilderThumbURLs }
+    private var playingInstanceId: Int? { playback.currentFilePath.flatMap { filePathToInstanceId[$0] } }
     @State private var highlightedItemId: Int? = nil
     @State private var searchQuery = ""
     @AppStorage("setBuilderFilter") private var activeFilterRaw: String = CollectionFilter.all.rawValue
@@ -51,7 +48,6 @@ struct SetBuilderView: View {
     private var activeFilter: CollectionFilter { CollectionFilter(rawValue: activeFilterRaw) ?? .all }
     private var activeSort: CollectionSort     { CollectionSort(rawValue: activeSortRaw) ?? .yearDesc }
     @AppStorage("collectionGridCardSize") private var cardSize: Double = 0.25
-    @State private var thumbURLs: [String: URL] = [:]
 
     // Sheet state
     @State private var selectedItem: CollectionItem? = nil
@@ -69,10 +65,6 @@ struct SetBuilderView: View {
     var body: some View {
         PerfLog.begin("SetBuilderView.body")
         defer { PerfLog.end("SetBuilderView.body") }
-        let _ = PerfLog.measure("SetBuilderView.query.allCollectionEntities") { allCollectionEntities.count }
-        let _ = PerfLog.measure("SetBuilderView.query.allTrackEntities") { allTrackEntities.count }
-        let _ = PerfLog.measure("SetBuilderView.query.allFeatures") { allFeatures.count }
-        let _ = PerfLog.measure("SetBuilderView.query.allSets") { allSets.count }
         return GeometryReader { windowGeo in
         ScrollViewReader { proxy in
         ScrollView {
@@ -119,28 +111,26 @@ struct SetBuilderView: View {
         }
         }
         .onAppear {
-            syncSetBuilderLookups()
+            viewModel.refreshSetBuilderLookups()
             if activeSet == nil, !activeSetID.isEmpty {
-                activeSet = allSets.first { $0.id == activeSetID }
+                let id = activeSetID
+                var fd = FetchDescriptor<SetlistEntity>(predicate: #Predicate { $0.id == id })
+                fd.fetchLimit = 1
+                activeSet = try? modelContext.fetch(fd).first
                 if activeSet == nil { activeSetID = "" }
             }
-            // Restore hero if we navigated away while a track was loaded.
-            // loadedFilePath covers load-without-play; currentFilePath covers played-then-paused.
-            if currentTrack == nil {
-                let fp = playback.loadedFilePath ?? playback.currentFilePath
-                if let fp { currentTrack = viewModel.setBuilderConfidentPool.first(where: { $0.filePath == fp }) }
-            }
+            restoreHeroIfNeeded()
             playback.smartAdvancePool = viewModel.setBuilderConfidentPool
         }
-        .onChange(of: allFeatures.count) { _, _ in
-            syncSetBuilderLookups()
+        // Replaces the old @Query count observers: any save re-checks the counts off-main.
+        .onReceive(NotificationCenter.default.publisher(for: ModelContext.didSave)
+            .debounce(for: .milliseconds(500), scheduler: RunLoop.main)) { _ in
+            viewModel.refreshSetBuilderLookups()
         }
-        .onChange(of: allTrackEntities.count) { _, _ in
-            syncSetBuilderLookups()
-            playback.smartAdvancePool = viewModel.setBuilderConfidentPool
-        }
-        .onChange(of: playback.currentFilePath) { _, newPath in
-            playingInstanceId = newPath.flatMap { filePathToInstanceId[$0] }
+        .onChange(of: viewModel.setBuilderConfidentPool) { oldPool, newPool in
+            // First-ever visit: the pool arrives after onAppear, so retry the hero restore once.
+            if oldPool.isEmpty { restoreHeroIfNeeded() }
+            playback.smartAdvancePool = newPool
         }
         .task(id: currentTrack?.filePath) {
             if let fp = currentTrack?.filePath {
@@ -197,6 +187,14 @@ struct SetBuilderView: View {
         }
         } // ScrollViewReader
         } // GeometryReader
+    }
+
+    /// Restore hero if we navigated away while a track was loaded.
+    /// loadedFilePath covers load-without-play; currentFilePath covers played-then-paused.
+    private func restoreHeroIfNeeded() {
+        guard currentTrack == nil else { return }
+        let fp = playback.loadedFilePath ?? playback.currentFilePath
+        if let fp { currentTrack = viewModel.setBuilderConfidentPool.first(where: { $0.filePath == fp }) }
     }
 
     // MARK: - Track pick handler
@@ -314,7 +312,7 @@ struct SetBuilderView: View {
     // MARK: - Harmonic strip
 
     private var pool: [MixTrack] {
-        MixTrackPool.confident(from: allTrackEntities)
+        viewModel.setBuilderConfidentPool
     }
 
     private var compatibleItems: [HarmonicEntry] {
@@ -981,45 +979,28 @@ struct SetBuilderView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    // MARK: - Lookup rebuilds
-    //
-    // SetBuilderView is torn down and recreated on every sidebar switch, so the actual
-    // O(n) rebuild lives in CollectionViewModel (which persists across that) and is
-    // skipped there when the source counts haven't changed. This just pulls the
-    // (possibly cached) results into local @State for the view to read.
-    private func syncSetBuilderLookups() {
-        PerfLog.begin("SetBuilderView.syncSetBuilderLookups")
-        defer { PerfLog.end("SetBuilderView.syncSetBuilderLookups") }
-        viewModel.rebuildSetBuilderLookupsIfNeeded(features: allFeatures, tracks: allTrackEntities)
-        featuresByMBID = viewModel.setBuilderFeaturesByMBID
-        coverageByInstanceId = viewModel.setBuilderCoverageByInstanceId
-        filePathToInstanceId = viewModel.setBuilderFilePathToInstanceId
-        thumbURLs = viewModel.setBuilderThumbURLs
-        playingInstanceId = playback.currentFilePath.flatMap { filePathToInstanceId[$0] }
-    }
-
     // MARK: - Computed helpers
 
     private var matchedInstanceIds: Set<Int> {
-        Set(allCollectionEntities.filter {
-            $0.mbidScanState == "matched" ||
-            $0.mbidScanState == "matchedViaSearch" ||
-            $0.mbidScanState == "matchedManually"
-        }.map(\.instanceId))
+        Set(viewModel.setBuilderScanStates.filter {
+            $0.value == "matched" ||
+            $0.value == "matchedViaSearch" ||
+            $0.value == "matchedManually"
+        }.map(\.key))
     }
 
     private func filterCount(for filter: CollectionFilter) -> Int {
         switch filter {
         case .all:       return viewModel.items.count
-        case .matched:   return allCollectionEntities.filter {
-            $0.mbidScanState == "matched" ||
-            $0.mbidScanState == "matchedViaSearch" ||
-            $0.mbidScanState == "matchedManually"
+        case .matched:   return viewModel.setBuilderScanStates.values.filter {
+            $0 == "matched" ||
+            $0 == "matchedViaSearch" ||
+            $0 == "matchedManually"
         }.count
-        case .needsReview: return allCollectionEntities.filter { $0.mbidScanState == "needsReview" }.count
-        case .notFound:  return allCollectionEntities.filter { $0.mbidScanState == "notFound" }.count
-        case .failed:    return allCollectionEntities.filter { $0.mbidScanState == "failed" }.count
-        case .unscanned: return allCollectionEntities.filter { $0.mbidScanState == "unscanned" }.count
+        case .needsReview: return viewModel.setBuilderScanStates.values.filter { $0 == "needsReview" }.count
+        case .notFound:  return viewModel.setBuilderScanStates.values.filter { $0 == "notFound" }.count
+        case .failed:    return viewModel.setBuilderScanStates.values.filter { $0 == "failed" }.count
+        case .unscanned: return viewModel.setBuilderScanStates.values.filter { $0 == "unscanned" }.count
         }
     }
 
@@ -1031,19 +1012,19 @@ struct SetBuilderView: View {
             switch activeFilter {
             case .all:       matchingIds = []
             case .matched:
-                matchingIds = Set(allCollectionEntities.filter {
-                    $0.mbidScanState == "matched" ||
-                    $0.mbidScanState == "matchedViaSearch" ||
-                    $0.mbidScanState == "matchedManually"
-                }.map(\.instanceId))
+                matchingIds = Set(viewModel.setBuilderScanStates.filter {
+                    $0.value == "matched" ||
+                    $0.value == "matchedViaSearch" ||
+                    $0.value == "matchedManually"
+                }.map(\.key))
             case .needsReview:
-                matchingIds = Set(allCollectionEntities.filter { $0.mbidScanState == "needsReview" }.map(\.instanceId))
+                matchingIds = Set(viewModel.setBuilderScanStates.filter { $0.value == "needsReview" }.map(\.key))
             case .notFound:
-                matchingIds = Set(allCollectionEntities.filter { $0.mbidScanState == "notFound" }.map(\.instanceId))
+                matchingIds = Set(viewModel.setBuilderScanStates.filter { $0.value == "notFound" }.map(\.key))
             case .failed:
-                matchingIds = Set(allCollectionEntities.filter { $0.mbidScanState == "failed" }.map(\.instanceId))
+                matchingIds = Set(viewModel.setBuilderScanStates.filter { $0.value == "failed" }.map(\.key))
             case .unscanned:
-                matchingIds = Set(allCollectionEntities.filter { $0.mbidScanState == "unscanned" }.map(\.instanceId))
+                matchingIds = Set(viewModel.setBuilderScanStates.filter { $0.value == "unscanned" }.map(\.key))
             }
             items = items.filter { matchingIds.contains($0.id) }
         }
