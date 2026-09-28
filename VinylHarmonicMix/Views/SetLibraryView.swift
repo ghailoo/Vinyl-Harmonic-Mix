@@ -7,6 +7,7 @@ struct SetLibraryView: View {
     let setlist: SetlistEntity
 
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.undoManager) private var undoManager
     @Environment(AudioPlaybackController.self) private var playback
 
     @State private var showCopiedFeedback: Bool = false
@@ -195,13 +196,9 @@ struct SetLibraryView: View {
     }
 
     private func removeItem(_ item: SetlistItemEntity) {
-        let remaining = sortedItems.filter { $0.persistentModelID != item.persistentModelID }
-        modelContext.delete(item)
-        for (newPos, track) in remaining.enumerated() {
-            track.position = newPos
-        }
-        try? modelContext.save()
-        if isPlayingThrough && remaining.isEmpty { playback.stopSet(); playback.pause() }
+        // No dialog — ⌘Z puts the track back at its original position.
+        SetlistUndo.removeItem(item, from: setlist, context: modelContext, undoManager: undoManager)
+        if isPlayingThrough && setlist.items.isEmpty { playback.stopSet(); playback.pause() }
     }
 
     // MARK: - Text export

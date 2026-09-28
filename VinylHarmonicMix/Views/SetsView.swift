@@ -3,11 +3,12 @@ import SwiftData
 
 struct SetsView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.undoManager) private var undoManager
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Query(sort: \SetlistEntity.createdAt, order: .reverse) private var sets: [SetlistEntity]
 
     @State private var selectedSet: SetlistEntity?
-    @State private var setToDelete: SetlistEntity?
-    @State private var showDeleteConfirmation = false
+    @State private var deletedSet: DeletedSet?   // drives the "Set deleted — Undo" toast
     @State private var renamingSet: SetlistEntity?
     @State private var renameText = ""
     @AppStorage("setsListWidth") private var listWidth: Double = 240
@@ -23,6 +24,23 @@ struct SetsView: View {
                 .frame(minWidth: 360)
                 .layoutPriority(1)
         }
+        .overlay(alignment: .bottom) {
+            if let deleted = deletedSet {
+                HStack(spacing: 10) {
+                    Text("“\(deleted.name)” deleted")
+                        .font(.caption.weight(.medium))
+                    Button("Undo") { undoDelete(deleted) }
+                        .buttonStyle(.link)
+                        .font(.caption.weight(.semibold))
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(.thinMaterial, in: Capsule())
+                .padding(.bottom, 12)
+                .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(reduceMotion ? .easeInOut(duration: 0.2) : .snappy, value: deletedSet?.id)
     }
 
     // ponytail: HSplitView has no divider binding — same live-width observer trick as FileMatchesView.
@@ -63,7 +81,7 @@ struct SetsView: View {
                         SetlistRowView(
                             setlist: setlist,
                             onRename: { startRename(setlist) },
-                            onDelete: { confirmDelete(setlist) }
+                            onDelete: { deleteSet(setlist) }
                         )
                         .tag(setlist)
                     }
@@ -80,16 +98,6 @@ struct SetsView: View {
             } onCancel: {
                 renamingSet = nil
             }
-        }
-        .confirmationDialog(
-            "Delete \"\(setToDelete?.name ?? "")\"?",
-            isPresented: $showDeleteConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Delete", role: .destructive) { deleteSet() }
-            Button("Cancel", role: .cancel) { setToDelete = nil }
-        } message: {
-            Text("This set and all its tracks will be permanently deleted.")
         }
     }
 
@@ -160,17 +168,22 @@ struct SetsView: View {
         renamingSet = nil
     }
 
-    private func confirmDelete(_ set: SetlistEntity) {
-        setToDelete = set
-        showDeleteConfirmation = true
+    // No confirmation: single-set delete is undoable (⌘Z or the toast). Add a dialog only
+    // if multi-selection delete ever lands.
+    private func deleteSet(_ set: SetlistEntity) {
+        if selectedSet == set { selectedSet = nil }
+        let token = SetlistUndo.deleteSet(set, context: modelContext, undoManager: undoManager)
+        deletedSet = token
+        Task {
+            try? await Task.sleep(for: .seconds(5))
+            if deletedSet === token { deletedSet = nil }
+        }
     }
 
-    private func deleteSet() {
-        guard let set = setToDelete else { return }
-        if selectedSet == set { selectedSet = nil }
-        modelContext.delete(set)
-        try? modelContext.save()
-        setToDelete = nil
+    private func undoDelete(_ token: DeletedSet) {
+        undoManager?.removeAllActions(withTarget: token)   // ⌘Z would otherwise restore it twice
+        selectedSet = token.restore(context: modelContext, undoManager: nil)
+        deletedSet = nil
     }
 }
 
