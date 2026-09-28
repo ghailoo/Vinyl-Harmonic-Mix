@@ -340,7 +340,7 @@ final class RecordingsScanCoordinator {
         }
 
         let surrogatePrefix = "discogs:\(releaseId):"
-        var existingFD = FetchDescriptor<TrackEntity>(
+        let existingFD = FetchDescriptor<TrackEntity>(
             predicate: #Predicate { $0.trackMBID.starts(with: surrogatePrefix) }
         )
         let existingSurrogates = Set((try? context.fetch(existingFD))?.map(\.trackMBID) ?? [])

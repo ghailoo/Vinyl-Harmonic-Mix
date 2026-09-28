@@ -126,7 +126,7 @@ enum WaveformGenerator {
 
                 // One Float32 buffer per channel — raw heap allocation so
                 // ExtAudioFileRead can write directly without Swift bridging.
-                var channelPtrs: [UnsafeMutablePointer<Float>] = (0..<channelCount).map { _ in
+                let channelPtrs: [UnsafeMutablePointer<Float>] = (0..<channelCount).map { _ in
                     UnsafeMutablePointer<Float>.allocate(capacity: framesPerChunk)
                 }
                 defer { channelPtrs.forEach { $0.deallocate() } }
@@ -135,7 +135,7 @@ enum WaveformGenerator {
                 // AudioBufferList.allocate(maximumBuffers:) is the idiomatic Swift
                 // overlay for variable-length ABLs; it correctly sizes the struct
                 // for channelCount AudioBuffer slots and returns a typed wrapper.
-                var abl = AudioBufferList.allocate(maximumBuffers: channelCount)
+                let abl = AudioBufferList.allocate(maximumBuffers: channelCount)
                 defer { abl.unsafeMutablePointer.deallocate() }
                 abl.count = channelCount
                 for ch in 0..<channelCount {
