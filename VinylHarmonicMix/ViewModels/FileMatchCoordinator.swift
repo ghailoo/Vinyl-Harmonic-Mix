@@ -30,7 +30,7 @@ struct ScoredCandidate: Sendable {
     /// kind fits the release: Compilations folder for a compilation, Albums/Singles otherwise.
     /// Small on purpose — a wrong-folder file that scores clearly better still wins.
     nonisolated static let folderKindBoostWeight = 0.05
-    var rankScore: Double { combinedScore + kindBoost }
+    nonisolated var rankScore: Double { combinedScore + kindBoost }
 
     // nonisolated required: called from _scoreCandidates (nonisolated static).
     // Without this, Swift 6 infers the init as @MainActor-isolated and the call is a data race.
@@ -1428,29 +1428,82 @@ final class FileMatchCoordinator {
 
     // Rebuilds reviewCandidates from persisted TrackEntity.candidateFilePaths so
     // review rows show their best guess after app restart without re-scanning.
-    // Called once at startup (deferred via Task so it doesn't block init).
+    // Called from init and from FileMatchesView.onAppear — i.e. on every visit to that
+    // page — so a visit with nothing left to hydrate must return before touching
+    // LocalFileEntity, and a visit with work fetches only the candidate files' rows.
+    private var isHydratingReviewCandidates = false
+
     func hydrateReviewCandidatesIfNeeded() {
         PerfLog.begin("FileMatchCoordinator.hydrateReviewCandidatesIfNeeded")
         defer { PerfLog.end("FileMatchCoordinator.hydrateReviewCandidatesIfNeeded") }
+        guard !isHydratingReviewCandidates else { return }
+
+        // ── Snapshot (MainActor): only review tracks that still need candidates ──────
         let reviewTracks = (try? context.fetch(FetchDescriptor<TrackEntity>(
             predicate: #Predicate { $0.fileMatchState == "review" }
         ))) ?? []
-        guard reviewTracks.contains(where: { !$0.candidateFilePaths.isEmpty }) else { return }
+        let pending: [HydrationTrack] = reviewTracks.compactMap { track in
+            guard reviewCandidates[track.trackMBID] == nil, !track.candidateFilePaths.isEmpty else { return nil }
+            return HydrationTrack(trackMBID: track.trackMBID, artist: effectiveArtist(track),
+                                  title: track.title, durationMs: track.durationMs ?? 0,
+                                  isCompilation: isCompilation(track),
+                                  candidateFilePaths: track.candidateFilePaths)
+        }
+        guard !pending.isEmpty else { return }
 
-        // Bulk load all files into the context's identity map — O(N) once at startup;
-        // objects become available for O(1) context.model(for:) later.
-        let allFiles = (try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
-        var fileByPath: [String: LocalFileEntity] = [:]
-        fileByPath.reserveCapacity(allFiles.count)
-        for f in allFiles { fileByPath[f.filePath] = f }
-
+        let paths = Array(Set(pending.flatMap(\.candidateFilePaths)))
         let kinds = folderKindsByID()
-        for track in reviewTracks where reviewCandidates[track.trackMBID] == nil {
-            let artist = effectiveArtist(track)
-            let compilation = isCompilation(track)
+        let container = context.container
+        isHydratingReviewCandidates = true
+
+        Task { [weak self] in
+            // ── Fetch + scoring (off the MainActor, own ModelContext) ─────────────────
+            let hydrated = await Task.detached(priority: .userInitiated) {
+                FileMatchCoordinator._scoreHydration(pending: pending, paths: paths,
+                                                     kinds: kinds, container: container)
+            }.value
+            // ── Apply (MainActor): a live scan may have filled some in meanwhile ──────
+            guard let self else { return }
+            for (trackMBID, candidates) in hydrated where self.reviewCandidates[trackMBID] == nil {
+                self.reviewCandidates[trackMBID] = candidates
+            }
+            self.isHydratingReviewCandidates = false
+        }
+    }
+
+    private struct HydrationTrack: Sendable {
+        let trackMBID: String
+        let artist: String
+        let title: String
+        let durationMs: Int
+        let isCompilation: Bool
+        let candidateFilePaths: [String]
+    }
+
+    nonisolated private static func _scoreHydration(
+        pending: [HydrationTrack], paths: [String],
+        kinds: [String: LibraryFolder.Kind], container: ModelContainer
+    ) -> [String: [ScoredCandidate]] {
+        let ctx = ModelContext(container)
+        // Only the candidate rows, and only the columns scoring reads (fileName → stem/version,
+        // artistFolder → artist score, durationMs → duration score, format → sort tiebreak,
+        // libraryFolderID → kind boost). parentFolder/grandparentFolder aren't read by
+        // scoreFile or sortCandidates, so they're left unfetched and passed as "".
+        var fd = FetchDescriptor<LocalFileEntity>(predicate: #Predicate { paths.contains($0.filePath) })
+        fd.propertiesToFetch = [\.filePath, \.fileName, \.artistFolder, \.durationMs, \.format, \.libraryFolderID]
+        var fileByPath: [String: FileSummary] = [:]
+        for f in (try? ctx.fetch(fd)) ?? [] {
+            fileByPath[f.filePath] = FileSummary(id: f.persistentModelID, filePath: f.filePath,
+                                                 fileName: f.fileName, parentFolder: "",
+                                                 grandparentFolder: "", format: f.format,
+                                                 durationMs: f.durationMs, artistFolder: f.artistFolder,
+                                                 folderKind: kinds[f.libraryFolderID])
+        }
+
+        var result: [String: [ScoredCandidate]] = [:]
+        for track in pending {
             let (trackBase, trackVersion) = FuzzyMatch.splitVersion(track.title)
             let trackTitleTokens = Set(trackBase.split(separator: " ").map(String.init))
-            let trackDurationMs = track.durationMs ?? 0
 
             // Real scores, recomputed from the persisted paths — same formula the live scan
             // uses (stemAndVersion + scoreFile), just run for one already-known file per
@@ -1458,26 +1511,21 @@ final class FileMatchCoordinator {
             // only, no disk walk.
             let candidates: [ScoredCandidate] = track.candidateFilePaths.compactMap { path -> ScoredCandidate? in
                 guard let file = fileByPath[path] else { return nil }
-                let (stemTokens, version) = FileMatchCoordinator.stemAndVersion(fileName: file.fileName)
-                let artistScore = FileMatchCoordinator.artistFolderScore(trackArtist: artist,
-                                                                         folderName: file.artistFolder)
-                let summary = FileSummary(id: file.persistentModelID, filePath: file.filePath,
-                                          fileName: file.fileName, parentFolder: file.parentFolder,
-                                          grandparentFolder: file.grandparentFolder, format: file.format,
-                                          durationMs: file.durationMs, artistFolder: file.artistFolder,
-                                          folderKind: kinds[file.libraryFolderID])
-                return FileMatchCoordinator.scoreFile(summary, stemTokens: stemTokens, version: version,
-                                                      trackTitleTokens: trackTitleTokens,
-                                                      trackVersion: trackVersion,
-                                                      trackDurationMs: trackDurationMs,
-                                                      artistScore: artistScore,
-                                                      kindBoost: FileMatchCoordinator.folderKindBoost(
-                                                          isCompilation: compilation, kind: summary.folderKind))
+                let (stemTokens, version) = stemAndVersion(fileName: file.fileName)
+                let artistScore = artistFolderScore(trackArtist: track.artist, folderName: file.artistFolder)
+                return scoreFile(file, stemTokens: stemTokens, version: version,
+                                 trackTitleTokens: trackTitleTokens,
+                                 trackVersion: trackVersion,
+                                 trackDurationMs: track.durationMs,
+                                 artistScore: artistScore,
+                                 kindBoost: folderKindBoost(isCompilation: track.isCompilation,
+                                                            kind: file.folderKind))
             }
             if !candidates.isEmpty {
-                reviewCandidates[track.trackMBID] = FileMatchCoordinator.sortCandidates(candidates)
+                result[track.trackMBID] = sortCandidates(candidates)
             }
         }
+        return result
     }
 
     // MARK: - SwiftData helpers (all @MainActor)
