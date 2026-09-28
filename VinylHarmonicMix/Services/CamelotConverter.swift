@@ -1,6 +1,6 @@
 import Foundation
 
-enum CamelotConverter {
+nonisolated enum CamelotConverter {
 
     static func camelotCode(forNote note: String?, scale: String?) -> String? {
         guard let note, let scale else { return nil }

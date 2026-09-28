@@ -27,10 +27,10 @@ enum LocalLibraryService {
     static let displayPathKey = "localLibraryDisplayPath"
     static let foldersKey     = "localLibraryFolders"
 
-    private static let audioExtensions: Set<String> = [
+    nonisolated private static let audioExtensions: Set<String> = [
         "flac", "mp3", "aiff", "aif", "wav", "m4a", "mp4", "ogg", "opus"
     ]
-    private static let junkFolderNames: Set<String> = ["#recycle", "@eaDir"]
+    nonisolated private static let junkFolderNames: Set<String> = ["#recycle", "@eaDir"]
 
     // MARK: - Library folders
 

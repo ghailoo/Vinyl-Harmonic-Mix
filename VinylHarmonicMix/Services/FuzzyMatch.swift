@@ -9,7 +9,7 @@ enum FuzzyMatch {
 
     // Stripped before comparing version tokens — these words carry no distinguishing info.
     // "Dime and Dollar mix" → {dime, dollar}; "Original Radio Mix" → {original, radio}
-    private static let versionFillerWords: Set<String> = [
+    nonisolated private static let versionFillerWords: Set<String> = [
         "mix", "remix", "version", "ver", "vers", "edit", "re", "the", "a", "and"
     ]
 
