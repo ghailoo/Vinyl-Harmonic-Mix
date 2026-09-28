@@ -25,13 +25,13 @@ struct ContentView: View {
                 Group {
                     switch sidebarSelection {
                     case .sets:
-                        SetsView()
+                        SetsView().onAppear { PerfLog.pageAppeared("Sets") }
                     case .stats:
-                        CollectionStatsView()
+                        CollectionStatsView().onAppear { PerfLog.pageAppeared("Stats") }
                     case .fileMatches:
-                        FileMatchesView()
+                        FileMatchesView().onAppear { PerfLog.pageAppeared("File Matches") }
                     default:
-                        SetBuilderView()
+                        SetBuilderView().onAppear { PerfLog.pageAppeared("Collection") }
                     }
                 }
             }
@@ -59,7 +59,13 @@ struct ContentView: View {
 
 #if os(macOS)
     private var macSidebar: some View {
-        List(selection: $sidebarSelection) {
+        List(selection: Binding(
+            get: { sidebarSelection },
+            set: { new in
+                if let new, new != sidebarSelection { PerfLog.beginSwitch(to: new.rawValue) }
+                sidebarSelection = new
+            }
+        )) {
             Label("Collection", systemImage: "record.circle")
                 .tag(SidebarItem.collection)
             Label("Sets", systemImage: "list.bullet.rectangle")
