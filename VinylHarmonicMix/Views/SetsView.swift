@@ -10,19 +10,51 @@ struct SetsView: View {
     @State private var showDeleteConfirmation = false
     @State private var renamingSet: SetlistEntity?
     @State private var renameText = ""
+    @AppStorage("setsListWidth") private var listWidth: Double = 240
 
+    // Plain HSplitView (not a nested NavigationSplitView) so the page fills ContentView's
+    // detail pane like the other sections instead of adding a third column + toolbar.
     var body: some View {
-        NavigationSplitView {
+        HSplitView {
             listPanel
-        } detail: {
+                .frame(minWidth: 200, idealWidth: listWidth, maxWidth: 420)
+                .background(listWidthObserver)
             detailPanel
+                .frame(minWidth: 360)
+                .layoutPriority(1)
         }
+    }
+
+    // ponytail: HSplitView has no divider binding — same live-width observer trick as FileMatchesView.
+    private var listWidthObserver: some View {
+        GeometryReader { geo in
+            Color.clear.onChange(of: geo.size.width) { _, w in
+                if w > 0 { listWidth = w }
+            }
+        }
+    }
+
+    private var listHeader: some View {
+        HStack {
+            Text("Sets")
+                .font(.headline)
+            Spacer()
+            Button(action: createNewSet) {
+                Label("New Set", systemImage: "plus")
+            }
+            .buttonStyle(.borderless)
+            .help("Create new set")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     // MARK: - List panel
 
     private var listPanel: some View {
         VStack(spacing: 0) {
+            listHeader
+            Divider()
             if sets.isEmpty {
                 emptyState
             } else {
@@ -39,17 +71,6 @@ struct SetsView: View {
                 .listStyle(.sidebar)
             }
         }
-        .navigationSplitViewColumnWidth(min: 200, ideal: 240)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button(action: createNewSet) {
-                    Label("New Set", systemImage: "plus")
-                }
-                .help("Create new set")
-                .accessibilityLabel("Create new set")
-            }
-        }
-        .navigationTitle("Sets")
         .sheet(isPresented: Binding(
             get: { renamingSet != nil },
             set: { if !$0 { renamingSet = nil } }
