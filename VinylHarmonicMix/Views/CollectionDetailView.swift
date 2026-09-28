@@ -45,11 +45,11 @@ struct CollectionDetailView: View {
     @State private var showUnlinkConfirmation = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            closeBar
-            Divider()
-            contentBody
-        }
+        contentBody
+            .overlay(alignment: .topTrailing) {
+                // Header hosts Done once loaded; loading/error states get it here.
+                if detail == nil { doneButton.padding(16) }
+            }
         .frame(minWidth: 560, idealWidth: 640, minHeight: 600, idealHeight: 720)
         .task(id: item.id) {
             await load()
@@ -67,25 +67,11 @@ struct CollectionDetailView: View {
         }
     }
 
-    // MARK: - Top bar
+    // MARK: - Done
 
-    private var closeBar: some View {
-        HStack {
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.title)
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .keyboardShortcut(.cancelAction)
-            .help("Close")
-            .accessibilityLabel("Close")
-            Spacer()
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
+    private var doneButton: some View {
+        Button("Done") { dismiss() }
+            .keyboardShortcut(.cancelAction)   // Escape
     }
 
     // MARK: - Content states
@@ -143,7 +129,8 @@ struct CollectionDetailView: View {
         HStack(alignment: .top, spacing: 20) {
             coverImage
             infoStack(detail: detail)
-            Spacer()
+            Spacer(minLength: 0)
+            doneButton
         }
         .padding(.horizontal, 20)
         .padding(.top, 20)
@@ -177,51 +164,70 @@ struct CollectionDetailView: View {
 
             if galleryURLs.count > 1 {
                 HStack {
-                    Button {
+                    galleryArrow("chevron.left", label: "Previous photo") {
                         galleryIndex = galleryIndex > 0 ? galleryIndex - 1 : galleryURLs.count - 1
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(.white)
-                            .padding(8)
-                            .background(Circle().fill(.black.opacity(0.5)))
                     }
-                    .buttonStyle(.plain)
-                    .help("Previous photo")
-                    .accessibilityLabel("Previous photo")
-
                     Spacer()
-
-                    Button {
+                    galleryArrow("chevron.right", label: "Next photo") {
                         galleryIndex = galleryIndex < galleryURLs.count - 1 ? galleryIndex + 1 : 0
-                    } label: {
-                        Image(systemName: "chevron.right")
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(.white)
-                            .padding(8)
-                            .background(Circle().fill(.black.opacity(0.5)))
                     }
-                    .buttonStyle(.plain)
-                    .help("Next photo")
-                    .accessibilityLabel("Next photo")
                 }
                 .padding(.horizontal, 8)
                 .frame(width: 240, height: 240)
 
                 VStack {
                     Spacer()
-                    Text("\(galleryIndex + 1) / \(galleryURLs.count)")
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Capsule().fill(.black.opacity(0.5)))
+                    galleryPager
                         .padding(.bottom, 8)
                 }
                 .frame(width: 240, height: 240)
             }
         }
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.1), lineWidth: 1))
+    }
+
+    // Material (not flat black) so the controls stay legible over light and dark sleeves alike.
+    private func galleryArrow(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.primary)
+                .frame(width: 30, height: 30)
+                .background(.regularMaterial, in: Circle())
+                .overlay(Circle().strokeBorder(Color.primary.opacity(0.15), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
+        }
+        .buttonStyle(.plain)
+        .help(label)
+        .accessibilityLabel(label)
+    }
+
+    /// Clickable page dots; falls back to "3 / 12" text when dots would crowd the 240pt cover.
+    private var galleryPager: some View {
+        HStack(spacing: 2) {
+            if galleryURLs.count <= 10 {
+                ForEach(galleryURLs.indices, id: \.self) { i in
+                    Button { galleryIndex = i } label: {
+                        Circle()
+                            .fill(i == galleryIndex ? Color.primary : Color.primary.opacity(0.3))
+                            .frame(width: 7, height: 7)
+                            .padding(3)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Photo \(i + 1) of \(galleryURLs.count)")
+                    .accessibilityLabel("Photo \(i + 1) of \(galleryURLs.count)")
+                }
+            } else {
+                Text("\(galleryIndex + 1) / \(galleryURLs.count)")
+                    .font(.caption2.monospacedDigit())
+                    .padding(.horizontal, 4)
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(.regularMaterial, in: Capsule())
+        .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
     }
 
     private func infoStack(detail: ReleaseDetail) -> some View {
@@ -284,21 +290,39 @@ struct CollectionDetailView: View {
         }.sorted { $0.name < $1.name }
     }
 
+    private var rating: Int { itemEntity?.rating ?? item.rating }
+
+    // Stored in CollectionItemEntity.rating (SwiftData) — the field Discogs sync seeds on
+    // import (never overwrites afterwards) and the Rekordbox export reads. Local only: not
+    // pushed back to Discogs. Clicking the current star clears the rating.
     private var starRow: some View {
         HStack(spacing: 3) {
             ForEach(1...5, id: \.self) { star in
-                Image(systemName: item.rating > 0 && star <= item.rating ? "star.fill" : "star")
-                    .font(.body)
-                    .foregroundStyle(
-                        item.rating > 0 && star <= item.rating ? Color.accentColor : Color.secondary
-                    )
-            }
-            if item.rating == 0 {
-                Text("Not rated")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                Button { setRating(star == rating ? 0 : star) } label: {
+                    Image(systemName: star <= rating ? "star.fill" : "star")
+                        .font(.body)
+                        .foregroundStyle(star <= rating ? Color.accentColor : Color.secondary)
+                }
+                .buttonStyle(.plain)
+                .help(star == rating ? "Clear rating" : "Rate \(star) of 5")
             }
         }
+        .disabled(itemEntity == nil)
+        .accessibilityElement()
+        .accessibilityLabel("Rating")
+        .accessibilityValue(rating == 0 ? "Not rated" : "\(rating) of 5")
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: setRating(min(rating + 1, 5))
+            case .decrement: setRating(max(rating - 1, 0))
+            @unknown default: break
+            }
+        }
+    }
+
+    private func setRating(_ value: Int) {
+        itemEntity?.rating = value
+        try? modelContext.save()
     }
 
     private func formatBadge(_ fmt: Format) -> some View {
@@ -392,21 +416,6 @@ struct CollectionDetailView: View {
                             .font(.body)
                             .lineLimit(2)
                         Spacer()
-                        if let te = trackEntityByPos {
-                            Button {
-                                editingTrackMBID = te.trackMBID
-                                recordingMBIDInput = te.recordingMBID
-                                recordingMBIDInputError = nil
-                            } label: {
-                                Image(systemName: "waveform.badge.magnifyingglass")
-                                    .font(.body)
-                                    .foregroundStyle(.quaternary)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Set or correct the recording MBID for this track")
-                            .accessibilityLabel("Set or correct the recording MBID for this track")
-                            .padding(.trailing, 4)
-                        }
                         if let fp = filePath {
                             Button {
                                 playback.play(filePath: fp)
@@ -482,13 +491,6 @@ struct CollectionDetailView: View {
                             .padding(.leading, 40)
                     }
 
-                    if let te = trackEntityByPos, editingTrackMBID == te.trackMBID {
-                        perTrackMBIDEditField(trackEntity: te)
-                            .padding(.bottom, 6)
-                            .padding(.horizontal, 20)
-                            .padding(.leading, 40)
-                    }
-
                     if let te = trackEntityByPos {
                         perTrackFileLinkRow(trackEntity: te)
                             .padding(.bottom, 6)
@@ -498,6 +500,8 @@ struct CollectionDetailView: View {
                 }
             }
 
+            manualRecordingMBIDGroup
+
             if let status = singleEnrichStatus {
                 Label(status, systemImage: "arrow.clockwise")
                     .font(.caption)
@@ -505,6 +509,48 @@ struct CollectionDetailView: View {
                     .padding(.horizontal, 20)
                     .padding(.top, 4)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var manualRecordingMBIDGroup: some View {
+        if !trackEntities.isEmpty {
+            DisclosureGroup("Set recording MBIDs manually") {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(trackEntities.sorted {
+                        $0.position.localizedStandardCompare($1.position) == .orderedAscending
+                    }) { te in
+                        HStack(spacing: 8) {
+                            Text(te.position)
+                                .font(.body.monospaced())
+                                .foregroundStyle(.secondary)
+                                .frame(width: 40, alignment: .leading)
+                            Text(te.title)
+                                .lineLimit(1)
+                            Spacer(minLength: 8)
+                            Text(te.recordingMBID.isEmpty ? "—" : String(te.recordingMBID.prefix(8)) + "…")
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.tertiary)
+                            Button("Edit…") {
+                                editingTrackMBID = te.trackMBID
+                                recordingMBIDInput = te.recordingMBID
+                                recordingMBIDInputError = nil
+                            }
+                            .controlSize(.small)
+                            .disabled(editingTrackMBID == te.trackMBID)
+                            .help("Set or correct the recording MBID for this track")
+                        }
+                        if editingTrackMBID == te.trackMBID {
+                            perTrackMBIDEditField(trackEntity: te)
+                                .padding(.leading, 48)
+                        }
+                    }
+                }
+                .padding(.top, 6)
+            }
+            .font(.callout)
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
         }
     }
 
@@ -733,40 +779,45 @@ struct CollectionDetailView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
 
-                    Divider()
-                    Text("Paste a release MBID to import tracks & audio features:")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    HStack(spacing: 6) {
-                        TextField("e.g. 550e8400-e29b-41d4-a716-446655440000", text: $manualReleaseMBID)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.system(.caption, design: .monospaced))
-                            .onChange(of: manualReleaseMBID) { _, newValue in
-                                let normalized = normalizeMBIDInput(newValue)
-                                if normalized != newValue { manualReleaseMBID = normalized }
+                    DisclosureGroup("Enter release MBID manually") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Paste a release MBID to import tracks & audio features:")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            HStack(spacing: 6) {
+                                TextField("e.g. 550e8400-e29b-41d4-a716-446655440000", text: $manualReleaseMBID)
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .onChange(of: manualReleaseMBID) { _, newValue in
+                                        let normalized = normalizeMBIDInput(newValue)
+                                        if normalized != newValue { manualReleaseMBID = normalized }
+                                    }
+                                Button("Fetch") {
+                                    let trimmed = manualReleaseMBID.trimmingCharacters(in: .whitespaces)
+                                    guard isValidMBID(trimmed) else {
+                                        manualReleaseMBIDError = "Not a valid MBID (8-4-4-4-12 hex characters)"
+                                        return
+                                    }
+                                    manualReleaseMBIDError = nil
+                                    manualReleaseMBID = ""
+                                    scanCoordinator.setMBIDManuallyAndEnrich(
+                                        instanceId: item.id,
+                                        mbid: trimmed,
+                                        recordingsCoordinator: recordingsCoordinator,
+                                        audioFeaturesCoordinator: audioFeaturesCoordinator
+                                    )
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
+                                .disabled(!isValidMBID(manualReleaseMBID.trimmingCharacters(in: .whitespaces)))
                             }
-                        Button("Fetch") {
-                            let trimmed = manualReleaseMBID.trimmingCharacters(in: .whitespaces)
-                            guard isValidMBID(trimmed) else {
-                                manualReleaseMBIDError = "Not a valid MBID (8-4-4-4-12 hex characters)"
-                                return
+                            if let err = manualReleaseMBIDError {
+                                Text(err).font(.caption2).foregroundStyle(.red)
                             }
-                            manualReleaseMBIDError = nil
-                            manualReleaseMBID = ""
-                            scanCoordinator.setMBIDManuallyAndEnrich(
-                                instanceId: item.id,
-                                mbid: trimmed,
-                                recordingsCoordinator: recordingsCoordinator,
-                                audioFeaturesCoordinator: audioFeaturesCoordinator
-                            )
                         }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                        .disabled(!isValidMBID(manualReleaseMBID.trimmingCharacters(in: .whitespaces)))
+                        .padding(.top, 6)
                     }
-                    if let err = manualReleaseMBIDError {
-                        Text(err).font(.caption2).foregroundStyle(.red)
-                    }
+                    .font(.callout)
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 12)
