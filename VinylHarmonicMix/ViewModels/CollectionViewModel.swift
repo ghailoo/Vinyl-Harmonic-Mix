@@ -280,18 +280,16 @@ final class CollectionViewModel {
 
     func refreshSetBuilderLookups() {
         guard !setBuilderRefreshRunning else { setBuilderRefreshPending = true; return }
-        // Counts of exactly what SetBuilderLookups.compute reads: AB features, tracks, local
-        // features, linked paths, and analyzed files (effectiveBpm / featureSource fall back to
-        // the linked file's bpm — "Link folder…" + Detect BPM/Key only ever change these last two).
-        let signature = [
+        // Linking and file-level BPM/key edit existing rows, so they're caught by setBuilderDirty
+        // (coordinator hooks), not by counts. These unfiltered counts are a cheap safety net for
+        // inserts/deletes made outside those hooks. ponytail: filtered counts (linked tracks,
+        // LocalFileEntity bpm > 0) were dropped — the bpm one full-scans ~45k rows (~10 ms) on main
+        // every save during Detect BPM/Key. Re-add only behind an index if a writer escapes the hooks.
+        let signature = PerfLog.measure("CollectionViewModel.setBuilderSignature") { [
             (try? context.fetchCount(FetchDescriptor<RecordingFeaturesEntity>())) ?? 0,
             (try? context.fetchCount(FetchDescriptor<TrackEntity>())) ?? 0,
             (try? context.fetchCount(FetchDescriptor<LocalAudioFeaturesEntity>())) ?? 0,
-            (try? context.fetchCount(FetchDescriptor<TrackEntity>(
-                predicate: #Predicate { $0.primaryLocalFilePath != nil }))) ?? 0,
-            (try? context.fetchCount(FetchDescriptor<LocalFileEntity>(
-                predicate: #Predicate { $0.bpm > 0 }))) ?? 0,
-        ]
+        ] }
         let rebuild = setBuilderDirty || signature != setBuilderLastSignature
         // Cleared up front: an invalidation landing mid-rebuild re-dirties and its save re-queues us.
         if rebuild { setBuilderDirty = false }
