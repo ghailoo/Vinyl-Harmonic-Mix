@@ -43,8 +43,11 @@ Send finished sets to Rekordbox as a standard XML library, ready to drop into yo
 ## Requirements
 
 - macOS 15 or later
-- A Discogs account and collection
 - Xcode 26 or later, to build from source
+- A Discogs account with your collection on it, and a Discogs personal access token (Discogs → Settings → Developers)
+- A local music library — a folder or mounted drive of audio files (MP3, FLAC, WAV, …)
+- For local BPM/key analysis and cue detection: Python 3 with [Essentia](https://essentia.upf.edu). The app looks for `python3` in `/opt/homebrew/bin`, `/usr/local/bin`, then your `PATH`, and Settings has an Install button that runs `pip install essentia` for you.
+- Optional, for audio fingerprint verification: `fpcalc` (`brew install chromaprint`) and a free [AcoustID](https://acoustid.org/new-application) API key
 
 ## Getting Started
 
@@ -54,7 +57,9 @@ cd Vinyl-Harmonic-Mix
 open VinylHarmonicMix.xcodeproj
 ```
 
-Build and run with `⌘R`. On first launch, add your Discogs API credentials and point the app at your local audio library in Settings.
+In Xcode, select the VinylHarmonicMix target → Signing & Capabilities and pick your own team (or "Sign to Run Locally"). Then build and run with `⌘R`.
+
+On first launch, open Settings to add your Discogs token, add your music library folder, and — if you want local analysis — check that Essentia is detected. The Python analysis scripts in `Scripts/` are bundled into the app at build time; nothing needs to be copied by hand.
 
 ## Under the Hood
 
@@ -66,6 +71,10 @@ Build and run with `⌘R`. On first launch, add your Discogs API credentials and
 ## Status
 
 VinylHarmonicMix is a personal project, under active development. Expect rough edges.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
 
 ---
 
