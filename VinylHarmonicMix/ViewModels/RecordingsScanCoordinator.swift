@@ -37,8 +37,8 @@ final class RecordingsScanCoordinator {
     private var scanTask: Task<Void, Never>?
     private var processedCount: Int = 0
 
-    /// Fired when a release's tracks are replaced (card badge cache invalidation) — delete +
-    /// reinsert can leave the TrackEntity count unchanged while every link is dropped.
+    /// Fired when a release's tracks are enriched (card badge cache invalidation) — filling
+    /// recordingMBID in place leaves the TrackEntity count unchanged.
     var onTrackDataChanged: (() -> Void)? = nil
 
     init(context: ModelContext) {
@@ -173,22 +173,7 @@ final class RecordingsScanCoordinator {
             do {
                 let recordings = try await client.fetchRecordings(forReleaseMBID: entity.mbid!)
 
-                // Delete stale tracks before inserting fresh ones
-                let existingTracks = entity.tracks
-                for track in existingTracks { context.delete(track) }
-
-                for match in recordings {
-                    let track = TrackEntity(
-                        trackMBID: match.trackMBID,
-                        recordingMBID: match.recordingMBID,
-                        position: match.position,
-                        title: match.title,
-                        durationMs: match.durationMs,
-                        artistCredit: match.artistCredit
-                    )
-                    track.collectionItem = entity
-                    context.insert(track)
-                }
+                mergeRecordings(recordings, into: entity)
                 onTrackDataChanged?()
                 entity.recordingsScanState = RecordingsScanState.fetched.rawValue
                 entity.recordingsScannedAt = Date()
@@ -215,6 +200,38 @@ final class RecordingsScanCoordinator {
 
         do { try context.save() } catch { print("❌ Final save: \(error)") }
         currentItem = nil
+    }
+
+    /// Enrich, never replace: Discogs is the track-list source of truth; MusicBrainz only adds.
+    /// Deletes nothing. Each recording pairs with an existing track — same trackMBID first (a
+    /// re-fetch), else same normalized position — and fills only its EMPTY recordingMBID /
+    /// durationMs / artistCredit. trackMBID (file-match identity), title, match state, file links,
+    /// candidates and local features are never touched. Only an unmatched position is inserted;
+    /// local tracks MusicBrainz doesn't list are left alone.
+    func mergeRecordings(_ recordings: [RecordingMBIDMatch], into entity: CollectionItemEntity) {   // internal for tests
+        var unpaired = entity.tracks
+        for rec in recordings {
+            let pos = TrackEntity.normalizedPosition(rec.position)
+            if let i = unpaired.firstIndex(where: { $0.trackMBID == rec.trackMBID })
+                ?? unpaired.firstIndex(where: { TrackEntity.normalizedPosition($0.position) == pos }) {
+                let track = unpaired.remove(at: i)
+                if track.recordingMBID.isEmpty { track.recordingMBID = rec.recordingMBID }
+                if (track.durationMs ?? 0) == 0, let ms = rec.durationMs, ms > 0 { track.durationMs = ms }
+                if track.artistCredit.isEmpty { track.artistCredit = rec.artistCredit }
+                continue
+            }
+            // trackMBID is @Attribute(.unique): inserting one that exists anywhere would upsert
+            // over that row (and its links). Skip instead.
+            let id = rec.trackMBID
+            var fd = FetchDescriptor<TrackEntity>(predicate: #Predicate { $0.trackMBID == id })
+            fd.fetchLimit = 1
+            guard ((try? context.fetchCount(fd)) ?? 0) == 0 else { continue }
+            let track = TrackEntity(trackMBID: rec.trackMBID, recordingMBID: rec.recordingMBID,
+                                    position: rec.position, title: rec.title,
+                                    durationMs: rec.durationMs, artistCredit: rec.artistCredit)
+            track.collectionItem = entity
+            context.insert(track)
+        }
     }
 
     // Fetch recordings for a single release and create its TrackEntity rows.
@@ -403,8 +420,7 @@ final class RecordingsScanCoordinator {
             for entity in all where entity.mbid != nil {
                 entity.recordingsScanState = RecordingsScanState.unscanned.rawValue
                 entity.recordingsScannedAt = nil
-                let existing = entity.tracks
-                for track in existing { context.delete(track) }
+                // No track deletes: the re-fetch enriches via mergeRecordings (links survive).
             }
             try? context.save()
             processedCount = 0

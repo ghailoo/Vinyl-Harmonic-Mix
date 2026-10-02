@@ -35,6 +35,11 @@ final class TrackEntity {
         self.fetchedAt = .now
     }
 
+    /// "a 1" → "A1". Shared by the release sheet's row lookup and the recordings merge.
+    nonisolated static func normalizedPosition(_ s: String) -> String {
+        s.replacingOccurrences(of: " ", with: "").uppercased()
+    }
+
     // MARK: - Effective feature accessors (local > AcousticBrainz)
 
     enum FeatureSource: String {

@@ -1306,9 +1306,7 @@ struct CollectionDetailView: View {
         featureEntities.first { $0.recordingMBID == rmbid }
     }
 
-    private func normalizePosition(_ s: String) -> String {
-        s.replacingOccurrences(of: " ", with: "").uppercased()
-    }
+    private func normalizePosition(_ s: String) -> String { TrackEntity.normalizedPosition(s) }
 
     private func recordingMBID(forPosition position: String, fallbackIndex: Int? = nil) -> String? {
         guard !position.isEmpty else { return nil }
