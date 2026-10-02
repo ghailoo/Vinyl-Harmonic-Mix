@@ -188,9 +188,9 @@ private func mixCheck(trackTitle: String, candidateVersion: String?) -> MixCheck
 
 /// Splits `original` into (text, highlighted mix/version substring) for display, using
 /// FuzzyMatch.splitVersion to find the version fragment and a plain substring search to
-/// locate it in the original (un-normalized) casing/punctuation.
+/// locate it in the original (un-normalized) casing/punctuation. Also used by LinkFolderSheet.
 @ViewBuilder
-private func compareLine(icon: String, original: String) -> some View {
+func compareLine(icon: String, original: String) -> some View {
     let version = FuzzyMatch.splitVersion(original).version
     HStack(alignment: .firstTextBaseline, spacing: 6) {
         Image(systemName: icon).font(.caption).foregroundStyle(.secondary)

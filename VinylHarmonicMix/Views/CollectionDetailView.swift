@@ -19,6 +19,7 @@ struct CollectionDetailView: View {
     @Environment(AudioFeaturesScanCoordinator.self) private var audioFeaturesCoordinator
     @Environment(FileMatchCoordinator.self) private var fileMatchCoordinator
     @Environment(LocalAnalysisCoordinator.self) private var localAnalysisCoordinator
+    @Environment(CueDetectionCoordinator.self) private var cueDetectionCoordinator
 
     @State private var detail: ReleaseDetail?
     @State private var isLoading = false
@@ -43,6 +44,11 @@ struct CollectionDetailView: View {
     @State private var analyzingTrackPath: String? = nil
     @State private var prefetchedPaths: [String] = []
     @State private var showUnlinkConfirmation = false
+    // "Link folder…": confirmation sheet, subfolder question, and the read → link → analyze run
+    @State private var folderLinkProposal: LinkFolderSheet.Proposal? = nil
+    @State private var nestedAudioFolder: URL? = nil
+    @State private var folderLinkStatus: String? = nil
+    @State private var folderLinkTask: Task<Void, Never>? = nil
 
     var body: some View {
         contentBody
@@ -64,6 +70,19 @@ struct CollectionDetailView: View {
                 loadTrackEntities()
                 loadFeatureEntities()
             }
+        }
+        .sheet(item: $folderLinkProposal) { proposal in
+            LinkFolderSheet(proposal: proposal) { links in linkFolder(links, folder: proposal.folder) }
+        }
+        .confirmationDialog("This folder has subfolders with audio",
+                            isPresented: Binding(get: { nestedAudioFolder != nil },
+                                                 set: { if !$0 { nestedAudioFolder = nil } }),
+                            presenting: nestedAudioFolder) { folder in
+            Button("Include subfolders") { readFolderToLink(folder, recursive: true) }
+            Button("This folder only") { readFolderToLink(folder, recursive: false) }
+            Button("Cancel", role: .cancel) { }
+        } message: { folder in
+            Text("Also read the audio files inside the subfolders of “\(folder.lastPathComponent)”?")
         }
     }
 
@@ -365,13 +384,25 @@ struct CollectionDetailView: View {
     private func tracklistSection(detail: ReleaseDetail) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Tracklist")
-                    .font(.title3.weight(.semibold))
+                HStack {
+                    Text("Tracklist")
+                        .font(.title3.weight(.semibold))
+                    Spacer()
+                    Button("Link folder…") { pickFolderToLink() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(trackEntities.isEmpty || folderLinkTask != nil)
+                        .help(trackEntities.isEmpty
+                              ? "Create or fetch this release's tracks first"
+                              : "Choose the folder holding this release's files and link them to these tracks")
+                }
                 Divider()
             }
             .padding(.horizontal, 20)
             .padding(.top, 20)
             .padding(.bottom, 4)
+
+            folderLinkProgressRow
 
             if trackEntities.isEmpty, detail.tracklist.contains(where: { !$0.position.isEmpty }) {
                 HStack(spacing: 8) {
@@ -1028,6 +1059,214 @@ struct CollectionDetailView: View {
     private func libraryRootURL() -> URL? {
         guard let path = LocalLibraryService.folders().first?.displayPath else { return nil }
         return URL(fileURLWithPath: path)
+    }
+
+    // MARK: - Link folder…
+
+    private func pickFolderToLink() {
+#if os(macOS)
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        // Start next to an already-linked file of this release when there is one.
+        panel.directoryURL = trackEntities.lazy.compactMap(\.primaryLocalFilePath).first
+            .map { URL(fileURLWithPath: $0).deletingLastPathComponent().deletingLastPathComponent() }
+            ?? libraryRootURL()
+        panel.message = "Choose the folder that holds this release's files"
+        panel.prompt = "Choose"
+        guard panel.runModal() == .OK, let folder = panel.url else { return }
+        folderLinkStatus = "Reading \(folder.lastPathComponent)…"
+        folderLinkTask = Task {
+            let nested = await Task.detached(priority: .userInitiated) {
+                LocalLibraryService.hasNestedAudio(in: folder)
+            }.value
+            folderLinkTask = nil
+            guard !Task.isCancelled else { folderLinkStatus = nil; return }
+            if nested {
+                folderLinkStatus = nil
+                nestedAudioFolder = folder   // asks before recursing
+            } else {
+                readFolderToLink(folder, recursive: false)
+            }
+        }
+#endif
+    }
+
+    /// Reads the folder off the main actor, pairs files with this release's tracks and opens the
+    /// confirmation sheet. Writes nothing.
+    private func readFolderToLink(_ folder: URL, recursive: Bool) {
+        guard let detail else { return }
+        folderLinkStatus = "Reading \(folder.lastPathComponent)…"
+        folderLinkTask = Task {
+            defer { folderLinkTask = nil }
+            let files = await Task.detached(priority: .userInitiated) {
+                LocalLibraryService.audioFiles(in: folder, recursive: recursive).map {
+                    ReleaseFolderMatcher.FileInfo(path: $0.path, fileName: $0.lastPathComponent,
+                                                  durationMs: FileMatchCoordinator.readDurationMs(path: $0.path))
+                }
+            }.value
+            guard !Task.isCancelled else { folderLinkStatus = nil; return }
+            guard !files.isEmpty else {
+                folderLinkStatus = "No audio files in “\(folder.lastPathComponent)”"
+                    + (recursive ? "" : " itself — subfolders were not read")
+                return
+            }
+            folderLinkStatus = nil
+
+            let tracks = tracksInTracklistOrder(detail)
+            let proposals = Dictionary(uniqueKeysWithValues:
+                ReleaseFolderMatcher.propose(tracks: tracks.map(\.info), files: files).map { ($0.trackMBID, $0) })
+
+            // Files in this folder already confirmed for some track — never taken silently.
+            let paths = files.map(\.path)
+            let known = (try? modelContext.fetch(FetchDescriptor<LocalFileEntity>(
+                predicate: #Predicate { paths.contains($0.filePath) }))) ?? []
+            var owners: [String: LinkFolderSheet.Owner] = [:]
+            for file in known {
+                guard let t = file.track, t.fileMatchState == "confident",
+                      t.primaryLocalFilePath == file.filePath else { continue }
+                owners[file.filePath] = .init(trackMBID: t.trackMBID, label: "\(t.artistCredit) – \(t.title)")
+            }
+
+            let rows = tracks.map { entity, info -> LinkFolderSheet.Row in
+                let proposal = proposals[entity.trackMBID]
+                let current = entity.fileMatchState == "confident" ? entity.primaryLocalFilePath : nil
+                let fileIsFree = proposal.map { owners[$0.filePath].map { $0.trackMBID == entity.trackMBID } ?? true } ?? false
+                return .init(id: entity.trackMBID, position: info.position,
+                             trackLine: "\(entity.artistCredit) – \(entity.title)",
+                             currentPath: current, filePath: proposal?.filePath,
+                             // Pre-ticked only when nothing confirmed would be overwritten.
+                             included: proposal != nil && current == nil && fileIsFree,
+                             note: proposal.map(Self.folderLinkNote) ?? "No file proposed")
+            }
+            folderLinkProposal = .init(folder: folder, inLibrary: LocalLibraryService.isInLibrary(folder.path),
+                                       files: paths, owners: owners, rows: rows)
+        }
+    }
+
+    private static func folderLinkNote(_ p: ReleaseFolderMatcher.Proposal) -> String {
+        let why = switch p.reason {
+        case .order:  "running order"
+        case .number: "track number in file name"
+        case .title:  String(format: "title match %.0f%%", p.titleScore * 100)
+        }
+        return p.durationDiffSec.map { "\(why) · duration ±\($0)s" } ?? why
+    }
+
+    /// This release's tracks in sheet row order — same position / index resolution as the rows,
+    /// carrying the row's position so "A1 …" files match Discogs sides — then any tracks no row reached.
+    private func tracksInTracklistOrder(_ detail: ReleaseDetail)
+        -> [(entity: TrackEntity, info: ReleaseFolderMatcher.TrackInfo)] {
+        var seen = Set<String>()
+        var ordered: [(TrackEntity, String)] = []
+        for (index, row) in detail.tracklist.enumerated() where !row.position.isEmpty {
+            let norm = normalizePosition(row.position)
+            let entity = trackEntities.first { normalizePosition($0.position) == norm }
+                ?? recordingMBID(forPosition: row.position, fallbackIndex: index)
+                    .flatMap { r in trackEntities.first { $0.recordingMBID == r } }
+            if let entity, seen.insert(entity.trackMBID).inserted { ordered.append((entity, row.position)) }
+        }
+        for entity in trackEntities.sorted(by: { $0.position.localizedStandardCompare($1.position) == .orderedAscending })
+        where seen.insert(entity.trackMBID).inserted {
+            ordered.append((entity, entity.position))
+        }
+        return ordered.map { entity, position in
+            (entity, .init(trackMBID: entity.trackMBID, position: position,
+                           title: entity.title, durationMs: entity.durationMs ?? 0))
+        }
+    }
+
+    /// Confirmed pairs → link, bookmark the folder, then BPM/key and cues for just these files.
+    /// Runs through the coordinators (their own tasks + toolbar panels), chained here.
+    private func linkFolder(_ links: [(trackMBID: String, url: URL)], folder: URL) {
+        fileMatchCoordinator.linkFolderFiles(links)
+        LocalLibraryService.recordLinkedFolder(folder)
+        loadTrackEntities()
+        prefetchWaveforms()
+
+        let paths = links.map(\.url.path)
+        let linked = "Linked \(paths.count) file\(paths.count == 1 ? "" : "s")"
+        folderLinkStatus = linked
+        folderLinkTask = Task {
+            defer { folderLinkTask = nil; loadTrackEntities() }
+            guard let bpm = localAnalysisCoordinator.startFileAnalysis(paths: paths) else {
+                folderLinkStatus = "\(linked). BPM/key analysis is busy or unavailable — run Detect BPM/Key later."
+                return
+            }
+            await bpm.value
+            guard !Task.isCancelled, localAnalysisCoordinator.phase == .completed else {
+                folderLinkStatus = "\(linked). BPM/key analysis stopped before finishing."
+                return
+            }
+            let analyzed = "BPM/key \(localAnalysisCoordinator.analyzedCount - localAnalysisCoordinator.failedCount) new"
+                + (localAnalysisCoordinator.failedCount > 0 ? ", \(localAnalysisCoordinator.failedCount) failed" : "")
+            loadTrackEntities()
+
+            guard let cues = cueDetectionCoordinator.startDetection(paths: paths) else {
+                folderLinkStatus = "\(linked) · \(analyzed). Cue detection is busy — run Find Cues later."
+                return
+            }
+            await cues.value
+            guard cueDetectionCoordinator.phase == .completed else {
+                folderLinkStatus = "\(linked) · \(analyzed). Cue detection stopped before finishing."
+                return
+            }
+            folderLinkStatus = "\(linked) · \(analyzed) · cues on \(cueDetectionCoordinator.detectedCount)"
+                + (cueDetectionCoordinator.failedCount > 0 ? ", \(cueDetectionCoordinator.failedCount) failed" : "")
+        }
+    }
+
+    private func cancelFolderLink() {
+        folderLinkTask?.cancel()
+        // The awaited coordinator runs don't inherit cancellation — stop them directly.
+        if localAnalysisCoordinator.phase == .analyzing { localAnalysisCoordinator.cancel() }
+        if cueDetectionCoordinator.phase == .detecting { cueDetectionCoordinator.cancel() }
+    }
+
+    /// Live step text + progress while running; the last summary once finished.
+    @ViewBuilder
+    private var folderLinkProgressRow: some View {
+        let running = folderLinkTask != nil
+        let step: (text: String, done: Int, total: Int)? =
+            !running ? nil
+            : localAnalysisCoordinator.phase == .analyzing
+                ? ("Detecting BPM/key \(localAnalysisCoordinator.analyzedCount)/\(localAnalysisCoordinator.totalCount) — \(localAnalysisCoordinator.currentTrackLabel)",
+                   localAnalysisCoordinator.analyzedCount, localAnalysisCoordinator.totalCount)
+            : cueDetectionCoordinator.phase == .detecting
+                ? ("Finding cues \(cueDetectionCoordinator.processedCount)/\(cueDetectionCoordinator.totalCount) — \(cueDetectionCoordinator.currentFileLabel)",
+                   cueDetectionCoordinator.processedCount, cueDetectionCoordinator.totalCount)
+            : nil
+        if let text = step?.text ?? folderLinkStatus {
+            HStack(spacing: 8) {
+                if running {
+                    if let step, step.total > 0 {
+                        ProgressView(value: Double(step.done), total: Double(step.total))
+                            .frame(width: 100)
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
+                }
+                Text(text)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 8)
+                if running {
+                    Button("Cancel") { cancelFolderLink() }
+                        .controlSize(.small)
+                } else {
+                    Button { folderLinkStatus = nil } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help("Dismiss")
+                        .accessibilityLabel("Dismiss")
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 8)
+        }
     }
 
     private func loadEntity() {

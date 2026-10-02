@@ -350,6 +350,27 @@ final class FileMatchCoordinator {
         linkVersion += 1
     }
 
+    /// "Link folder…" apply. Before linking each pair, releases the track's previous file and the
+    /// file's previous confirmed track — the sheet has already asked before replacing either.
+    /// Checked live per pair, so swaps within one release (A1⇄A2) unlink nothing they shouldn't.
+    func linkFolderFiles(_ links: [(trackMBID: String, url: URL)]) {
+        for (trackMBID, url) in links {
+            let path = url.path
+            var td = FetchDescriptor<TrackEntity>(predicate: #Predicate { $0.trackMBID == trackMBID })
+            td.fetchLimit = 1
+            if let current = (try? context.fetch(td))?.first?.primaryLocalFilePath, current != path {
+                unlinkMatch(trackMBID: trackMBID)
+            }
+            var fd = FetchDescriptor<LocalFileEntity>(predicate: #Predicate { $0.filePath == path })
+            fd.fetchLimit = 1
+            if let owner = (try? context.fetch(fd))?.first?.track,
+               owner.trackMBID != trackMBID, owner.primaryLocalFilePath == path {
+                unlinkMatch(trackMBID: owner.trackMBID)
+            }
+            assignFile(trackMBID: trackMBID, url: url)
+        }
+    }
+
     func verifyWithFingerprint(trackMBID: String, recordingMBID: String, filePath: String) async {
         verifyStates[trackMBID] = .running
         guard let fpcalcPath = LocalLibraryService.fpcalcPath(),
