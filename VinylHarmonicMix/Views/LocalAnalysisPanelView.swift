@@ -52,7 +52,7 @@ struct LocalAnalysisPanelView: View {
                     Button("Cancel") { coordinator.cancel() }
                         .controlSize(.small).foregroundStyle(.red)
                 }
-                if coordinator.phase == .completed || coordinator.phase == .cancelled {
+                if coordinator.phase.isIdle {
                     Button("Dismiss") { coordinator.dismissPanel() }.controlSize(.small)
                 }
             }

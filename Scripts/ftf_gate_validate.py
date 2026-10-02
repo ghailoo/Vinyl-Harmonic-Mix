@@ -13,10 +13,14 @@ Gate algorithm:
 Usage: python3 ftf_gate_validate.py
 """
 
+import os
 import sys
 import time
 import numpy as np
 import essentia.standard as es
+
+# Root of your music library; the track paths below are relative to it.
+MUSIC_ROOT = os.environ.get("VHM_MUSIC_ROOT", os.path.expanduser("~/Music"))
 
 # ── constants ─────────────────────────────────────────────────────────────
 _SR      = 44100
@@ -159,84 +163,84 @@ def run_track(path: str, bpm: float, label: str, expected: str) -> dict:
 TRACKS = [
     # ── KNOWN FOUR-TO-FLOOR ─────────────────────────────────────────────
     (
-        "/Volumes/Music/Tracks/Eric Prydz/2008 Eric Prydz - Pjanoo [DIGI0229] WEB"
+        MUSIC_ROOT + "/Eric Prydz/2008 Eric Prydz - Pjanoo [DIGI0229] WEB"
         "/01 Eric Prydz - Pjanoo (Radio Edit).mp3",
         125.99, "Pjanoo – Eric Prydz", "YES",
     ),
     (
-        "/Volumes/Music/Tracks/Eric Prydz/Pryda/2007 - Rymd & Armed/02 - Armed.flac",
+        MUSIC_ROOT + "/Eric Prydz/Pryda/2007 - Rymd & Armed/02 - Armed.flac",
         126.88, "Armed – Pryda", "YES",
     ),
     (
-        "/Volumes/Music/Tracks/Eric Prydz/Pryda/2010 - Illusions & Glimma/01 - Illusions.flac",
+        MUSIC_ROOT + "/Eric Prydz/Pryda/2010 - Illusions & Glimma/01 - Illusions.flac",
         125.99, "Illusions – Pryda", "YES",
     ),
     (
-        "/Volumes/Music/Tracks/Inner City/Inner City - Good Life (US CDS Promo) (1988) - PRCD2622"
+        MUSIC_ROOT + "/Inner City/Inner City - Good Life (US CDS Promo) (1988) - PRCD2622"
         "/02. Inner City - Good Life (Magic Juan Mix).flac",
         125.2, "Good Life (Magic Juan) – Inner City", "YES",
     ),
     (
-        "/Volumes/Music/Tracks/Black Box/Black Box - Everybody Everybody (Freak Remix) (1991).flac",
+        MUSIC_ROOT + "/Black Box/Black Box - Everybody Everybody (Freak Remix) (1991).flac",
         117.69, "Everybody Everybody (Freak Rmx) – Black Box", "YES",
     ),
     (
-        "/Volumes/Music/Tracks/Sharada House Gang/Sharada House Gang - Gypsy Boy, Gypsy Girl (1997) 320"
+        MUSIC_ROOT + "/Sharada House Gang/Sharada House Gang - Gypsy Boy, Gypsy Girl (1997) 320"
         "/03 - Gypsy Boy Gypsy Girl (Van's Hard Mix).mp3",
         123.78, "Gypsy Boy Gypsy Girl (Van's Hard Mix) – Sharada", "YES",
     ),
     (
-        "/Volumes/Music/Tracks/Crystal Waters/1991 - Makin' Happy (Europe CDS) (1991) - 868 849-2"
+        MUSIC_ROOT + "/Crystal Waters/1991 - Makin' Happy (Europe CDS) (1991) - 868 849-2"
         "/02. Crystal Waters - Makin' Happy (Hurley's Happy House Mix).flac",
         120.0, "Makin' Happy (Hurley House Mix) – Crystal Waters", "YES",
     ),
     # ── KNOWN NOT FOUR-TO-FLOOR ─────────────────────────────────────────
     (
-        "/Volumes/Music/Tracks/Felix"
+        MUSIC_ROOT + "/Felix"
         "/1992 - Don't You Want Me (Original Mixes And Remixes) (Europe CDS) (1992) - 74321 11050 2"
         "/01. Felix - Don't You Want Me (Hooj Mix Edit).flac",
         128.01, "Don't You Want Me (Hooj Edit) – Felix", "NO",
     ),
     (
-        "/Volumes/Music/Tracks/Michael Jackson/Michael Jackson - Smooth Criminal. Remixes Vol.1"
+        MUSIC_ROOT + "/Michael Jackson/Michael Jackson - Smooth Criminal. Remixes Vol.1"
         "/Michael Jackson - Smooth Criminal (2006 Electro Remix).mp3",
         128.02, "Smooth Criminal (Electro Remix) – MJ", "NO",
     ),
     (
-        "/Volumes/Music/Tracks/Sade/1988 - Nothing Can Come Between Us"
+        MUSIC_ROOT + "/Sade/1988 - Nothing Can Come Between Us"
         "/01. Nothing Can Come Between Us.mp3",
         103.59, "Nothing Can Come Between Us – Sade", "NO",
     ),
     (
-        "/Volumes/Music/Tracks/Soul II Soul/Soul II Soul - Back to Life (feat. Caron Wheeler).flac",
+        MUSIC_ROOT + "/Soul II Soul/Soul II Soul - Back to Life (feat. Caron Wheeler).flac",
         101.0, "Back to Life – Soul II Soul", "NO",
     ),
     (
-        "/Volumes/Music/Tracks/Simply Red/Simply Red - Something Got Me Started (UK CDM) (1991) - YZ614CD"
+        MUSIC_ROOT + "/Simply Red/Simply Red - Something Got Me Started (UK CDM) (1991) - YZ614CD"
         "/04. Simply Red - Something Got Me Started (Perfecto Mix).flac",
         113.35, "Something Got Me Started (Perfecto) – Simply Red", "NO",
     ),
     (
-        "/Volumes/Music/Tracks/Neneh Cherry/Neneh Cherry - Buffalo Stance (US CDS Promo) (1988) - PRCD2726"
+        MUSIC_ROOT + "/Neneh Cherry/Neneh Cherry - Buffalo Stance (US CDS Promo) (1988) - PRCD2726"
         "/Neneh Cherry - Kisses On The Wind (Lovers Hip-Hop Extended Mix).wav",
         97.33, "Kisses on the Wind (Hip-Hop Ext.) – Neneh Cherry", "NO",
     ),
     # ── AMBIGUOUS ───────────────────────────────────────────────────────
     (
-        "/Volumes/Music/Tracks/Soul II Soul/Soul II Soul - Holdin' On [Bambelela].flac",
+        MUSIC_ROOT + "/Soul II Soul/Soul II Soul - Holdin' On [Bambelela].flac",
         117.82, "Holdin' On – Soul II Soul  [ambiguous: faster tempo]", "?",
     ),
     (
-        "/Volumes/Music/Tracks/Black Box/Black Box - Ride On Time (Piano Mix) (1990).flac",
+        MUSIC_ROOT + "/Black Box/Black Box - Ride On Time (Piano Mix) (1990).flac",
         116.75, "Ride On Time (Piano Mix) – Black Box  [ambiguous: piano remix]", "?",
     ),
     (
-        "/Volumes/Music/Tracks/St Germain/2021 - Extra Cabin Baggage"
+        MUSIC_ROOT + "/St Germain/2021 - Extra Cabin Baggage"
         "/07 - So Flute (Ludovic Navarre Amapiano Deep Sunny mix) (radio edit).flac",
         118.48, "So Flute (Amapiano mix) – St Germain  [ambiguous: amapiano]", "?",
     ),
     (
-        "/Volumes/Music/Tracks/Snap!/1992 - SNAP! - Rhythm Is A Dancer (CD3) (Japan)"
+        MUSIC_ROOT + "/Snap!/1992 - SNAP! - Rhythm Is A Dancer (CD3) (Japan)"
         "/Snap! - 1992 - Rhythm Is A Dancer (CD3) (Japan).flac",
         124.17, "Rhythm Is A Dancer (Japan 12\") – Snap!  [ambiguous: euro-dance]", "?",
     ),

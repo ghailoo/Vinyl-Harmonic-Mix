@@ -13,10 +13,14 @@ Fitzgerald HPSS (2010) implemented from scratch with numpy (no scipy/librosa):
   7. SuperFlux onset detection
 """
 
+import os
 import sys
 import time
 import numpy as np
 import essentia.standard as es
+
+# Root of your music library; the track paths below are relative to it.
+MUSIC_ROOT = os.environ.get("VHM_MUSIC_ROOT", os.path.expanduser("~/Music"))
 
 # ── shared constants (match essentia_cue.py) ──────────────────────────────
 _SR      = 44100
@@ -198,17 +202,17 @@ def analyze(path: str, name: str, fp_checks: list[tuple[float, str]]) -> None:
 
 if __name__ == "__main__":
     FELIX = (
-        "/Volumes/Music/Tracks/Felix"
+        MUSIC_ROOT + "/Felix"
         "/1992 - Don't You Want Me (Original Mixes And Remixes) (Europe CDS) (1992) - 74321 11050 2"
         "/01. Felix - Don't You Want Me (Hooj Mix Edit).flac"
     )
     MJ = (
-        "/Volumes/Music/Tracks/Michael Jackson"
+        MUSIC_ROOT + "/Michael Jackson"
         "/Michael Jackson - Smooth Criminal. Remixes Vol.1"
         "/Michael Jackson - Smooth Criminal (2006 Electro Remix).mp3"
     )
     PJANOO = (
-        "/Volumes/Music/Tracks/Eric Prydz"
+        MUSIC_ROOT + "/Eric Prydz"
         "/2008 Eric Prydz - Pjanoo [DIGI0229] WEB"
         "/01 Eric Prydz - Pjanoo (Radio Edit).mp3"
     )

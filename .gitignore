@@ -16,3 +16,9 @@ Package.resolved
 # User secrets (just in case)
 *.local.xcconfig
 .env
+
+# Python
+__pycache__/
+
+# Local Claude Code settings (machine-specific paths)
+.claude/settings.local.json

@@ -858,6 +858,12 @@ struct CollectionStatsView: View {
                 .padding(.top, 4)
             }
 
+            if let failure = cueCoordinator.failureMessage {
+                Label(failure, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption).foregroundStyle(.red)
+                    .padding(.top, 4)
+            }
+
             HStack(spacing: 8) {
                 Button(isDetecting ? "Detecting…" : "Scan all confident tracks") {
                     cueCoordinator.startDetection(scope: .matched)

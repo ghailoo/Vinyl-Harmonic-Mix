@@ -34,8 +34,13 @@ final class LocalAnalysisCoordinator {
 
     // MARK: - Script location
 
-    static let scriptPath: String =
-        "/Users/ghailen/Desktop/MacOS Project/VinylHarmonicMix/Scripts/essentia_analyze.py"
+    static let scriptName = "essentia_analyze.py"
+
+    /// Bundled script path, or nil after moving to .failed with a message naming the missing script.
+    private func bundledScriptPath() -> String? {
+        do { return try BundledScript.path(Self.scriptName) }
+        catch { phase = .failed(error.localizedDescription); return nil }
+    }
 
     // MARK: - Analysis phase
 
@@ -44,7 +49,7 @@ final class LocalAnalysisCoordinator {
         case failed(String)
 
         var isIdle: Bool {
-            switch self { case .idle, .completed, .cancelled: return true; default: return false }
+            switch self { case .idle, .completed, .cancelled, .failed: return true; default: return false }
         }
     }
 
@@ -115,7 +120,7 @@ final class LocalAnalysisCoordinator {
     // MARK: - Analysis controls
 
     func startAnalysis(limit: Int? = nil) {
-        guard phase.isIdle else { return }
+        guard phase.isIdle, bundledScriptPath() != nil else { return }
         pendingLimit = limit
         currentMode = .tracks
         phase = .analyzing
@@ -131,7 +136,7 @@ final class LocalAnalysisCoordinator {
     }
 
     func startFileAnalysis(limit: Int? = nil) {
-        guard phase.isIdle else { return }
+        guard phase.isIdle, bundledScriptPath() != nil else { return }
         pendingLimit = limit
         currentMode = .files
         phase = .analyzing
@@ -185,7 +190,7 @@ final class LocalAnalysisCoordinator {
     /// Runs runFileAnalysis() inline (same filter: unanalyzed in-scope files only) and returns when done.
     /// NEVER re-analyzes already-analyzed files (runFileAnalysis filters bpm > 0 || analyzedAt != nil).
     func startAndAwaitFileAnalysis() async {
-        guard phase.isIdle else { return }
+        guard phase.isIdle, bundledScriptPath() != nil else { return }
         pendingLimit = nil
         currentMode = .files
         phase = .analyzing
@@ -432,7 +437,9 @@ final class LocalAnalysisCoordinator {
     }
 
     private func runScript(filePath: String) async -> ScriptOutcome {
-        let scriptPath = Self.scriptPath
+        let scriptPath: String
+        do { scriptPath = try BundledScript.path(Self.scriptName) }
+        catch { return .failure(error.localizedDescription) }
         let python3 = Self.python3Path   // same binary as install + test
 
         return await Task.detached(priority: .utility) { () -> ScriptOutcome in
@@ -655,6 +662,7 @@ final class LocalAnalysisCoordinator {
     // MARK: - Single-file analysis (triggered from detail popup on manual file assignment)
 
     func analyzeSingleFile(path: String) async -> Bool {
+        guard bundledScriptPath() != nil else { return false }
         let outcome = await runScript(filePath: path)
         guard case .success(let result) = outcome else {
             if case .failure(let msg) = outcome {

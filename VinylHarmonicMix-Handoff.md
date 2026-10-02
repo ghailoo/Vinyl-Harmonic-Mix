@@ -1,7 +1,7 @@
 # VinylHarmonicMix — Session Handoff
 
 ## Repo / Environment
-- Path: `/Users/ghailen/Desktop/MacOS Project/VinylHarmonicMix`
+- Path: your local clone of the repo (commands below run from its root)
 - Branch: `v2-development` (remote: `github.com/ghailoo/Vinyl-Harmonic-Mix`)
 - Build: `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -scheme VinylHarmonicMix -configuration Debug -destination 'platform=macOS' build`
 - Mac Studio + Claude Code in Terminal + Xcode
@@ -9,7 +9,7 @@
 
 ## First thing in a new session
 ```bash
-cd "/Users/ghailen/Desktop/MacOS Project/VinylHarmonicMix" && git status && git log --oneline -10
+git status && git log --oneline -10
 ```
 As of 2026-09-28: `origin/v2-development` is at `3c57690` (tag `v2.1-smooth`), and this handoff commit sits on top of it. The only intentionally uncommitted change is `project.pbxproj`, which holds Xcode's "recommended settings" upgrade (`LastUpgradeCheck 2700`, `DEAD_CODE_STRIPPING`, `STRING_CATALOG_GENERATE_SYMBOLS`). Never stage it together with feature work. Commit it on its own or discard it.
 

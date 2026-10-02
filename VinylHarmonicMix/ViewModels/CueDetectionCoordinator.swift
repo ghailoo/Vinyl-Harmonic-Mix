@@ -6,8 +6,13 @@ import SwiftData
 final class CueDetectionCoordinator {
 
     // MARK: - Script location + version
-    static let scriptPath: String =
-        "/Users/ghailen/Desktop/MacOS Project/VinylHarmonicMix/Scripts/essentia_cue.py"
+    static let scriptName = "essentia_cue.py"
+
+    /// Bundled script path, or nil after moving to .failed with a message naming the missing script.
+    private func bundledScriptPath() -> String? {
+        do { return try BundledScript.path(Self.scriptName) }
+        catch { phase = .failed(error.localizedDescription); return nil }
+    }
 
     // Bump this string whenever the detection algorithm changes.
     // Files whose cueAnalyzerVersion != currentCueVersion re-qualify for detection.
@@ -22,7 +27,7 @@ final class CueDetectionCoordinator {
         case failed(String)
 
         var isIdle: Bool {
-            switch self { case .idle, .completed, .cancelled: return true; default: return false }
+            switch self { case .idle, .completed, .cancelled, .failed: return true; default: return false }
         }
     }
 
@@ -37,6 +42,7 @@ final class CueDetectionCoordinator {
     var skippedFolderCount: Int = 0
 
     var shouldShowPanel: Bool { phase != .idle }
+    var failureMessage: String? { if case .failed(let m) = phase { m } else { nil } }
 
     // MARK: - Private
     private let context: ModelContext
@@ -62,7 +68,7 @@ final class CueDetectionCoordinator {
     // MARK: - Controls
 
     func startDetection(scope: CueDetectionScope = .all, limit: Int? = nil) {
-        guard phase.isIdle else { return }
+        guard phase.isIdle, bundledScriptPath() != nil else { return }
         pendingScope = scope
         pendingLimit = limit
         phase = .detecting
@@ -78,7 +84,7 @@ final class CueDetectionCoordinator {
     }
 
     func startDetection(filePath: String) {
-        guard phase.isIdle else { return }
+        guard phase.isIdle, bundledScriptPath() != nil else { return }
         phase = .detecting
         currentFileLabel = URL(fileURLWithPath: filePath).lastPathComponent
         totalCount = 1; processedCount = 0
@@ -240,7 +246,9 @@ final class CueDetectionCoordinator {
     }
 
     private func runCueScript(filePath: String) async -> ScriptOutcome {
-        let scriptPath = Self.scriptPath
+        let scriptPath: String
+        do { scriptPath = try BundledScript.path(Self.scriptName) }
+        catch { return .failure(error.localizedDescription) }
         let python3 = LocalAnalysisCoordinator.python3Path
 
         return await Task.detached(priority: .utility) { () -> ScriptOutcome in
@@ -306,7 +314,9 @@ final class CueDetectionCoordinator {
     }
 
     private func runCueScriptSafe(filePath: String) async -> ScriptOutcome {
-        let scriptPath = Self.scriptPath
+        let scriptPath: String
+        do { scriptPath = try BundledScript.path(Self.scriptName) }
+        catch { return .failure(error.localizedDescription) }
         let python3 = LocalAnalysisCoordinator.python3Path
 
         return await Task.detached(priority: .utility) { () -> ScriptOutcome in

@@ -6,6 +6,11 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		5C1A00032FBCEE1300E2AE6B /* essentia_analyze.py in Resources */ = {isa = PBXBuildFile; fileRef = 5C1A00012FBCEE1300E2AE6B /* essentia_analyze.py */; };
+		5C1A00042FBCEE1300E2AE6B /* essentia_cue.py in Resources */ = {isa = PBXBuildFile; fileRef = 5C1A00022FBCEE1300E2AE6B /* essentia_cue.py */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		190E06992FBCEE1300E2AE6B /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -27,6 +32,8 @@
 		190E06892FBCEE1200E2AE6B /* VinylHarmonicMix.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VinylHarmonicMix.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		190E06982FBCEE1300E2AE6B /* VinylHarmonicMixTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = VinylHarmonicMixTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		190E06A22FBCEE1300E2AE6B /* VinylHarmonicMixUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = VinylHarmonicMixUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		5C1A00012FBCEE1300E2AE6B /* essentia_analyze.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = essentia_analyze.py; sourceTree = "<group>"; };
+		5C1A00022FBCEE1300E2AE6B /* essentia_cue.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = essentia_cue.py; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -78,6 +85,7 @@
 				190E068B2FBCEE1200E2AE6B /* VinylHarmonicMix */,
 				190E069B2FBCEE1300E2AE6B /* VinylHarmonicMixTests */,
 				190E06A52FBCEE1300E2AE6B /* VinylHarmonicMixUITests */,
+				5C1A00052FBCEE1300E2AE6B /* Scripts */,
 				190E068A2FBCEE1200E2AE6B /* Products */,
 			);
 			sourceTree = "<group>";
@@ -90,6 +98,15 @@
 				190E06A22FBCEE1300E2AE6B /* VinylHarmonicMixUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		5C1A00052FBCEE1300E2AE6B /* Scripts */ = {
+			isa = PBXGroup;
+			children = (
+				5C1A00012FBCEE1300E2AE6B /* essentia_analyze.py */,
+				5C1A00022FBCEE1300E2AE6B /* essentia_cue.py */,
+			);
+			path = Scripts;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -212,6 +229,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5C1A00032FBCEE1300E2AE6B /* essentia_analyze.py in Resources */,
+				5C1A00042FBCEE1300E2AE6B /* essentia_cue.py in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

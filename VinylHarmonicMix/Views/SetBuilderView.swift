@@ -698,6 +698,11 @@ struct SetBuilderView: View {
                             ProgressView()
                                 .scaleEffect(0.55)
                                 .frame(width: 22, height: 22)
+                        } else if cueCoordinator.failureMessage != nil {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.title2)
+                                .foregroundStyle(.red)
+                                .frame(width: 22, height: 22)
                         } else {
                             Image(systemName: "waveform.path.ecg")
                                 .font(.title2)
@@ -706,7 +711,7 @@ struct SetBuilderView: View {
                         }
                     }
                     .buttonStyle(.plain)
-                    .help("Scan cue points for this track")
+                    .help(cueCoordinator.failureMessage ?? "Scan cue points for this track")
                     .accessibilityLabel("Scan cue points for this track")
                     .disabled(cueCoordinator.phase == .detecting)
                 }

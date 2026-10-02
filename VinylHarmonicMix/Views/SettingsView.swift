@@ -438,7 +438,7 @@ struct SettingsView: View {
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                         .textSelection(.enabled)
-                    Text("Script: \(LocalAnalysisCoordinator.scriptPath)")
+                    Text("Script: \((try? BundledScript.path(LocalAnalysisCoordinator.scriptName)) ?? "\(LocalAnalysisCoordinator.scriptName) missing from app bundle")")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                         .textSelection(.enabled)

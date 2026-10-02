@@ -6,33 +6,37 @@ Reports confidence + estimates array from RhythmExtractor2013.
 
 import time
 import json
+import os
 import sys
 import essentia.standard as es
+
+# Root of your music library; the track paths below are relative to it.
+MUSIC_ROOT = os.environ.get("VHM_MUSIC_ROOT", os.path.expanduser("~/Music"))
 
 FILES = [
     {
         "label": "Joyce Sims – It Wasn't Easy [MP3]",
-        "path": "/Volumes/Music/Tracks/Joyce Sims/Joyce Sims - The Best Of - Come Into My Life (2010) 192-320/CD1 - Original Studio Mixes/09 - It Wasn't Easy.mp3",
+        "path": MUSIC_ROOT + "/Joyce Sims/Joyce Sims - The Best Of - Come Into My Life (2010) 192-320/CD1 - Original Studio Mixes/09 - It Wasn't Easy.mp3",
         "ab_bpm": 178.21, "ab_key": "C", "ab_scale": "major",
     },
     {
         "label": "Sybil – Don't Make Me Over (Radio) [FLAC]",
-        "path": "/Volumes/Music/Tracks/Sybil/Sybil - Don't Make Me Over (US CDS Promo) (1989) - NPCD50107/02. Sybil - Don't Make Me Over (Radio).flac",
+        "path": MUSIC_ROOT + "/Sybil/Sybil - Don't Make Me Over (US CDS Promo) (1989) - NPCD50107/02. Sybil - Don't Make Me Over (Radio).flac",
         "ab_bpm": 96.72, "ab_key": "C", "ab_scale": "major",
     },
     {
         "label": "Natalie Cole – Pink Cadillac (7\") [FLAC]",
-        "path": "/Volumes/Music/Tracks/Natalie Cole/pink cadillac (uk cdm)/ 01 - Natalie Cole - Pink Cadillac (7'' Version).flac",
+        "path": MUSIC_ROOT + "/Natalie Cole/pink cadillac (uk cdm)/ 01 - Natalie Cole - Pink Cadillac (7'' Version).flac",
         "ab_bpm": 125.41, "ab_key": "A#", "ab_scale": "major",
     },
     {
         "label": "Smoke City – Underwater Love [FLAC]",
-        "path": "/Volumes/Music/Tracks/Smoke City/Smoke City - Flying Away (Japan) (1997) [FLAC]/01-Underwater Love.flac",
+        "path": MUSIC_ROOT + "/Smoke City/Smoke City - Flying Away (Japan) (1997) [FLAC]/01-Underwater Love.flac",
         "ab_bpm": 163.54, "ab_key": "F", "ab_scale": "minor",
     },
     {
         "label": "Culture Club – Do You Really Want to Hurt Me [FLAC]",
-        "path": "/Volumes/Music/Tracks/Culture Club/Culture Club - Do You Really Want To Hurt Me.flac",
+        "path": MUSIC_ROOT + "/Culture Club/Culture Club - Do You Really Want To Hurt Me.flac",
         "ab_bpm": 100.39, "ab_key": "G", "ab_scale": "major",
     },
 ]
