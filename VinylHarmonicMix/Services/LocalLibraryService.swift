@@ -120,6 +120,61 @@ enum LocalLibraryService {
         return p == r || p.hasPrefix(rootSlash)
     }
 
+    // MARK: - Per-release linked folders ("Link folder…")
+
+    static let linkedFoldersKey = "linkedReleaseFolders"   // [displayPath: security-scoped bookmark]
+
+    /// True when `path` sits under one of the configured library folders (covered by future scans).
+    static func isInLibrary(_ path: String, defaults: UserDefaults = .standard) -> Bool {
+        folders(defaults: defaults).contains { $0.contains(path: path) }
+    }
+
+    /// Bookmarks a folder picked from a release sheet. Not a library folder — never scanned or swept.
+    static func recordLinkedFolder(_ url: URL, defaults: UserDefaults = .standard) {
+        var map = defaults.dictionary(forKey: linkedFoldersKey) as? [String: Data] ?? [:]
+        map[url.standardizedFileURL.path] = try? url.bookmarkData(options: [.withSecurityScope],
+                                                                   includingResourceValuesForKeys: nil, relativeTo: nil)
+        defaults.set(map, forKey: linkedFoldersKey)
+    }
+
+    /// Launch: reopen every linked folder for the session (released at process exit), refreshing stale bookmarks.
+    static func startAccessingLinkedFolders(defaults: UserDefaults = .standard) {
+        let map = defaults.dictionary(forKey: linkedFoldersKey) as? [String: Data] ?? [:]
+        for data in map.values {
+            var isStale = false
+            guard let url = try? URL(resolvingBookmarkData: data, options: [.withSecurityScope],
+                                     relativeTo: nil, bookmarkDataIsStale: &isStale) else { continue }
+            _ = url.startAccessingSecurityScopedResource()
+            if isStale { recordLinkedFolder(url, defaults: defaults) }
+        }
+    }
+
+    /// Audio files directly in `url` (or anywhere beneath it when `recursive`), sorted by name.
+    nonisolated static func audioFiles(in url: URL, recursive: Bool) -> [URL] {
+        var options: FileManager.DirectoryEnumerationOptions = [.skipsHiddenFiles, .skipsPackageDescendants]
+        if !recursive { options.insert(.skipsSubdirectoryDescendants) }
+        guard let enumerator = FileManager().enumerator(at: url, includingPropertiesForKeys: nil,
+                                                        options: options) else { return [] }
+        var out: [URL] = []
+        while let fileURL = enumerator.nextObject() as? URL {
+            if junkFolderNames.contains(fileURL.lastPathComponent) { enumerator.skipDescendants(); continue }
+            if audioExtensions.contains(fileURL.pathExtension.lowercased()) { out.append(fileURL) }
+        }
+        return out.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+    }
+
+    /// True when any subfolder of `url` holds audio. Stops at the first hit.
+    nonisolated static func hasNestedAudio(in url: URL) -> Bool {
+        guard let enumerator = FileManager().enumerator(at: url, includingPropertiesForKeys: nil,
+                                                        options: [.skipsHiddenFiles, .skipsPackageDescendants])
+        else { return false }
+        while let fileURL = enumerator.nextObject() as? URL {
+            if junkFolderNames.contains(fileURL.lastPathComponent) { enumerator.skipDescendants(); continue }
+            if enumerator.level > 1, audioExtensions.contains(fileURL.pathExtension.lowercased()) { return true }
+        }
+        return false
+    }
+
     // MARK: - Audio file count
 
     static func countAudioFiles(in url: URL) async throws -> Int {

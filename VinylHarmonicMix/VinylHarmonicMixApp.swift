@@ -76,6 +76,7 @@ struct VinylHarmonicMixApp: App {
         let files   = FileMatchCoordinator(context: ctx, driveMonitor: monitor)
         let local   = LocalAnalysisCoordinator(context: ctx, driveMonitor: monitor)
         let cue     = CueDetectionCoordinator(context: ctx, driveMonitor: monitor)
+        LocalLibraryService.startAccessingLinkedFolders()   // "Link folder…" folders outside the library
 
         _collectionViewModel        = State(initialValue: cv)
         _scanCoordinator            = State(initialValue: scan)
