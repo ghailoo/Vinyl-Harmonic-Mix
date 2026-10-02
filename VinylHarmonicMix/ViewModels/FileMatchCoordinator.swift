@@ -888,20 +888,7 @@ final class FileMatchCoordinator {
                 for stub in chunk {
                     let path = stub.path
                     let id   = stub.id
-                    group.addTask {
-                        let url = URL(fileURLWithPath: path)
-                        var ref: ExtAudioFileRef?
-                        guard ExtAudioFileOpenURL(url as CFURL, &ref) == noErr, let ref else { return (id, 0) }
-                        defer { ExtAudioFileDispose(ref) }
-                        var fmt = AudioStreamBasicDescription()
-                        var sz  = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
-                        ExtAudioFileGetProperty(ref, kExtAudioFileProperty_FileDataFormat, &sz, &fmt)
-                        var frames: Int64 = 0
-                        var fsz = UInt32(MemoryLayout<Int64>.size)
-                        ExtAudioFileGetProperty(ref, kExtAudioFileProperty_FileLengthFrames, &fsz, &frames)
-                        let sr = fmt.mSampleRate > 0 ? fmt.mSampleRate : 44100
-                        return (id, frames > 0 ? Int(Double(frames) / sr * 1000) : 0)
-                    }
+                    group.addTask { (id, FileMatchCoordinator.readDurationMs(path: path)) }
                 }
                 var out: [(PersistentIdentifier, Int)] = []
                 for await pair in group { out.append(pair) }
@@ -918,6 +905,22 @@ final class FileMatchCoordinator {
             await Task.yield()
         }
         print("[DURATION] Backfill complete: \(filled)/\(stubs.count) durations read")
+    }
+
+    /// Audio duration in ms via AudioToolbox (avoids Core Media FigFile spam on M4A/MP4); 0 = unreadable.
+    nonisolated static func readDurationMs(path: String) -> Int {
+        let url = URL(fileURLWithPath: path)
+        var ref: ExtAudioFileRef?
+        guard ExtAudioFileOpenURL(url as CFURL, &ref) == noErr, let ref else { return 0 }
+        defer { ExtAudioFileDispose(ref) }
+        var fmt = AudioStreamBasicDescription()
+        var sz  = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        ExtAudioFileGetProperty(ref, kExtAudioFileProperty_FileDataFormat, &sz, &fmt)
+        var frames: Int64 = 0
+        var fsz = UInt32(MemoryLayout<Int64>.size)
+        ExtAudioFileGetProperty(ref, kExtAudioFileProperty_FileLengthFrames, &fsz, &frames)
+        let sr = fmt.mSampleRate > 0 ? fmt.mSampleRate : 44100
+        return frames > 0 ? Int(Double(frames) / sr * 1000) : 0
     }
 
     /// Synchronous directory walk — no actor state, safe for Task.detached.
