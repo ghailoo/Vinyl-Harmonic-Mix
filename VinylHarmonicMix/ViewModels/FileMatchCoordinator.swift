@@ -324,6 +324,7 @@ final class FileMatchCoordinator {
         td.fetchLimit = 1
         guard let track = try? context.fetch(td).first else { return }
         track.fileMatchState = "skip"
+        onLinkDataChanged?()
         reviewCandidates.removeValue(forKey: trackMBID)
         verifyStates.removeValue(forKey: trackMBID)
         try? context.save()
@@ -786,6 +787,7 @@ final class FileMatchCoordinator {
         }
         guard !toDelete.isEmpty else { return }
         toDelete.forEach { context.delete($0) }
+        onLinkDataChanged?()   // a deleted duplicate may have been a track's linked row
         try? context.save()
         print("[DEDUP] Removed \(toDelete.count) duplicate LocalFileEntity rows; kept \(seen.count)")
     }

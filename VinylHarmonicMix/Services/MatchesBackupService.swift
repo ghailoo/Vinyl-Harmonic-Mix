@@ -37,6 +37,9 @@ struct MatchesBackup: Codable {
 @MainActor
 final class MatchesBackupService {
 
+    /// Fired when a restore writes track↔file links (card badge cache invalidation).
+    static var onLinkDataChanged: (() -> Void)? = nil
+
     /// Collects all confident matches from the current SwiftData store.
     /// A "confident" match requires: fileMatchState == "confident", non-empty primaryLocalFilePath,
     /// a matching LocalFileEntity, and a parent CollectionItemEntity.
@@ -180,6 +183,7 @@ extension MatchesBackupService {
             restored += 1
         }
 
+        if restored > 0 { onLinkDataChanged?() }
         try modelContext.save()
 
         return RestoreResult(

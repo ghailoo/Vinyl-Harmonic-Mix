@@ -30,6 +30,9 @@ final class AudioFeaturesScanCoordinator {
     private var processedBatches: Int = 0
     private var secondsPerBatch: Double = 2.2
 
+    /// Fired when AcousticBrainz BPM/key is written onto existing rows (card badge cache invalidation).
+    var onFeatureDataChanged: (() -> Void)? = nil
+
     init(context: ModelContext) {
         self.context = context
     }
@@ -348,6 +351,7 @@ final class AudioFeaturesScanCoordinator {
                         entity.keyScale      = l.keyScale
                         entity.keyConfidence = l.keyConfidence
                         entity.camelotCode   = CamelotConverter.camelotCode(forNote: l.keyNote, scale: l.keyScale)
+                        onFeatureDataChanged?()   // in-place: RecordingFeaturesEntity count unchanged
                         entity.fetchedAt     = .now
                         tracksFound  += 1
                     } else {

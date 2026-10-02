@@ -37,6 +37,10 @@ final class RecordingsScanCoordinator {
     private var scanTask: Task<Void, Never>?
     private var processedCount: Int = 0
 
+    /// Fired when a release's tracks are replaced (card badge cache invalidation) — delete +
+    /// reinsert can leave the TrackEntity count unchanged while every link is dropped.
+    var onTrackDataChanged: (() -> Void)? = nil
+
     init(context: ModelContext) {
         self.context = context
     }
@@ -185,6 +189,7 @@ final class RecordingsScanCoordinator {
                     track.collectionItem = entity
                     context.insert(track)
                 }
+                onTrackDataChanged?()
                 entity.recordingsScanState = RecordingsScanState.fetched.rawValue
                 entity.recordingsScannedAt = Date()
             } catch is CancellationError {

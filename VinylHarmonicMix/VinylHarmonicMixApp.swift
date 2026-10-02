@@ -82,6 +82,9 @@ struct VinylHarmonicMixApp: App {
         files.onLinkDataChanged        = { [weak cv] in cv?.invalidateSetBuilderLookups() }
         fingerprints.onLinkDataChanged = { [weak cv] in cv?.invalidateSetBuilderLookups() }
         local.onAnalysisDataChanged    = { [weak cv] in cv?.invalidateSetBuilderLookups() }
+        MatchesBackupService.onLinkDataChanged = { [weak cv] in cv?.invalidateSetBuilderLookups() }
+        recs.onTrackDataChanged        = { [weak cv] in cv?.invalidateSetBuilderLookups() }
+        audio.onFeatureDataChanged     = { [weak cv] in cv?.invalidateSetBuilderLookups() }
 
         _collectionViewModel        = State(initialValue: cv)
         _scanCoordinator            = State(initialValue: scan)
