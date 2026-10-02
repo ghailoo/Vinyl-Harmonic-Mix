@@ -50,6 +50,7 @@ final class CueDetectionCoordinator {
     private var scanTask: Task<Void, Never>?
     private var pendingScope: CueDetectionScope = .all
     private var pendingLimit: Int? = nil
+    private var pendingPaths: [String]? = nil
 
     init(context: ModelContext, driveMonitor: DriveMonitor? = nil) {
         self.context = context
@@ -67,20 +68,25 @@ final class CueDetectionCoordinator {
 
     // MARK: - Controls
 
-    func startDetection(scope: CueDetectionScope = .all, limit: Int? = nil) {
-        guard phase.isIdle, bundledScriptPath() != nil else { return }
+    /// `paths` scopes the run to exactly those files ("Link folder…"). Returns the run's task so a
+    /// caller can await it; nil when another run is active.
+    @discardableResult
+    func startDetection(scope: CueDetectionScope = .all, limit: Int? = nil, paths: [String]? = nil) -> Task<Void, Never>? {
+        guard phase.isIdle, bundledScriptPath() != nil else { return nil }
         pendingScope = scope
         pendingLimit = limit
+        pendingPaths = paths
         phase = .detecting
         processedCount = 0; detectedCount = 0; skippedCount = 0; failedCount = 0
         totalCount = 0; currentFileLabel = ""
 
         scanTask = Task { [weak self] in
             guard let self else { return }
-            await self.runDetection(scope: scope, limit: limit)
+            await self.runDetection(scope: scope, limit: limit, paths: paths)
             guard !Task.isCancelled else { return }
             if self.phase == .detecting { self.phase = .completed }
         }
+        return scanTask
     }
 
     func startDetection(filePath: String) {
@@ -131,7 +137,7 @@ final class CueDetectionCoordinator {
 
     func resume() {
         guard phase == .paused else { return }
-        startDetection(scope: pendingScope, limit: pendingLimit)
+        startDetection(scope: pendingScope, limit: pendingLimit, paths: pendingPaths)
     }
 
     func cancel() {
@@ -153,8 +159,10 @@ final class CueDetectionCoordinator {
         let label: String
     }
 
-    private func runDetection(scope: CueDetectionScope, limit: Int?) async {
-        let allFiles = (try? context.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
+    private func runDetection(scope: CueDetectionScope, limit: Int?, paths: [String]? = nil) async {
+        let descriptor = paths.map { p in FetchDescriptor<LocalFileEntity>(predicate: #Predicate { p.contains($0.filePath) }) }
+            ?? FetchDescriptor<LocalFileEntity>()
+        let allFiles = (try? context.fetch(descriptor)) ?? []
         let scopeMatches: (LocalFileEntity) -> Bool
         switch scope {
         case .matched:   scopeMatches = { $0.matchMethod != "unmatched" }
