@@ -268,16 +268,33 @@ final class CollectionViewModel {
     private(set) var setBuilderThumbURLs: [String: URL] = [:]
     private(set) var setBuilderConfidentPool: [MixTrack] = []
     private(set) var setBuilderScanStates: [Int: String] = [:]   // instanceId → mbidScanState
-    private var setBuilderLastFeaturesCount = -1
-    private var setBuilderLastTracksCount = -1
+    private var setBuilderLastSignature: [Int] = []
+    private var setBuilderDirty = false
     private var setBuilderRefreshRunning = false
     private var setBuilderRefreshPending = false
 
+    /// Link/analysis writers call this (via coordinator hooks) so the next refresh rebuilds even
+    /// when an in-place edit (Change file, re-analysis) leaves every count unchanged. Marks only —
+    /// the rebuild still happens on the next (save-triggered) refreshSetBuilderLookups().
+    func invalidateSetBuilderLookups() { setBuilderDirty = true }
+
     func refreshSetBuilderLookups() {
         guard !setBuilderRefreshRunning else { setBuilderRefreshPending = true; return }
-        let featuresCount = (try? context.fetchCount(FetchDescriptor<RecordingFeaturesEntity>())) ?? 0
-        let tracksCount   = (try? context.fetchCount(FetchDescriptor<TrackEntity>())) ?? 0
-        let rebuild = featuresCount != setBuilderLastFeaturesCount || tracksCount != setBuilderLastTracksCount
+        // Counts of exactly what SetBuilderLookups.compute reads: AB features, tracks, local
+        // features, linked paths, and analyzed files (effectiveBpm / featureSource fall back to
+        // the linked file's bpm — "Link folder…" + Detect BPM/Key only ever change these last two).
+        let signature = [
+            (try? context.fetchCount(FetchDescriptor<RecordingFeaturesEntity>())) ?? 0,
+            (try? context.fetchCount(FetchDescriptor<TrackEntity>())) ?? 0,
+            (try? context.fetchCount(FetchDescriptor<LocalAudioFeaturesEntity>())) ?? 0,
+            (try? context.fetchCount(FetchDescriptor<TrackEntity>(
+                predicate: #Predicate { $0.primaryLocalFilePath != nil }))) ?? 0,
+            (try? context.fetchCount(FetchDescriptor<LocalFileEntity>(
+                predicate: #Predicate { $0.bpm > 0 }))) ?? 0,
+        ]
+        let rebuild = setBuilderDirty || signature != setBuilderLastSignature
+        // Cleared up front: an invalidation landing mid-rebuild re-dirties and its save re-queues us.
+        if rebuild { setBuilderDirty = false }
         setBuilderRefreshRunning = true
         let container = context.container
         Task {
@@ -288,8 +305,7 @@ final class CollectionViewModel {
             PerfLog.end("CollectionViewModel.refreshSetBuilderLookups(rebuild: \(rebuild)) off-main")
             setBuilderScanStates = result.scanStates
             if let r = result.rebuilt {
-                setBuilderLastFeaturesCount = featuresCount
-                setBuilderLastTracksCount = tracksCount
+                setBuilderLastSignature = signature
                 setBuilderCoverageByInstanceId = r.coverage
                 setBuilderFilePathToInstanceId = r.filePathToInstanceId
                 setBuilderThumbURLs = r.thumbURLs

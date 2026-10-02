@@ -35,6 +35,9 @@ final class FingerprintScanCoordinator {
     private var scanTask: Task<Void, Never>?
     private var pendingLimit: Int? = nil
 
+    /// Fired whenever a fingerprint link is written (card badge cache invalidation).
+    var onLinkDataChanged: (() -> Void)? = nil
+
     init(context: ModelContext) { self.context = context }
 
     // MARK: - Controls
@@ -206,6 +209,7 @@ final class FingerprintScanCoordinator {
         file.matchScore = score
         track.fileMatchState = "confident"
         track.primaryLocalFilePath = filePath
+        onLinkDataChanged?()
         try? context.save()
         return true
     }

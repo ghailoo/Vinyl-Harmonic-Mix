@@ -88,6 +88,8 @@ final class FileMatchCoordinator {
     var orphanSweepSummary: String? = nil
     var skippedFolderCount: Int = 0   // library folders not reachable at scan start (C3 report)
     var onScanCompleted: (() -> Void)? = nil
+    /// Fired whenever a track↔file link is written or cleared (card badge cache invalidation).
+    var onLinkDataChanged: (() -> Void)? = nil
 
     // Sub-step progress within Phase 0/1 (orphan sweep, NAS walk, dedup, backfills,
     // duration backfill) — these don't touch indexedCount, so without this the UI's
@@ -312,6 +314,7 @@ final class FileMatchCoordinator {
         }
         track.fileMatchState = "noMatch"
         track.primaryLocalFilePath = nil
+        onLinkDataChanged?()
         try? context.save()
         linkVersion += 1
     }
@@ -636,6 +639,7 @@ final class FileMatchCoordinator {
             }
         }
 
+        onLinkDataChanged?()
         try? context.save()
         staleConfidentRecords = caseBRecords
 
@@ -840,6 +844,7 @@ final class FileMatchCoordinator {
             }
         }
         guard repaired > 0 else { return }
+        onLinkDataChanged?()
         try? context.save()
         print("[REPAIR] Reset \(repaired) orphaned confident tracks to unscanned")
     }
@@ -1259,6 +1264,7 @@ final class FileMatchCoordinator {
                 }
             }
 
+            onLinkDataChanged?()
             try? context.save()
             await Task.yield()
         }
@@ -1566,6 +1572,7 @@ final class FileMatchCoordinator {
         file.matchScore = score
         track.fileMatchState = "confident"
         track.primaryLocalFilePath = filePath
+        onLinkDataChanged?()
     }
 
     private func updateMatchState(trackMBID: String, state: String) {

@@ -77,6 +77,11 @@ struct VinylHarmonicMixApp: App {
         let local   = LocalAnalysisCoordinator(context: ctx, driveMonitor: monitor)
         let cue     = CueDetectionCoordinator(context: ctx, driveMonitor: monitor)
         LocalLibraryService.startAccessingLinkedFolders()   // "Link folder…" folders outside the library
+        let fingerprints = FingerprintScanCoordinator(context: ctx)
+        // Link/analysis writes leave the card-badge cache's row counts unchanged when edited in place.
+        files.onLinkDataChanged        = { [weak cv] in cv?.invalidateSetBuilderLookups() }
+        fingerprints.onLinkDataChanged = { [weak cv] in cv?.invalidateSetBuilderLookups() }
+        local.onAnalysisDataChanged    = { [weak cv] in cv?.invalidateSetBuilderLookups() }
 
         _collectionViewModel        = State(initialValue: cv)
         _scanCoordinator            = State(initialValue: scan)
@@ -85,7 +90,7 @@ struct VinylHarmonicMixApp: App {
         _audioFeaturesCoordinator   = State(initialValue: audio)
         _driveMonitor               = State(initialValue: monitor)
         _fileMatchCoordinator       = State(initialValue: files)
-        _fingerprintCoordinator     = State(initialValue: FingerprintScanCoordinator(context: ctx))
+        _fingerprintCoordinator     = State(initialValue: fingerprints)
         _localAnalysisCoordinator   = State(initialValue: local)
         _cueDetectionCoordinator    = State(initialValue: cue)
         _audioPlaybackController    = State(initialValue: AudioPlaybackController(modelContainer: container))

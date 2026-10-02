@@ -103,6 +103,8 @@ final class LocalAnalysisCoordinator {
     private var scanTask: Task<Void, Never>?
     private var pendingLimit: Int? = nil
     private var pendingPaths: [String]? = nil
+    /// Fired whenever BPM/key results are written (card badge cache invalidation).
+    var onAnalysisDataChanged: (() -> Void)? = nil
 
     init(context: ModelContext, driveMonitor: DriveMonitor? = nil) {
         self.context = context
@@ -624,6 +626,7 @@ final class LocalAnalysisCoordinator {
             file.analyzedAt      = .now
             file.analyzerVersion = "essentia-2.1b6 degara"
         }
+        onAnalysisDataChanged?()
         try? context.save()
         PerfLog.end("LocalAnalysisCoordinator.flushFileResults(\(buffer.count))")
     }
@@ -706,6 +709,7 @@ final class LocalAnalysisCoordinator {
         file.camelot         = result.camelot
         file.analyzedAt      = .now
         file.analyzerVersion = "essentia-2.1b6 degara"
+        onAnalysisDataChanged?()
         try? context.save()
         return true
     }
@@ -734,6 +738,7 @@ final class LocalAnalysisCoordinator {
             features.analyzedAt      = .now
             features.analyzerVersion = "essentia-2.1b6 degara"
         }
+        onAnalysisDataChanged?()
         try? context.save()
         PerfLog.end("LocalAnalysisCoordinator.flushResults(\(buffer.count))")
     }
