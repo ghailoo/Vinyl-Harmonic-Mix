@@ -1281,7 +1281,7 @@ struct CollectionDetailView: View {
     }
 
     private func unlinkMBID(entity: CollectionItemEntity) {
-        scanCoordinator.unlinkMBID(entity)
+        scanCoordinator.unlinkMBID(entity, recordingsCoordinator: recordingsCoordinator)
         viewModel.invalidateSetBuilderLookups()   // cleared recordingMBIDs drop AcousticBrainz features
         loadEntity()
         loadTrackEntities()

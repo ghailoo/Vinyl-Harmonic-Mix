@@ -299,7 +299,7 @@ struct RecordingsScanCoordinatorTests {
         try context.save()
 
         #expect(MBIDScanCoordinator.tracksRemovedByUnlink(entity).map(\.trackMBID) == ["mb-b2"])
-        MBIDScanCoordinator(context: context).unlinkMBID(entity)
+        MBIDScanCoordinator(context: context).unlinkMBID(entity, recordingsCoordinator: RecordingsScanCoordinator(context: context))
 
         #expect(entity.mbid == nil)
         #expect(Set(entity.tracks.map(\.trackMBID)) == ["discogs:100:A1", "mb-a2", "mb-b1"])
@@ -311,5 +311,26 @@ struct RecordingsScanCoordinatorTests {
         #expect(linked.localFiles.first?.cuePoints.count == 1)
         #expect(analyzed.effectiveBpm == 120)
         #expect(discogs.artistCredit == "Discogs Artist" && discogs.durationMs == 200_000)
+    }
+
+    @Test func unlinkingAllBareMusicBrainzTracksRebuildsDiscogsTracklist() throws {
+        let context = try Self.makeContext()
+        let tracklist = [Track(position: "A1", title: "Discogs One", duration: "3:00", artists: nil),
+                         Track(position: "A2", title: "Discogs Two", duration: "4:00", artists: nil)]
+        let entity = try Self.makeRelease(context: context, releaseArtists: ["Artist"], tracklist: tracklist, mbid: "mb")
+        for pos in ["1", "2", "3"] {
+            let t = TrackEntity(trackMBID: "mb-\(pos)", recordingMBID: "rec-\(pos)", position: pos, title: "MB \(pos)",
+                                durationMs: 200_000, artistCredit: "MB Artist")
+            t.collectionItem = entity
+            context.insert(t)
+        }
+        try context.save()
+
+        MBIDScanCoordinator(context: context).unlinkMBID(entity, recordingsCoordinator: RecordingsScanCoordinator(context: context))
+
+        #expect(entity.tracks.count == 2)
+        #expect(Set(entity.tracks.map(\.trackMBID)) == ["discogs:100:A1", "discogs:100:A2"])
+        #expect(entity.tracks.allSatisfy { $0.fileMatchState == "unscanned" })   // "Set file" rows
+        #expect(try context.fetchCount(FetchDescriptor<TrackEntity>()) == 2)    // MB rows really gone
     }
 }

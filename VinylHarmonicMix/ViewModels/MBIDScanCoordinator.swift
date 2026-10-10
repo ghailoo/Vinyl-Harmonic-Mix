@@ -440,14 +440,16 @@ final class MBIDScanCoordinator {
     /// Unlink clears MusicBrainz data, never local work (same principle as mergeRecordings).
     /// recordingMBID is cleared on every track; trackMBID (file-match identity), title, duration,
     /// artist credit, links, analysis and cue points stay — a Discogs track's duration/credit can't
-    /// be told apart from an MB fill. Only tracksRemovedByUnlink are deleted.
-    func unlinkMBID(_ entity: CollectionItemEntity) {
+    /// be told apart from an MB fill. Only tracksRemovedByUnlink are deleted; a release left with
+    /// no tracks gets its Discogs tracklist rebuilt in place.
+    func unlinkMBID(_ entity: CollectionItemEntity, recordingsCoordinator: RecordingsScanCoordinator) {
         let removed = Self.tracksRemovedByUnlink(entity)
         for track in entity.tracks { track.recordingMBID = "" }
         for track in removed { context.delete(track) }
         entity.recordingsScanState = RecordingsScanState.unscanned.rawValue
         entity.recordingsScannedAt = nil
         resetToNotFound(instanceId: entity.instanceId)   // clears mbid fields, saves
+        if recordingsCoordinator.synthesizeTracksForOrphanRelease(entity) > 0 { try? context.save() }
     }
 
     func setMBIDManually(instanceId: Int, mbid: String) {
