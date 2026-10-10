@@ -30,6 +30,9 @@ struct VinylHarmonicMixApp: App {
             .appendingPathComponent("Library/Containers/\(bundleID)/Data/Library/Application Support/default.store")
     }
 
+    /// Test runs host the app; they must never open (or migrate) the real library.
+    static let isRunningTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+
     init() {
         do {
             let schema = Schema([
@@ -47,7 +50,9 @@ struct VinylHarmonicMixApp: App {
                 SetlistItemEntity.self,
                 CuePointEntity.self,
             ])
-            let config = ModelConfiguration(url: Self.storeURL())
+            let config = Self.isRunningTests
+                ? ModelConfiguration(isStoredInMemoryOnly: true)
+                : ModelConfiguration(url: Self.storeURL())
             container = try ModelContainer(for: schema, configurations: config)
         } catch {
             fatalError("SwiftData container init failed: \(error)")
@@ -58,7 +63,7 @@ struct VinylHarmonicMixApp: App {
         // "Match all" re-scans cleanly with parentFolder populated.
         // Guarded by a UserDefaults flag so it runs exactly once.
         let wipeKey = "didClearLocalFileIndexV2"
-        if !UserDefaults.standard.bool(forKey: wipeKey) {
+        if !Self.isRunningTests, !UserDefaults.standard.bool(forKey: wipeKey) {
             let stale = (try? ctx.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
             if !stale.isEmpty {
                 for entity in stale { ctx.delete(entity) }
@@ -147,7 +152,7 @@ struct VinylHarmonicMixApp: App {
                     let states = Dictionary(grouping: allItems, by: \.mbidScanState).mapValues(\.count)
                     print("📊 mbidScanState distribution: \(states)")
 #endif
-                    await checkForRestorePrompt()
+                    if !Self.isRunningTests { await checkForRestorePrompt() }
                 }
                 .alert("Restore Matches from Backup?", isPresented: $showLaunchRestorePrompt) {
                     Button("Restore Now") {
