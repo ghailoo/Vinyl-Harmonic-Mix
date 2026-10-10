@@ -787,7 +787,9 @@ struct CollectionDetailView: View {
                     if let entity = itemEntity { unlinkMBID(entity: entity) }
                 }
             } message: {
-                Text("This will remove the MusicBrainz match for this release and delete all per-track recording MBIDs. You can re-match the release afterward.")
+                let removed = itemEntity.map { MBIDScanCoordinator.tracksRemovedByUnlink($0).count } ?? 0
+                Text("This will remove the MusicBrainz match for this release and clear its per-track recording MBIDs. File links, BPM/key and cue points are kept. You can re-match the release afterward."
+                     + (removed > 0 ? "\n\n\(removed) MusicBrainz-only track\(removed == 1 ? "" : "s") with no file link or analysis will be removed." : ""))
             }
 
         case .notFound:
@@ -1279,12 +1281,8 @@ struct CollectionDetailView: View {
     }
 
     private func unlinkMBID(entity: CollectionItemEntity) {
-        let tracksToDelete = entity.tracks
-        for track in tracksToDelete {
-            modelContext.delete(track)
-        }
-        scanCoordinator.resetToNotFound(instanceId: entity.instanceId)
-        try? modelContext.save()
+        scanCoordinator.unlinkMBID(entity)
+        viewModel.invalidateSetBuilderLookups()   // cleared recordingMBIDs drop AcousticBrainz features
         loadEntity()
         loadTrackEntities()
         loadFeatureEntities()

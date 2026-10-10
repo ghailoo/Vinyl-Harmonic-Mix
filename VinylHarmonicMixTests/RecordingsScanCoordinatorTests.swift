@@ -265,4 +265,51 @@ struct RecordingsScanCoordinatorTests {
         #expect(Dictionary(uniqueKeysWithValues: entity.tracks.map { ($0.trackMBID, $0.recordingMBID) })
                 == ["mb-d1t1": "r1", "mb-d2t1": "r2"])
     }
+
+    // MARK: - Unlink MBID clears MusicBrainz data, keeps local work
+
+    @Test func unlinkKeepsLinkedAndDiscogsTracksAndRemovesOnlyBareMusicBrainzTracks() throws {
+        let context = try Self.makeContext()
+        let entity = try Self.makeRelease(context: context, releaseArtists: ["Artist"], tracklist: [], mbid: "mb")
+        let discogs = Self.discogsTrack("A1", in: entity, context: context)       // bare, but Discogs-sourced
+        discogs.recordingMBID = "rec-a1"
+        func mbTrack(_ id: String, _ pos: String) -> TrackEntity {
+            let t = TrackEntity(trackMBID: id, recordingMBID: "rec-\(pos)", position: pos, title: id,
+                                durationMs: 200_000, artistCredit: "MB Artist")
+            t.collectionItem = entity
+            context.insert(t)
+            return t
+        }
+        let linked = mbTrack("mb-a2", "A2")
+        let file = LocalFileEntity(filePath: "/m/A2.flac", fileName: "A2.flac", format: "flac", fileSizeBytes: nil)
+        file.bpm = 124; file.camelot = "8A"
+        file.track = linked
+        context.insert(file)
+        let cue = CuePointEntity()
+        cue.localFile = file
+        context.insert(cue)
+        linked.fileMatchState = "confident"
+        linked.primaryLocalFilePath = "/m/A2.flac"
+        let analyzed = mbTrack("mb-b1", "B1")
+        let features = LocalAudioFeaturesEntity()
+        features.bpm = 120; features.camelot = "5A"
+        context.insert(features)
+        analyzed.localAudioFeatures = features
+        _ = mbTrack("mb-b2", "B2")                                                 // bare MB track
+        try context.save()
+
+        #expect(MBIDScanCoordinator.tracksRemovedByUnlink(entity).map(\.trackMBID) == ["mb-b2"])
+        MBIDScanCoordinator(context: context).unlinkMBID(entity)
+
+        #expect(entity.mbid == nil)
+        #expect(Set(entity.tracks.map(\.trackMBID)) == ["discogs:100:A1", "mb-a2", "mb-b1"])
+        #expect(entity.tracks.allSatisfy { $0.recordingMBID.isEmpty })
+        #expect(linked.trackMBID == "mb-a2")
+        #expect(linked.fileMatchState == "confident")
+        #expect(linked.primaryLocalFilePath == "/m/A2.flac")
+        #expect(linked.effectiveBpm == 124 && linked.effectiveCamelot == "8A")
+        #expect(linked.localFiles.first?.cuePoints.count == 1)
+        #expect(analyzed.effectiveBpm == 120)
+        #expect(discogs.artistCredit == "Discogs Artist" && discogs.durationMs == 200_000)
+    }
 }
