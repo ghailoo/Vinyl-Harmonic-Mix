@@ -21,13 +21,113 @@ struct VinylHarmonicMixApp: App {
     @State private var launchBackupURL: URL?
     @State private var launchBackupEntries: Int = 0
 
-    /// Sandbox is disabled so the default store path moves to ~/Library/Application Support/.
-    /// Pin to the container path so existing Discogs/MusicBrainz data is preserved regardless
-    /// of sandbox state. SwiftData will auto-migrate the schema on first open.
+    /// The app isn't sandboxed, so the store lives in the shared Application Support folder.
     static func storeURL() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/VinylHarmonicMix/default.store")
+    }
+
+    /// Where earlier sandboxed builds kept the store. macOS ties access to ~/Library/Containers to
+    /// the code signature, so any re-signed build gets SQLITE_AUTH there — only ever read, as a
+    /// one-time migration source, and never modified (it stays as a fallback copy).
+    static func legacyStoreURL() -> URL {
         let bundleID = Bundle.main.bundleIdentifier ?? "VinylHarmonicMix"
         return FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Containers/\(bundleID)/Data/Library/Application Support/default.store")
+    }
+
+    static let schema = Schema([
+        CollectionItemEntity.self,
+        BasicInformationEntity.self,
+        ArtistCreditEntity.self,
+        LabelCreditEntity.self,
+        FormatEntity.self,
+        ReleaseDetailEntity.self,
+        TrackEntity.self,
+        RecordingFeaturesEntity.self,
+        LocalFileEntity.self,
+        LocalAudioFeaturesEntity.self,
+        SetlistEntity.self,
+        SetlistItemEntity.self,
+        CuePointEntity.self,
+    ])
+
+    enum StoreError: LocalizedError {
+        case migrationFailed(from: URL, to: URL, underlying: Error)
+
+        var errorDescription: String? {
+            switch self {
+            case .migrationFailed(let from, let to, let underlying):
+                return """
+                Couldn't copy your library to its new location. Nothing was deleted — the original is untouched at:
+                \(from.path)
+                New location (no store was created there):
+                \(to.path)
+
+                If this is a permission error, macOS is blocking this build from reading the old container. \
+                Copy default.store, default.store-wal and default.store-shm into the new folder with Finder \
+                (or give the app Full Disk Access), then relaunch.
+
+                Error: \(underlying)
+                """
+            }
+        }
+    }
+
+    /// Opens the store at `url`, copying it over from `legacyURL` the first time.
+    /// - `url` exists → use it, nothing else.
+    /// - `legacyURL` exists → copy it (+ WAL/SHM) and verify the copy opens before returning it.
+    /// - Neither → fresh store. Anything we can't positively identify as "absent" (e.g. a privacy
+    ///   denial) throws instead, so an access problem never shows up as an empty library.
+    static func openStore(schema: Schema, at url: URL, legacyURL: URL) throws -> ModelContainer {
+        let fm = FileManager.default
+        let sidecars = ["-wal", "-shm"]
+        func sibling(_ base: URL, _ suffix: String) -> URL { URL(fileURLWithPath: base.path + suffix) }
+        func open() throws -> ModelContainer {
+            try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            return try ModelContainer(for: schema, configurations: ModelConfiguration(url: url))
+        }
+
+        if fm.fileExists(atPath: url.path) {
+            print("📦 Store: \(url.path) (no migration)")
+            return try open()
+        }
+
+        let legacyExists: Bool
+        do {
+            legacyExists = try legacyURL.checkResourceIsReachable()
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            legacyExists = false
+        } catch {
+            throw StoreError.migrationFailed(from: legacyURL, to: url, underlying: error)
+        }
+        guard legacyExists else {
+            print("📦 Store: \(url.path) (new library, nothing to migrate)")
+            return try open()
+        }
+
+        let staging = sibling(url, ".migrating")
+        // The main file is absent, so any of these are leftovers from an interrupted copy, never user data.
+        let ours = [url, staging] + sidecars.map { sibling(url, $0) }
+        do {
+            for file in ours { try? fm.removeItem(at: file) }
+            try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            for suffix in sidecars where fm.fileExists(atPath: legacyURL.path + suffix) {
+                try fm.copyItem(at: sibling(legacyURL, suffix), to: sibling(url, suffix))
+            }
+            // Main file last, renamed into place: its presence at `url` means the copy completed.
+            try fm.copyItem(at: legacyURL, to: staging)
+            try fm.moveItem(at: staging, to: url)
+
+            let container = try open()
+            let releases = try ModelContext(container).fetchCount(FetchDescriptor<CollectionItemEntity>())
+            print("📦 Store: \(url.path) (migrated from \(legacyURL.path), \(releases) releases)")
+            return container
+        } catch {
+            // A half-copied store left at `url` would be taken for the library on the next launch.
+            for file in ours { try? fm.removeItem(at: file) }
+            throw StoreError.migrationFailed(from: legacyURL, to: url, underlying: error)
+        }
     }
 
     /// Test runs host the app; they must never open (or migrate) the real library.
@@ -35,27 +135,11 @@ struct VinylHarmonicMixApp: App {
 
     init() {
         do {
-            let schema = Schema([
-                CollectionItemEntity.self,
-                BasicInformationEntity.self,
-                ArtistCreditEntity.self,
-                LabelCreditEntity.self,
-                FormatEntity.self,
-                ReleaseDetailEntity.self,
-                TrackEntity.self,
-                RecordingFeaturesEntity.self,
-                LocalFileEntity.self,
-                LocalAudioFeaturesEntity.self,
-                SetlistEntity.self,
-                SetlistItemEntity.self,
-                CuePointEntity.self,
-            ])
-            let config = Self.isRunningTests
-                ? ModelConfiguration(isStoredInMemoryOnly: true)
-                : ModelConfiguration(url: Self.storeURL())
-            container = try ModelContainer(for: schema, configurations: config)
+            container = Self.isRunningTests
+                ? try ModelContainer(for: Self.schema, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+                : try Self.openStore(schema: Self.schema, at: Self.storeURL(), legacyURL: Self.legacyStoreURL())
         } catch {
-            fatalError("SwiftData container init failed: \(error)")
+            fatalError("SwiftData container init failed: \((error as? LocalizedError)?.errorDescription ?? "\(error)")")
         }
         let ctx = container.mainContext
 
