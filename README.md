@@ -46,8 +46,8 @@ Send finished sets to Rekordbox as a standard XML library, ready to drop into yo
 - Xcode 26 or later, to build from source
 - A Discogs account with your collection on it, and a Discogs personal access token (Discogs → Settings → Developers)
 - A local music library — a folder or mounted drive of audio files (MP3, FLAC, WAV, …)
-- For local BPM/key analysis and cue detection: Python 3 with [Essentia](https://essentia.upf.edu). The app looks for `python3` in `/opt/homebrew/bin`, `/usr/local/bin`, then your `PATH`, and Settings has an Install button that runs `pip install essentia` for you.
-- Optional, for audio fingerprint verification: `fpcalc` (`brew install chromaprint`) and a free [AcoustID](https://acoustid.org/new-application) API key
+- For local BPM/key analysis and cue detection: Homebrew Python 3.9–3.14 with [Essentia](https://essentia.upf.edu) — `brew install python@3.14` (plain `python` is 3.15, which Essentia has no wheels for yet). The app scans `/opt/homebrew/bin` and `/usr/local/bin` for `python3` and `python3.N` (a GUI app doesn't get your shell `PATH`), prefers one that already has Essentia, and falls back to `/usr/bin/python3`. Settings shows which it picked; its Install button runs `pip install --user` into Homebrew Python only, never Apple's.
+- For audio fingerprint verification: `fpcalc` (`brew install chromaprint`, looked up in `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`) and a free [AcoustID](https://acoustid.org/new-application) API key
 
 ## Getting Started
 
