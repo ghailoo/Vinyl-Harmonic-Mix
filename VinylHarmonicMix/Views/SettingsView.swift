@@ -1,8 +1,6 @@
 import SwiftUI
 import SwiftData
-#if os(macOS)
 import AppKit
-#endif
 
 private struct LibraryScanProgressPanel: View {
     let progress: SettingsViewModel.LibraryScanProgress
@@ -66,9 +64,6 @@ private struct ResetConfirmationSheet: View {
             TextField("RESET", text: $confirmationText)
                 .textFieldStyle(.roundedBorder)
                 .autocorrectionDisabled()
-#if os(iOS)
-                .textInputAutocapitalization(.characters)
-#endif
 
             HStack {
                 Spacer()
@@ -118,9 +113,6 @@ struct SettingsView: View {
                 SecureField("Personal Access Token", text: $settings.token)
                 TextField("Username", text: $settings.username)
                     .autocorrectionDisabled()
-#if os(iOS)
-                    .textInputAutocapitalization(.never)
-#endif
             }
 
             Section {
@@ -204,7 +196,6 @@ struct SettingsView: View {
                 }
 
                 HStack(spacing: 8) {
-#if os(macOS)
                     Button("Add folder…") {
                         let panel = NSOpenPanel()
                         panel.canChooseDirectories = true
@@ -217,7 +208,6 @@ struct SettingsView: View {
                             driveMonitor.refreshAvailability()
                         }
                     }
-#endif
                     Button("Test access") {
                         settings.testLibraryAccess(folders: driveMonitor.folders.map(\.folder))
                     }
@@ -345,10 +335,6 @@ struct SettingsView: View {
                     prompt: Text("your-email@example.com (optional)")
                 )
                 .autocorrectionDisabled()
-#if os(iOS)
-                .textInputAutocapitalization(.never)
-                .keyboardType(.emailAddress)
-#endif
                 .onSubmit { settings.save() }
 
                 Text("Embedded in requests to identify this app. Helps the MusicBrainz team contact you if there's a problem with your usage. Leave blank to use the default.")
@@ -502,15 +488,12 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
-#if os(macOS)
         .formStyle(.grouped)
-#endif
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Done") { dismiss() }
             }
         }
-#if os(macOS)
         .background {
             // Lets Esc close the sheet on macOS without showing a second button
             Button("", action: { dismiss() })
@@ -518,7 +501,6 @@ struct SettingsView: View {
                 .opacity(0)
                 .allowsHitTesting(false)
         }
-#endif
         .sheet(isPresented: $showResetSheet) {
             ResetConfirmationSheet(onConfirm: performReset)
         }
@@ -527,13 +509,11 @@ struct SettingsView: View {
             set: { if !$0 { resetCompletion = nil } }
         )) {
             Button("OK") { }
-#if os(macOS)
             Button("Show in Finder") {
                 if let folder = resetCompletion?.backupFolder {
                     NSWorkspace.shared.activateFileViewerSelecting([folder])
                 }
             }
-#endif
         } message: {
             if let resetCompletion {
                 Text("All data was cleared. A safety backup (\(resetCompletion.matchesBackedUp) matches) was saved to:\n\(resetCompletion.backupFolder.path)")
@@ -544,13 +524,11 @@ struct SettingsView: View {
             set: { if !$0 { resetFailure = nil } }
         )) {
             Button("OK") { }
-#if os(macOS)
             Button("Show Backup in Finder") {
                 if case .deletionFailed(let folder, _) = resetFailure {
                     NSWorkspace.shared.activateFileViewerSelecting([folder])
                 }
             }
-#endif
         } message: {
             if let resetFailure {
                 Text(resetFailure.errorDescription ?? "Reset failed.")

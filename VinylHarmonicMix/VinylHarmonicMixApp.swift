@@ -236,7 +236,6 @@ struct VinylHarmonicMixApp: App {
                 }
         }
         .modelContainer(container)
-#if os(macOS)
         Settings {
             NavigationStack {
                 SettingsView()
@@ -248,7 +247,6 @@ struct VinylHarmonicMixApp: App {
             .environment(driveMonitor)
         }
         .modelContainer(container)
-#endif
     }
 
     @MainActor

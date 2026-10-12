@@ -2,9 +2,7 @@ import Foundation
 import SwiftData
 import AVFoundation
 import AudioToolbox
-#if os(macOS)
 import AppKit
-#endif
 
 // Top-level Sendable value type — must NOT be nested inside the @MainActor class or
 // Swift 6 infers its init as @MainActor-isolated, causing a data race when

@@ -1,8 +1,6 @@
 import SwiftUI
 import SwiftData
-#if os(macOS)
 import AppKit
-#endif
 
 struct FileMatchesView: View {
     @Environment(FileMatchCoordinator.self) private var coordinator
@@ -654,7 +652,6 @@ private struct ReviewMasterDetailView: View {
     }
 
     private func browseFile(_ row: ReviewRow) {
-#if os(macOS)
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
@@ -665,7 +662,6 @@ private struct ReviewMasterDetailView: View {
         if panel.runModal() == .OK, let url = panel.url {
             coordinator.assignFile(trackMBID: row.track.trackMBID, url: url)
         }
-#endif
     }
 }
 
@@ -744,7 +740,6 @@ private struct NoMatchMasterDetailView: View {
     }
 
     private func browseFile(_ row: NoMatchRow) {
-#if os(macOS)
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
@@ -755,7 +750,6 @@ private struct NoMatchMasterDetailView: View {
         if panel.runModal() == .OK, let url = panel.url {
             coordinator.assignFile(trackMBID: row.track.trackMBID, url: url)
         }
-#endif
     }
 }
 
@@ -827,7 +821,6 @@ private struct ConfidentMasterDetailView: View {
     }
 
     private func changeFile(_ row: ConfidentRow) {
-#if os(macOS)
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
@@ -838,7 +831,6 @@ private struct ConfidentMasterDetailView: View {
         if panel.runModal() == .OK, let url = panel.url {
             coordinator.assignFile(trackMBID: row.track.trackMBID, url: url)
         }
-#endif
     }
 }
 

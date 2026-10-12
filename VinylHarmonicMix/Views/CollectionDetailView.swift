@@ -1,8 +1,6 @@
 import SwiftUI
 import SwiftData
-#if os(macOS)
 import AppKit
-#endif
 
 struct CollectionDetailView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -904,12 +902,8 @@ struct CollectionDetailView: View {
     }
 
     private func copyMBID(_ mbid: String) {
-#if os(macOS)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(mbid, forType: .string)
-#else
-        UIPasteboard.general.string = mbid
-#endif
         mbidCopied = true
         Task {
             try? await Task.sleep(for: .seconds(2))
@@ -1030,7 +1024,6 @@ struct CollectionDetailView: View {
     }
 
     private func pickFileForTrack(trackEntity: TrackEntity) {
-#if os(macOS)
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
@@ -1056,7 +1049,6 @@ struct CollectionDetailView: View {
                 analyzingTrackPath = nil
             }
         }
-#endif
     }
 
     private func libraryRootURL() -> URL? {
@@ -1067,7 +1059,6 @@ struct CollectionDetailView: View {
     // MARK: - Link folder…
 
     private func pickFolderToLink() {
-#if os(macOS)
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -1093,7 +1084,6 @@ struct CollectionDetailView: View {
                 readFolderToLink(folder, recursive: false)
             }
         }
-#endif
     }
 
     /// Reads the folder off the main actor, pairs files with this release's tracks and opens the
@@ -1387,12 +1377,8 @@ struct CollectionDetailView: View {
         }
 
         return Button {
-            #if os(macOS)
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(rmbid, forType: .string)
-            #else
-            UIPasteboard.general.string = rmbid
-            #endif
             copiedRecordingMBID = rmbid
             Task {
                 try? await Task.sleep(for: .seconds(2))

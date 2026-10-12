@@ -15,7 +15,6 @@ struct ContentView: View {
     @State private var sidebarSelection: SidebarItem? = .collection
 
     var body: some View {
-#if os(macOS)
         NavigationSplitView {
             macSidebar
         } detail: {
@@ -37,27 +36,10 @@ struct ContentView: View {
             }
             .frame(minWidth: 760)
         }
-#else
-        NavigationStack {
-            SetBuilderView()
-                .onAppear { collection.refreshConfiguration() }
-                .navigationTitle("VinylHarmonicMix")
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        NavigationLink {
-                            SettingsView()
-                        } label: {
-                            Label("Settings", systemImage: "gear")
-                        }
-                    }
-                }
-        }
-#endif
     }
 
 // MARK: - Global now-playing bar (always visible across all tabs)
 
-#if os(macOS)
     private var macSidebar: some View {
         List(selection: Binding(
             get: { sidebarSelection },
@@ -91,5 +73,4 @@ struct ContentView: View {
                 .frame(minWidth: 440, minHeight: 340)
         }
     }
-#endif
 }
