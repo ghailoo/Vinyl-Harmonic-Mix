@@ -375,10 +375,12 @@ final class FileMatchCoordinator {
 
     func verifyWithFingerprint(trackMBID: String, recordingMBID: String, filePath: String) async {
         verifyStates[trackMBID] = .running
-        guard let fpcalcPath = LocalLibraryService.fpcalcPath(),
-              let apiKey = KeychainService.shared.load(for: .acoustIDKey),
-              !apiKey.isEmpty else {
-            verifyStates[trackMBID] = .failed("fpcalc or AcoustID key not configured")
+        guard let fpcalcPath = LocalLibraryService.fpcalcPath() else {
+            verifyStates[trackMBID] = .failed(LocalLibraryService.fpcalcNotFoundMessage)
+            return
+        }
+        guard let apiKey = KeychainService.shared.load(for: .acoustIDKey), !apiKey.isEmpty else {
+            verifyStates[trackMBID] = .failed("AcoustID API key not configured in Settings")
             return
         }
         let client = AcoustIDClient(fpcalcPath: fpcalcPath, apiKey: apiKey)

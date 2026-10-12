@@ -242,7 +242,7 @@ final class SettingsViewModel {
         let result = await LocalLibraryService.testFpcalcExecution()
         switch result {
         case .success(let version):        fpcalcExecutionStatus = .success(version)
-        case .notFound:                    fpcalcExecutionStatus = .blocked("fpcalc not found")
+        case .notFound:                    fpcalcExecutionStatus = .blocked(LocalLibraryService.fpcalcNotFoundMessage)
         case .executionFailed(let msg):    fpcalcExecutionStatus = .blocked(msg)
         }
     }

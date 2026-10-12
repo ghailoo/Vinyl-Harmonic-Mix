@@ -283,7 +283,7 @@ struct SettingsView: View {
                               systemImage: "xmark.circle.fill")
                             .foregroundStyle(.red)
                             .font(.caption)
-                        Text("Install with: brew install chromaprint")
+                        Text(LocalLibraryService.fpcalcNotFoundMessage)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
@@ -420,7 +420,7 @@ struct SettingsView: View {
                     Text("Extracts BPM and key from local audio files using Essentia (native arm64). Scope: confident-matched tracks with no local analysis yet.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text("python3: \(LocalAnalysisCoordinator.python3Path)")
+                    Text("\(LocalAnalysisCoordinator.python.label): \(LocalAnalysisCoordinator.python3Path)")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                         .textSelection(.enabled)
@@ -608,15 +608,22 @@ struct SettingsView: View {
                 .foregroundStyle(.green).font(.caption)
 
         case .notInstalled:
+            let python = LocalAnalysisCoordinator.python
             VStack(alignment: .leading, spacing: 8) {
-                Label("Essentia not installed for \(LocalAnalysisCoordinator.python3Path)",
+                Label("Essentia not installed for \(python.path)",
                       systemImage: "xmark.circle.fill")
                     .foregroundStyle(.orange).font(.caption)
-                Button("Install Essentia") { localAnalysisCoordinator.installEssentia() }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                Text("Runs: \(LocalAnalysisCoordinator.python3Path) -m pip install --break-system-packages essentia")
-                    .font(.caption2).foregroundStyle(.tertiary).textSelection(.enabled)
+                if python.canInstallEssentia {
+                    Button("Install Essentia") { localAnalysisCoordinator.installEssentia() }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    Text("Runs: \(python.path) \(LocalAnalysisCoordinator.essentiaPipArguments.joined(separator: " ")) — installs into ~/Library/Python, not into Homebrew or macOS.")
+                        .font(.caption2).foregroundStyle(.tertiary).textSelection(.enabled)
+                } else {
+                    Text(LocalAnalysisCoordinator.noInstallablePythonMessage)
+                        .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
         case .installing:

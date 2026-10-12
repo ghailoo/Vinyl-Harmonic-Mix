@@ -86,7 +86,7 @@ final class FingerprintScanCoordinator {
 
     private func runScan(limit: Int?) async {
         guard let fpcalcPath = LocalLibraryService.fpcalcPath() else {
-            lastError = "fpcalc not found — install with: brew install chromaprint"
+            lastError = LocalLibraryService.fpcalcNotFoundMessage
             phase = .completed
             return
         }

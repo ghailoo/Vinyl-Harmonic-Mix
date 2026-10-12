@@ -8,29 +8,78 @@ final class LocalAnalysisCoordinator {
     // MARK: - Single source of truth: python3 path
     //
     // Both the analysis subprocess and the pip installer use this exact path.
-    // Preference order: Homebrew arm64 → Homebrew Intel → which python3 → system fallback.
-    // Evaluated once at first access; FileManager.fileExists is safe from any thread.
-    nonisolated static let python3Path: String = {
-        let candidates = [
-            "/opt/homebrew/bin/python3",   // Homebrew on Apple Silicon
-            "/usr/local/bin/python3",       // Homebrew on Intel
-        ]
-        for p in candidates where FileManager.default.fileExists(atPath: p) {
-            return p
-        }
-        // which python3 as last resort
+    // A GUI app gets PATH=/usr/bin:/bin:…, so `which python3` only ever finds Apple's —
+    // Homebrew's bin dirs are listed explicitly. Homebrew's versioned formulae
+    // (python@3.12) install only `python3.12`, no plain `python3`, hence the scan.
+    nonisolated static let homebrewBinDirs = ["/opt/homebrew/bin", "/usr/local/bin"]   // Apple silicon, Intel
+    nonisolated static let systemPython = "/usr/bin/python3"
+    /// Python minor versions Essentia publishes macOS wheels for; others would try (and fail) a source build.
+    nonisolated static let essentiaWheelMinors = 9...14
+
+    struct PythonChoice: Sendable {
+        let path: String
+        let minor: Int?
+        let hasEssentia: Bool
+        var isHomebrew: Bool { path != LocalAnalysisCoordinator.systemPython }
+        /// Install Essentia here: Homebrew Python with a wheel. Never Apple's system Python.
+        var canInstallEssentia: Bool { isHomebrew && minor.map(essentiaWheelMinors.contains) == true }
+        var label: String { "Python \(minor.map { "3.\($0)" } ?? "3") (\(isHomebrew ? "Homebrew" : "macOS system"))" }
+    }
+
+    /// Homebrew `python3`, then `python3.N` newest first, per bin dir; Apple's last.
+    nonisolated static func python3Candidates() -> [String] {
+        homebrewBinDirs.flatMap { dir -> [String] in
+            let names = (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []
+            let versioned = names
+                .compactMap { n in n.hasPrefix("python3.") ? Int(n.dropFirst(8)).map { ($0, n) } : nil }
+                .sorted { $0.0 > $1.0 }
+                .map(\.1)
+            return ((names.contains("python3") ? ["python3"] : []) + versioned).map { "\(dir)/\($0)" }
+        } + [systemPython]
+    }
+
+    /// First interpreter that already has Essentia (keeps existing setups, including an old
+    /// install into Apple's Python); otherwise the first one Essentia can be installed into;
+    /// otherwise the first found. Evaluated once — installing a new Python needs a relaunch.
+    /// ponytail: probes run on first access (≈50 ms per interpreter, find_spec doesn't import Essentia).
+    nonisolated static let python: PythonChoice = {
+        choosePython(python3Candidates()
+            .filter { FileManager.default.fileExists(atPath: $0) }
+            .map(probePython))
+    }()
+
+    nonisolated static func choosePython(_ probes: [PythonChoice]) -> PythonChoice {
+        probes.first(where: \.hasEssentia)
+            ?? probes.first(where: \.canInstallEssentia)
+            ?? probes.first
+            ?? PythonChoice(path: systemPython, minor: nil, hasEssentia: false)
+    }
+
+    nonisolated static var python3Path: String { python.path }
+
+    nonisolated private static func probePython(_ path: String) -> PythonChoice {
         let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-        proc.arguments = ["python3"]
+        proc.executableURL = URL(fileURLWithPath: path)
+        proc.arguments = ["-c", "import sys, importlib.util as u; print(sys.version_info.minor, u.find_spec('essentia') is not None)"]
         let pipe = Pipe()
         proc.standardOutput = pipe
         proc.standardError = Pipe()
-        try? proc.run()
+        guard (try? proc.run()) != nil else { return PythonChoice(path: path, minor: nil, hasEssentia: false) }
         proc.waitUntilExit()
-        let found = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return found.isEmpty ? "/usr/bin/python3" : found
-    }()
+        let parts = (String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "")
+            .split(separator: " ").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        return PythonChoice(path: path,
+                            minor: parts.first.flatMap { Int($0) },
+                            hasEssentia: parts.count == 2 && parts[1] == "True")
+    }
+
+    /// Shown when Essentia is missing and there's nowhere sensible to install it.
+    nonisolated static var noInstallablePythonMessage: String {
+        "Essentia needs Homebrew Python 3.\(essentiaWheelMinors.lowerBound)–3.\(essentiaWheelMinors.upperBound) "
+        + "(looked in \(homebrewBinDirs.joined(separator: " and "))). "
+        + "In Terminal run: brew install python@3.\(essentiaWheelMinors.upperBound) — then quit and reopen VinylHarmonicMix. "
+        + "The app won't install packages into macOS's own \(systemPython)."
+    }
 
     // MARK: - Script location
 
@@ -308,18 +357,21 @@ final class LocalAnalysisCoordinator {
 
     // MARK: - pip install
     //
+    // --user puts Essentia in ~/Library/Python/3.x, leaving Homebrew's own files alone;
+    // Homebrew marks its Python externally managed (PEP 668), so pip also needs
+    // --break-system-packages even for a --user install.
+    nonisolated static let essentiaPipArguments = ["-m", "pip", "install", "--user", "--break-system-packages", "essentia"]
+    //
     // Returns nil on success, or an error string on failure.
     nonisolated private static func runPipInstall() async -> String? {
         await Task.detached(priority: .utility) { () -> String? in
             let python = python3Path
 
-            guard FileManager.default.fileExists(atPath: python) else {
-                return "Python 3 not found at \(python). Install Python 3 via Homebrew first."
-            }
+            guard Self.python.canInstallEssentia else { return noInstallablePythonMessage }
 
             let proc = Process()
             proc.executableURL = URL(fileURLWithPath: python)
-            proc.arguments = ["-m", "pip", "install", "--break-system-packages", "essentia"]
+            proc.arguments = essentiaPipArguments
             let outPipe = Pipe()
             let errPipe = Pipe()
             proc.standardOutput = outPipe

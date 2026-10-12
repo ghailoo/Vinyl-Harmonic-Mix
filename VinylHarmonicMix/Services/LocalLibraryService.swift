@@ -214,11 +214,18 @@ enum LocalLibraryService {
 
     // MARK: - fpcalc detection + execution test
 
+    /// A GUI app doesn't inherit the shell PATH, so look in Homebrew's dirs explicitly
+    /// (Apple silicon, Intel), then /usr/bin.
+    static let fpcalcSearchPaths = ["/opt/homebrew/bin/fpcalc", "/usr/local/bin/fpcalc", "/usr/bin/fpcalc"]
+
+    static var fpcalcNotFoundMessage: String {
+        "fpcalc not found (looked in \(fpcalcSearchPaths.joined(separator: ", "))). Install with: brew install chromaprint"
+    }
+
     static func fpcalcPath() -> String? {
         // isExecutableFile returns false inside the sandbox for binaries outside the container.
         // fileExists works because existence checks are not permission-gated the same way.
-        ["/opt/homebrew/bin/fpcalc", "/usr/local/bin/fpcalc", "/usr/bin/fpcalc"]
-            .first { FileManager.default.fileExists(atPath: $0) }
+        fpcalcSearchPaths.first { FileManager.default.fileExists(atPath: $0) }
     }
 
     enum FpcalcExecutionResult {
