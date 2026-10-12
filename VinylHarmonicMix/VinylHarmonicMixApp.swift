@@ -143,20 +143,6 @@ struct VinylHarmonicMixApp: App {
         }
         let ctx = container.mainContext
 
-        // One-time: wipe the stale/duplicated LocalFileEntity index so the next
-        // "Match all" re-scans cleanly with parentFolder populated.
-        // Guarded by a UserDefaults flag so it runs exactly once.
-        let wipeKey = "didClearLocalFileIndexV2"
-        if !Self.isRunningTests, !UserDefaults.standard.bool(forKey: wipeKey) {
-            let stale = (try? ctx.fetch(FetchDescriptor<LocalFileEntity>())) ?? []
-            if !stale.isEmpty {
-                for entity in stale { ctx.delete(entity) }
-                try? ctx.save()
-                print("🧹 Cleared \(stale.count) stale LocalFileEntity rows — re-index needed")
-            }
-            UserDefaults.standard.set(true, forKey: wipeKey)
-        }
-
         let cv      = CollectionViewModel(context: ctx)
         let scan    = MBIDScanCoordinator(context: ctx)
         let recs    = RecordingsScanCoordinator(context: ctx)
