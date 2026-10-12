@@ -36,8 +36,7 @@ final class KeychainService {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: key.rawValue,
-            kSecUseDataProtectionKeychain as String: true
+            kSecAttrAccount as String: key.rawValue
         ]
     }
 
