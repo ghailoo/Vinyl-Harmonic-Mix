@@ -103,6 +103,7 @@ final class LocalAnalysisCoordinator {
     private var scanTask: Task<Void, Never>?
     private var pendingLimit: Int? = nil
     private var pendingPaths: [String]? = nil
+    private var pendingReanalyzeBefore: Date? = nil
     /// Fired whenever BPM/key results are written (card badge cache invalidation).
     var onAnalysisDataChanged: (() -> Void)? = nil
 
@@ -139,12 +140,15 @@ final class LocalAnalysisCoordinator {
     }
 
     /// `paths` scopes the run to exactly those files ("Link folder…"), skipping the artist-folder
-    /// filter. Returns the run's task so a caller can await it; nil when another run is active.
+    /// filter. `reanalyzeBefore` (with `paths` only) also redoes files analyzed before that date —
+    /// a fixed cutoff rather than a flag, so resume after pause skips files this run already redid.
+    /// Returns the run's task so a caller can await it; nil when another run is active.
     @discardableResult
-    func startFileAnalysis(limit: Int? = nil, paths: [String]? = nil) -> Task<Void, Never>? {
+    func startFileAnalysis(limit: Int? = nil, paths: [String]? = nil, reanalyzeBefore: Date? = nil) -> Task<Void, Never>? {
         guard phase.isIdle, bundledScriptPath() != nil else { return nil }
         pendingLimit = limit
         pendingPaths = paths
+        pendingReanalyzeBefore = reanalyzeBefore
         currentMode = .files
         phase = .analyzing
         analyzedCount = 0; failedCount = 0; totalCount = 0
@@ -152,7 +156,7 @@ final class LocalAnalysisCoordinator {
 
         scanTask = Task { [weak self] in
             guard let self else { return }
-            await self.runFileAnalysis(limit: limit, paths: paths)
+            await self.runFileAnalysis(limit: limit, paths: paths, reanalyzeBefore: reanalyzeBefore)
             guard !Task.isCancelled else { return }
             if self.phase == .analyzing { self.phase = .completed }
         }
@@ -201,6 +205,7 @@ final class LocalAnalysisCoordinator {
         guard phase.isIdle, bundledScriptPath() != nil else { return }
         pendingLimit = nil
         pendingPaths = nil
+        pendingReanalyzeBefore = nil
         currentMode = .files
         phase = .analyzing
         analyzedCount = 0; failedCount = 0; totalCount = 0
@@ -222,7 +227,7 @@ final class LocalAnalysisCoordinator {
         guard phase == .paused else { return }
         switch currentMode {
         case .tracks: startAnalysis(limit: pendingLimit)
-        case .files:  startFileAnalysis(limit: pendingLimit, paths: pendingPaths)
+        case .files:  startFileAnalysis(limit: pendingLimit, paths: pendingPaths, reanalyzeBefore: pendingReanalyzeBefore)
         }
     }
 
@@ -510,8 +515,8 @@ final class LocalAnalysisCoordinator {
         let analyzed: Bool
     }
 
-    private func runFileAnalysis(limit: Int?, paths: [String]? = nil) async {
-        let inScope = if let paths { scopedFileSummaries(paths) } else { await libraryFileSummaries() }
+    private func runFileAnalysis(limit: Int?, paths: [String]? = nil, reanalyzeBefore: Date? = nil) async {
+        let inScope = if let paths { scopedFileSummaries(paths, reanalyzeBefore: reanalyzeBefore) } else { await libraryFileSummaries() }
 
         let scoped = limit.map { Array(inScope.prefix($0)) } ?? inScope
         totalCount = scoped.count
@@ -564,14 +569,17 @@ final class LocalAnalysisCoordinator {
         recomputeFileScope(force: true)
     }
 
-    /// Unanalyzed files among `paths` — no artist-folder filter; unreachable library folders still skipped.
-    private func scopedFileSummaries(_ paths: [String]) -> [LocalFileSummary] {
+    /// Unanalyzed files among `paths` (plus those analyzed before `reanalyzeBefore`) — no artist-folder
+    /// filter; unreachable library folders still skipped.
+    private func scopedFileSummaries(_ paths: [String], reanalyzeBefore: Date? = nil) -> [LocalFileSummary] {
         let files = (try? context.fetch(FetchDescriptor<LocalFileEntity>(
             predicate: #Predicate { paths.contains($0.filePath) }
         ))) ?? []
         let missing = missingFolders()
         return files.compactMap { file in
-            guard file.bpm == 0, file.analyzedAt == nil,
+            let pending = (file.bpm == 0 && file.analyzedAt == nil)
+                || reanalyzeBefore.map { cutoff in (file.analyzedAt ?? .distantPast) < cutoff } ?? false
+            guard pending,
                   !missing.contains(where: { $0.contains(path: file.filePath) }) else { return nil }
             return LocalFileSummary(id: file.persistentModelID, filePath: file.filePath,
                                     artistFolder: file.artistFolder, analyzed: false)

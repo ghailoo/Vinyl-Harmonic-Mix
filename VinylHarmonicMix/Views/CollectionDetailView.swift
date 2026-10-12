@@ -387,6 +387,7 @@ struct CollectionDetailView: View {
                     Text("Tracklist")
                         .font(.title3.weight(.semibold))
                     Spacer()
+                    detectBpmKeyButton
                     Button("Link folder…") { pickFolderToLink() }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
@@ -1183,18 +1184,7 @@ struct CollectionDetailView: View {
         folderLinkStatus = linked
         folderLinkTask = Task {
             defer { folderLinkTask = nil; loadTrackEntities() }
-            guard let bpm = localAnalysisCoordinator.startFileAnalysis(paths: paths) else {
-                folderLinkStatus = "\(linked). BPM/key analysis is busy or unavailable — run Detect BPM/Key later."
-                return
-            }
-            await bpm.value
-            guard !Task.isCancelled, localAnalysisCoordinator.phase == .completed else {
-                folderLinkStatus = "\(linked). BPM/key analysis stopped before finishing."
-                return
-            }
-            let analyzed = "BPM/key \(localAnalysisCoordinator.analyzedCount - localAnalysisCoordinator.failedCount) new"
-                + (localAnalysisCoordinator.failedCount > 0 ? ", \(localAnalysisCoordinator.failedCount) failed" : "")
-            loadTrackEntities()
+            guard let analyzed = await detectBpmKey(paths: paths, after: linked) else { return }
 
             guard let cues = cueDetectionCoordinator.startDetection(paths: paths) else {
                 folderLinkStatus = "\(linked) · \(analyzed). Cue detection is busy — run Find Cues later."
@@ -1207,6 +1197,78 @@ struct CollectionDetailView: View {
             }
             folderLinkStatus = "\(linked) · \(analyzed) · cues on \(cueDetectionCoordinator.detectedCount)"
                 + (cueDetectionCoordinator.failedCount > 0 ? ", \(cueDetectionCoordinator.failedCount) failed" : "")
+        }
+    }
+
+    /// BPM/key for exactly `paths`, shared by Link folder… and Detect BPM & Key. Returns the summary
+    /// ("BPM/key 3 new, 1 failed"), or nil after writing why it stopped to folderLinkStatus.
+    private func detectBpmKey(paths: [String], reanalyzeBefore: Date? = nil, after prefix: String? = nil) async -> String? {
+        let lead = prefix.map { "\($0). " } ?? ""
+        guard let bpm = localAnalysisCoordinator.startFileAnalysis(paths: paths, reanalyzeBefore: reanalyzeBefore) else {
+            folderLinkStatus = lead + "BPM/key analysis is busy or unavailable — try again when it's free."
+            return nil
+        }
+        await bpm.value
+        guard !Task.isCancelled, localAnalysisCoordinator.phase == .completed else {
+            folderLinkStatus = lead + "BPM/key analysis stopped before finishing."
+            return nil
+        }
+        loadTrackEntities()
+        return "BPM/key \(localAnalysisCoordinator.analyzedCount - localAnalysisCoordinator.failedCount) new"
+            + (localAnalysisCoordinator.failedCount > 0 ? ", \(localAnalysisCoordinator.failedCount) failed" : "")
+    }
+
+    // MARK: - Detect BPM & Key
+
+    /// Files confirmed for this release's tracks — the same rule the tracklist rows use for playback.
+    private var linkedFiles: [LocalFileEntity] {
+        trackEntities.compactMap { t in
+            guard t.fileMatchState == "confident", let path = t.primaryLocalFilePath else { return nil }
+            return t.localFiles.first { $0.filePath == path }
+        }
+    }
+
+    /// Default run: only linked files without BPM/key (same test the coordinator applies).
+    private var linkedFilesNeedingBpmKey: [LocalFileEntity] {
+        linkedFiles.filter { $0.bpm == 0 && $0.analyzedAt == nil }
+    }
+
+    private func detectReleaseBpmKey(reanalyze: Bool) {
+        let paths = (reanalyze ? linkedFiles : linkedFilesNeedingBpmKey).map(\.filePath)
+        folderLinkStatus = nil
+        folderLinkTask = Task {
+            defer { folderLinkTask = nil; loadTrackEntities() }
+            if let analyzed = await detectBpmKey(paths: paths, reanalyzeBefore: reanalyze ? .now : nil) {
+                folderLinkStatus = analyzed
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var detectBpmKeyButton: some View {
+        let pending = linkedFilesNeedingBpmKey.count
+        if linkedFiles.isEmpty {
+            Button("Detect BPM & Key") { }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(true)
+                .help("No files linked to this release yet — use Link folder… or match your library first")
+        } else if pending > 0 {
+            Button("Detect BPM & Key (\(pending))") { detectReleaseBpmKey(reanalyze: false) }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(folderLinkTask != nil)
+                .help("Analyse the \(pending) linked file\(pending == 1 ? "" : "s") of this release that have no BPM/key yet")
+        } else {
+            Menu("BPM & Key done") {
+                Button("Re-analyse all (\(linkedFiles.count))") { detectReleaseBpmKey(reanalyze: true) }
+            }
+            .menuStyle(.button)
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .fixedSize()
+            .disabled(folderLinkTask != nil)
+            .help("Every linked file has BPM/key. Re-analyse to run detection again")
         }
     }
 
