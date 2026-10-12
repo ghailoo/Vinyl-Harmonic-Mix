@@ -127,7 +127,7 @@ final class DetailCacheCoordinator {
 
     private func performCache() async {
         guard let token = keychain.load(for: .token), !token.isEmpty else {
-            phase = .failed("No Discogs token. Open Settings.")
+            phase = .failed(DiscogsError.missingToken.localizedDescription)
             return
         }
 
@@ -192,6 +192,11 @@ final class DetailCacheCoordinator {
                 _ = recordingsCoordinator.synthesizeTracksForOrphanRelease(entity)
                 newlyCachedCount += 1
                 saveCounter += 1
+            } catch DiscogsError.unauthorized {
+                currentItem = nil
+                try? context.save()
+                phase = .failed(DiscogsError.unauthorized.localizedDescription)
+                return
             } catch {
                 print("⚠️ Failed to cache release \(releaseId): \(error)")
             }

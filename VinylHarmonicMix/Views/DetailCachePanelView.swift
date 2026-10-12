@@ -151,7 +151,13 @@ struct DetailCachePanelView: View {
             case .paused:
                 Button("Resume") { coordinator.resume() } .buttonStyle(.borderedProminent).controlSize(.small)
                 Button("Cancel") { coordinator.cancel() } .buttonStyle(.bordered).controlSize(.small)
-            case .completed, .cancelled, .failed:
+            case .failed(let msg):
+                if msg == DiscogsError.missingToken.localizedDescription
+                    || msg == DiscogsError.unauthorized.localizedDescription {
+                    OpenSettingsButton().buttonStyle(.bordered).controlSize(.small)
+                }
+                Button("Dismiss") { coordinator.dismissPanel() } .buttonStyle(.bordered).controlSize(.small)
+            case .completed, .cancelled:
                 Button("Dismiss") { coordinator.dismissPanel() } .buttonStyle(.bordered).controlSize(.small)
             default:
                 EmptyView()

@@ -48,7 +48,7 @@ final class CollectionViewModel {
     func importCollection() async {
         guard let token = keychain.load(for: .token), !token.isEmpty,
               let username = keychain.load(for: .username), !username.isEmpty else {
-            phase = .failed("No credentials saved. Open Settings and save your token and username.")
+            phase = .failed(DiscogsError.missingToken.localizedDescription)
             return
         }
         phase = .loading(progress: 0)
@@ -87,7 +87,7 @@ final class CollectionViewModel {
         }
 
         guard let token = keychain.load(for: .token), !token.isEmpty else {
-            throw DiscogsError.unauthorized
+            throw DiscogsError.missingToken
         }
         let result = try await client.fetchReleaseDetail(id: releaseId, token: token)
         detailCache[releaseId] = result
@@ -207,7 +207,7 @@ final class CollectionViewModel {
     func checkForNewReleases() async {
         guard let token    = keychain.load(for: .token),    !token.isEmpty,
               let username = keychain.load(for: .username), !username.isEmpty else {
-            syncPhase = .failed("No credentials. Configure token and username in Settings.")
+            syncPhase = .failed(DiscogsError.missingToken.localizedDescription)
             return
         }
         syncPhase = .checking
@@ -232,7 +232,7 @@ final class CollectionViewModel {
         guard !newIDs.isEmpty else { syncPhase = .done(added: 0); return 0 }
         guard let token    = keychain.load(for: .token),    !token.isEmpty,
               let username = keychain.load(for: .username), !username.isEmpty else {
-            syncPhase = .failed("No credentials.")
+            syncPhase = .failed(DiscogsError.missingToken.localizedDescription)
             return 0
         }
         syncPhase = .importing

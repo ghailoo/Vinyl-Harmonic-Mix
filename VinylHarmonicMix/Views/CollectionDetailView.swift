@@ -23,7 +23,7 @@ struct CollectionDetailView: View {
     @State private var isLoading = false
     @State private var galleryURLs: [String] = []
     @State private var galleryIndex: Int = 0
-    @State private var loadError: String?
+    @State private var loadError: Error?
     @State private var itemEntity: CollectionItemEntity?
     @State private var trackEntities: [TrackEntity] = []
     @State private var featureEntities: [RecordingFeaturesEntity] = []
@@ -104,15 +104,30 @@ struct CollectionDetailView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let error = loadError {
+            let discogsError = error as? DiscogsError
             VStack(spacing: 16) {
-                Label(error, systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
-                Button("Retry") {
-                    Task { await load() }
+                if case .missingToken? = discogsError {
+                    Label(error.localizedDescription, systemImage: "key")
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                    OpenSettingsButton { Task { await load() } }
+                        .buttonStyle(.borderedProminent)
+                } else {
+                    Label(error.localizedDescription, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.red)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                    HStack {
+                        Button("Retry") {
+                            Task { await load() }
+                        }
+                        if case .unauthorized? = discogsError {
+                            OpenSettingsButton { Task { await load() } }
+                        }
+                    }
+                    .buttonStyle(.bordered)
                 }
-                .buttonStyle(.bordered)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let detail {
@@ -1622,7 +1637,7 @@ struct CollectionDetailView: View {
             }
             galleryIndex = 0
         } catch {
-            loadError = error.localizedDescription
+            loadError = error
         }
     }
 }

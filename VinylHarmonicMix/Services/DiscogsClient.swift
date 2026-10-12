@@ -107,8 +107,10 @@ final class DiscogsClient {
             guard let retryHttp = retryResponse as? HTTPURLResponse else {
                 throw DiscogsError.invalidResponse
             }
+            if retryHttp.statusCode == 401 { throw DiscogsError.unauthorized }
             return (retryData, retryHttp)
         }
+        if http.statusCode == 401 { throw DiscogsError.unauthorized }
         return (data, http)
     }
 

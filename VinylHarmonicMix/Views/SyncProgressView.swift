@@ -24,6 +24,11 @@ struct SyncProgressView: View {
             if !orchestrator.isSyncing {
                 HStack {
                     Spacer()
+                    // Missing or rejected Discogs token both stop the sync at its first stage.
+                    if orchestrator.lastResult.hasPrefix("Sync failed at: Discogs check") {
+                        OpenSettingsButton()
+                        Button("Retry") { orchestrator.startSync() }
+                    }
                     Button("Done") { dismiss() }
                         .buttonStyle(.borderedProminent)
                 }
