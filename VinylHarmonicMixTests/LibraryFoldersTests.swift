@@ -136,7 +136,8 @@ struct LibraryFoldersTests {
         let defaults = Self.makeDefaults()
         let dir = try Self.makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let legacy = try dir.bookmarkData()
+        // Pre-multifolder builds always wrote security-scoped bookmarks, and resolve() requires one.
+        let legacy = try dir.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
         defaults.set(legacy, forKey: LocalLibraryService.bookmarkKey)
         defaults.set(dir.path, forKey: LocalLibraryService.displayPathKey)
 
