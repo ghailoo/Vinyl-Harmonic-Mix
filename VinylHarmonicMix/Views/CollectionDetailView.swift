@@ -214,6 +214,7 @@ struct CollectionDetailView: View {
                 .frame(width: 30, height: 30)
                 .background(.regularMaterial, in: Circle())
                 .overlay(Circle().strokeBorder(Color.primary.opacity(0.15), lineWidth: 0.5))
+                .hitTarget()
                 .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
         }
         .buttonStyle(.plain)

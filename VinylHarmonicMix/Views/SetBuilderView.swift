@@ -698,16 +698,19 @@ struct SetBuilderView: View {
                             ProgressView()
                                 .scaleEffect(0.55)
                                 .frame(width: 22, height: 22)
+                                .hitTarget()
                         } else if cueCoordinator.failureMessage != nil {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .font(.title2)
                                 .foregroundStyle(.red)
                                 .frame(width: 22, height: 22)
+                                .hitTarget()
                         } else {
                             Image(systemName: "waveform.path.ecg")
                                 .font(.title2)
                                 .foregroundStyle(Color.secondary.opacity(0.8))
                                 .frame(width: 22, height: 22)
+                                .hitTarget()
                         }
                     }
                     .buttonStyle(.plain)
